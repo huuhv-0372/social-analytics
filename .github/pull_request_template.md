@@ -52,7 +52,7 @@
 - [ ] No config changes
 - [ ] New env variable(s): <!-- vd FACEBOOK_CLIENT_ID — KHÔNG ghi giá trị -->
 - [ ] New/changed `app.*` properties: 
-- [ ] `compose.yaml` changed (MySQL / Artemis)
+- [ ] `docker-compose.yaml` / `Dockerfile` changed
 
 ---
 

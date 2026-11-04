@@ -1,0 +1,26 @@
+# Cấu hình tối thiểu để khởi động. Profile dev/test, Logback và app.* sẽ bổ sung ở Task 1.2.
+spring:
+  application:
+    name: social-analytics
+  config:
+    # Đọc biến môi trường từ file .env ở thư mục gốc (không commit) — xem .env.example
+    import: optional:file:.env[.properties]
+
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:33069}/${DB_NAME:social_analytics}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  artemis:
+    broker-url: tcp://${ARTEMIS_HOST:localhost}:${ARTEMIS_PORT:61616}
+    user: ${ARTEMIS_USER}
+    password: ${ARTEMIS_PASSWORD}

@@ -48,7 +48,11 @@ Windows dùng `mvnw.cmd`, Mac/Linux dùng `./mvnw`:
 - Chạy toàn bộ test: `./mvnw test`
 - Chạy 1 class test: `./mvnw test -Dtest=PostServiceTest`
 - Sinh class JAXB từ XSD/WSDL: `./mvnw generate-sources`
-- Hạ tầng local (MySQL, Artemis): `docker compose up -d` (file `compose.yaml` ở root)
+- Docker (file `docker-compose.yaml` + `Dockerfile` ở root; trước tiên copy `.env.example` → `.env`, điền mật khẩu):
+  - Chạy toàn bộ (MySQL + Artemis + app): `docker compose up -d --build`
+  - Chỉ hạ tầng, app chạy bằng JDK local: `docker compose up -d mysql artemis` (app tự đọc `.env` qua `spring.config.import`)
+  - Chạy Maven trong container JDK 25, không cần JDK local: `docker compose run --rm maven test` (thay `test` bằng goal bất kỳ)
+  - Trong mạng Docker, app/maven kết nối `mysql:3306`, `artemis:61616`; `DB_PORT` trong `.env` chỉ là port mở ra máy host.
 - Swagger UI: `http://localhost:8080/swagger-ui.html` — chỉ dùng trên trình duyệt, **không** hardcode trong code/template.
 
 ## 4. Kiến Trúc Mã Nguồn
