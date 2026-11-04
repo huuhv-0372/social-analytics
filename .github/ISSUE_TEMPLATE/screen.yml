@@ -1,0 +1,105 @@
+name: Tính năng
+description: Một màn hình hoặc tính năng trong scope của project
+title: "[Feature] "
+labels: ["feature"]
+body:
+  - type: input
+    id: redmine-ticket
+    attributes:
+      label: Redmine Ticket
+      placeholder: "#1234"
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Roadmap phase
+      description: Theo CLAUDE.md mục 10
+      options:
+        - 1. Khởi tạo project
+        - 2. Unit Test + Excel
+        - 3. Security + CSRF + Social Login
+        - 4. Background Job & Multithread
+        - 5. JMS
+        - 6. WebSocket + Chart
+        - 7. Spring-WS + Reflection + Tổng kết
+    validations:
+      required: true
+  - type: dropdown
+    id: feature-type
+    attributes:
+      label: Loại tính năng
+      multiple: true
+      options:
+        - Màn hình Thymeleaf
+        - REST API
+        - Background job
+        - JMS
+        - WebSocket + Chart
+        - SOAP WebService
+        - Excel import/export
+        - Security
+    validations:
+      required: true
+  - type: input
+    id: feature-code
+    attributes:
+      label: Mã màn / tính năng
+      description: "vd: SCR001 / F001 — để trống nếu chưa có"
+  - type: input
+    id: reference
+    attributes:
+      label: Tài liệu / yêu cầu liên quan
+      description: Link tài liệu yêu cầu, thiết kế (nếu có)
+  - type: textarea
+    id: description
+    attributes:
+      label: Mô tả
+      description: Tính năng làm gì, cho ai dùng
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Tiêu chí chấp nhận
+      description: Mỗi dòng một điều kiện kiểm tra được
+      placeholder: |
+        - Chưa đăng nhập truy cập /dashboard bị chuyển về /login
+        - Upload file không phải .xlsx → báo lỗi 400 kèm thông báo thân thiện
+        - Import xong → dashboard nhận event WebSocket và chart tự cập nhật
+    validations:
+      required: true
+  - type: dropdown
+    id: access
+    attributes:
+      label: Ai được truy cập
+      options:
+        - Chưa đăng nhập
+        - User đã đăng nhập (OAuth2)
+        - Chỉ Admin
+        - Không áp dụng (chạy ngầm)
+    validations:
+      required: true
+  - type: textarea
+    id: technical-notes
+    attributes:
+      label: Ghi chú kỹ thuật
+      description: Entity/bảng, Flyway migration, endpoint, queue/topic, biến môi trường mới, rủi ro đã biết
+  - type: input
+    id: estimate
+    attributes:
+      label: Estimate (giờ)
+      placeholder: "3"
+    validations:
+      required: true
+  - type: checkboxes
+    id: dod
+    attributes:
+      label: Definition of Done
+      description: Tick dần khi làm — không cần tick lúc tạo issue
+      options:
+        - label: Logic đúng tiêu chí chấp nhận
+        - label: Unit test (JUnit 5 + Mockito), Controller test (MockMvc)
+        - label: Test bảo mật (401 / 403 thiếu CSRF / IDOR / 400)
+        - label: Đạt checklist OWASP (CLAUDE.md mục 5.6)
+        - label: Flyway migration (nếu đổi DB)
+        - label: Swagger/OpenAPI cập nhật (nếu đổi API)
+        - label: Tick checkbox giai đoạn trong CLAUDE.md mục 10 (nếu hoàn thành giai đoạn)
