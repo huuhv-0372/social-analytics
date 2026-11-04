@@ -1,0 +1,7 @@
+# Profile dev: ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+# Chỉ tăng mức log để debug; không bật log giá trị bind tham số SQL (có thể chứa dữ liệu nhạy cảm).
+logging:
+  level:
+    com.huuhv.socialanalytics: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.springframework.security: DEBUG

@@ -1,4 +1,5 @@
-# Cấu hình tối thiểu để khởi động. Profile dev/test, Logback và app.* sẽ bổ sung ở Task 1.2.
+# Cấu hình chung cho mọi môi trường (mặc định = production-safe).
+# Profile: dev (application-dev.yml), test (application-test.yml). Giá trị nhạy cảm luôn lấy từ biến môi trường.
 spring:
   application:
     name: social-analytics
@@ -13,6 +14,7 @@ spring:
 
   jpa:
     open-in-view: false
+    show-sql: false
     hibernate:
       ddl-auto: validate
 
@@ -24,3 +26,25 @@ spring:
     broker-url: tcp://${ARTEMIS_HOST:localhost}:${ARTEMIS_PORT:61616}
     user: ${ARTEMIS_USER}
     password: ${ARTEMIS_PASSWORD}
+
+server:
+  error:
+    # Không trả chi tiết lỗi nội bộ ra client (OWASP A02/A10)
+    include-stacktrace: never
+    include-message: never
+    include-binding-errors: never
+    include-exception: false
+
+logging:
+  file:
+    # Thư mục log file (logback-spring.xml), mỗi ngày 1 file
+    path: ${LOG_PATH:logs}
+  level:
+    root: INFO
+    com.huuhv.socialanalytics: INFO
+
+# Cấu hình riêng của ứng dụng — bind vào com.huuhv.socialanalytics.config.AppProperties
+app:
+  pagination:
+    default-size: 20
+    max-size: 100

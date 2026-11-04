@@ -135,8 +135,11 @@ src/main/resources/
 
 | File | Vai trò |
 |---|---|
-| `application.yml` | Cấu hình chung: datasource, JPA (`ddl-auto=validate`), Flyway, Artemis |
-| `application-dev.yml` / `application-test.yml` | Cấu hình theo profile (bổ sung ở Task 1.2) |
+| `application.yml` | Cấu hình chung, an toàn cho production: datasource, JPA (`ddl-auto=validate`), Flyway, Artemis, ẩn chi tiết lỗi, `app.*` |
+| `application-dev.yml` | Profile `dev`: log DEBUG cho app, SQL, Security (`-Dspring-boot.run.profiles=dev`) |
+| `application-test.yml` | Profile `test` cho test (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
+| `logback-spring.xml` | Log console + file theo ngày trong `logs/` (giữ 30 ngày), pattern kèm MDC `jobId` / `importId` |
+| `config/AppProperties` | Bind cấu hình `app.*` (record + validation), vd `app.pagination.default-size` / `max-size` |
 | `.env` | Giá trị bí mật cho môi trường local — copy từ `.env.example` |
 | `docker-compose.yaml` | MySQL 8.4 + ActiveMQ Artemis + app, và service `maven` (JDK 25) để chạy lệnh Maven |
 | `Dockerfile` | Build multi-stage: JDK 25 build JAR → JRE 25 chạy app bằng user không phải root |
@@ -149,6 +152,7 @@ src/main/resources/
 | `MYSQL_ROOT_PASSWORD` | ✅ (compose) | Mật khẩu root của container MySQL |
 | `DB_HOST` / `DB_PORT` / `DB_NAME` | — | Mặc định `localhost` / `33069` / `social_analytics`. `DB_PORT` là port MySQL mở ra máy host; app chạy trong Docker luôn dùng `mysql:3306` |
 | `APP_PORT` | — | Port app mở ra máy host khi chạy bằng Docker (mặc định `8080`) |
+| `LOG_PATH` | — | Thư mục log file (mặc định `logs`; trong Docker là `/app/logs`) |
 | `ARTEMIS_USER` / `ARTEMIS_PASSWORD` | ✅ | Tài khoản broker Artemis |
 | `ARTEMIS_HOST` / `ARTEMIS_PORT` | — | Mặc định `localhost` / `61616` |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | Từ giai đoạn 3 | OAuth2 credentials từ Facebook Developers |

@@ -18,7 +18,9 @@ RUN --mount=type=cache,target=/root/.m2 sh ./mvnw -B -q package -DskipTests \
 FROM eclipse-temurin:25-jre
 WORKDIR /app
 
-RUN groupadd --system spring && useradd --system --gid spring --no-create-home spring
+# Thư mục logs/ (logback-spring.xml) phải ghi được bởi user spring
+RUN groupadd --system spring && useradd --system --gid spring --no-create-home spring \
+    && mkdir -p /app/logs && chown spring:spring /app/logs
 COPY --from=build --chown=spring:spring /workspace/app.jar app.jar
 USER spring
 
