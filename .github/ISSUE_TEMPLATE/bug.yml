@@ -1,0 +1,116 @@
+name: Bug Report
+description: Báo cáo lỗi (không dùng cho lỗ hổng bảo mật)
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > ⚠️ **Lỗ hổng bảo mật** (lộ token/secret, bypass đăng nhập/phân quyền, injection, IDOR...) **không tạo issue công khai**.
+        > Báo kín qua [Security Advisory](https://github.com/huuhv-0372/social-analytics/security/advisories/new) — xem [SECURITY.md](https://github.com/huuhv-0372/social-analytics/blob/main/.github/SECURITY.md).
+  - type: input
+    id: redmine-ticket
+    attributes:
+      label: Redmine Ticket
+      placeholder: "#1234"
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Roadmap phase
+      description: Theo CLAUDE.md mục 10
+      options:
+        - 1. Khởi tạo project
+        - 2. Unit Test + Excel
+        - 3. Security + CSRF + Social Login
+        - 4. Background Job & Multithread
+        - 5. JMS
+        - 6. WebSocket + Chart
+        - 7. Spring-WS + Reflection + Tổng kết
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Thành phần bị lỗi
+      options:
+        - Login OAuth2 (Facebook)
+        - Login OAuth2 (Twitter/X)
+        - Import Excel
+        - Export Excel
+        - Scheduled job (update metrics)
+        - JMS / DLQ
+        - WebSocket / Chart
+        - SOAP WebService
+        - REST API
+        - Màn hình Thymeleaf
+        - Khác
+    validations:
+      required: true
+  - type: input
+    id: screen
+    attributes:
+      label: Màn hình / URL / Endpoint
+      description: Để trống nếu lỗi chạy ngầm (job, JMS listener...)
+      placeholder: /dashboard hoặc POST /api/import-posts
+  - type: textarea
+    id: description
+    attributes:
+      label: Mô tả lỗi
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Các bước tái tạo
+      placeholder: |
+        1. Đăng nhập bằng Facebook
+        2. Vào /posts, upload file posts.xlsx (đính kèm bên dưới)
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Kết quả mong đợi
+    validations:
+      required: true
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Kết quả thực tế
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Môi trường
+      options:
+        - Local (mvnw spring-boot:run, profile dev)
+        - Docker compose
+        - Test (CI)
+        - Demo (JAR)
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Trình duyệt / thiết bị
+      description: Chỉ cần điền nếu là lỗi UI
+      placeholder: Chrome 140, Windows 11
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Mức độ
+      options:
+        - Chặn (không dùng được tính năng)
+        - Nặng (sai logic/dữ liệu)
+        - Nhẹ (lệch UI, chữ)
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Ảnh chụp / log
+      description: |
+        Dán server log (kèm `jobId` / `importId` nếu có), lỗi console, hoặc đính kèm file Excel mẫu gây lỗi.
+        ⚠️ Xoá access token, client secret, cookie, CSRF token và dữ liệu thật trước khi dán.

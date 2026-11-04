@@ -1,0 +1,51 @@
+name: Task kỹ thuật
+description: Việc không phải tính năng hay bug (setup, cấu hình, refactor, test coverage, đóng gói, demo)
+title: "[Task] "
+labels: ["task"]
+body:
+  - type: input
+    id: redmine-ticket
+    attributes:
+      label: Redmine Ticket
+      placeholder: "#1234"
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Roadmap phase
+      description: Theo CLAUDE.md mục 10
+      options:
+        - 1. Khởi tạo project
+        - 2. Unit Test + Excel
+        - 3. Security + CSRF + Social Login
+        - 4. Background Job & Multithread
+        - 5. JMS
+        - 6. WebSocket + Chart
+        - 7. Spring-WS + Reflection + Tổng kết
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Mô tả
+      description: Cần làm gì, vì sao
+      placeholder: |
+        - Cấu hình Logback ghi log ra file theo ngày
+        - Thêm Swagger/OpenAPI cho các API hiện có
+    validations:
+      required: true
+  - type: input
+    id: estimate
+    attributes:
+      label: Estimate (giờ)
+      placeholder: "2"
+    validations:
+      required: true
+  - type: checkboxes
+    id: dod
+    attributes:
+      label: Definition of Done
+      description: Tick dần khi làm — không cần tick lúc tạo issue
+      options:
+        - label: Hoàn thành đúng mô tả
+        - label: "`./mvnw test` pass"
+        - label: Cập nhật CLAUDE.md / README nếu thay đổi lệnh, cấu hình, quy ước

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Báo cáo lỗ hổng bảo mật
+    url: https://github.com/huuhv-0372/social-analytics/security/advisories/new
+    about: Không tạo issue công khai cho lỗ hổng bảo mật — báo kín qua GitHub Security Advisory.
