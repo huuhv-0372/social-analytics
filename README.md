@@ -87,13 +87,15 @@ docker compose run --rm maven test                          # Chạy toàn bộ 
 docker compose run --rm maven test -Dtest=PostServiceTest   # Chạy 1 class test
 docker compose run --rm maven clean package -DskipTests     # Build file JAR vào target/
 
-# Hoặc bằng JDK local (cần MySQL đang chạy)
+# Hoặc bằng JDK local (cần MySQL đang chạy cho SocialAnalyticsApplicationTests)
 ./mvnw test
 ./mvnw clean package -DskipTests
 
 docker compose up -d --build app     # Build lại image và chạy app sau khi sửa code
 docker compose down                  # Dừng tất cả (thêm -v để xoá cả dữ liệu MySQL/Artemis)
 ```
+
+Test repository (`@DataJpaTest`) chạy trên MySQL riêng do **Testcontainers** tạo (`TestcontainersConfiguration`, image `mysql:8.4`) — cần Docker đang chạy, không đọc/ghi vào DB dev. Container được tạo 1 lần và dùng chung cho các test class cùng cấu hình.
 
 ## Project Structure
 
@@ -165,6 +167,14 @@ src/main/resources/
 Dùng **Flyway**, tự chạy khi ứng dụng khởi động. File đặt tại `src/main/resources/db/migration` với quy ước tên `V<n>__<mo_ta>.sql` (vd `V1__init_schema.sql`).
 
 Quy ước: tên bảng số nhiều, snake_case (`users`, `posts`, `social_metrics`...); `ddl-auto=validate` nên schema chỉ thay đổi qua migration. **Không sửa migration đã commit** — muốn đổi schema thì thêm file version mới.
+
+Schema hiện tại (`V1__init_schema.sql`):
+
+| Bảng | Mô tả | Ràng buộc / index chính |
+|---|---|---|
+| `users` | Người dùng (email có thể NULL vì X không trả email), `role` USER/ADMIN | `uk_users_email` |
+| `posts` | Bài viết FB/X, `user_id` là chủ sở hữu (phân quyền theo owner) | `uk_posts_provider_external_id (provider, external_id)`, FK `users` |
+| `social_metrics` | Snapshot likes/shares/comments/followers theo `collected_at` — mỗi lần crawl thêm 1 dòng | `idx_social_metrics_post_collected (post_id, collected_at)`, FK `posts` `ON DELETE CASCADE` |
 
 ## Xử Lý Lỗi
 

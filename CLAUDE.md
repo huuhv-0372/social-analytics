@@ -94,6 +94,9 @@ Luồng chuẩn: `Controller → Service → Repository`. Scheduler, JMS listene
 - Tên bảng số nhiều, snake_case (`users`, `social_accounts`, `posts`, `social_metrics`).
 - `@Entity` + `@Table(name = "...")`; Lombok `@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder`. **Không** dùng `@Data` trên Entity.
 - Mọi quan hệ để `FetchType.LAZY` (kể cả `@ManyToOne`, vì mặc định của nó là EAGER).
+- Quan hệ chỉ map một chiều `@ManyToOne` (`Post → User`, `SocialMetric → Post`); không thêm `@OneToMany` ngược — lấy danh sách con qua repository. Không override `equals`/`hashCode` trên Entity.
+- Entity có `created_at`/`updated_at` kế thừa `entity/AuditableEntity` (`@CreationTimestamp`/`@UpdateTimestamp` của Hibernate, không dùng JPA Auditing). Thời gian dùng `LocalDateTime` ↔ `DATETIME(6)`; enum lưu `@Enumerated(EnumType.STRING)` ↔ `VARCHAR`.
+- Xoá `Post` sẽ xoá snapshot `social_metrics` (FK `ON DELETE CASCADE`); `users → posts` không cascade.
 - Schema chỉ thay đổi qua Flyway migration (`V{n}__mo_ta.sql`), `spring.jpa.hibernate.ddl-auto=validate`. Không sửa migration đã commit — tạo version mới.
 - `SocialMetric` lưu dạng **snapshot theo thời gian** (mỗi lần crawl là 1 bản ghi có `collected_at`) để vẽ biểu đồ xu hướng; truy vấn "metric mới nhất" viết query riêng.
 - Thêm index cho các cột lọc/tra cứu thường xuyên (`posts.external_id` + `provider` unique, `social_metrics(post_id, collected_at)`).
@@ -237,7 +240,7 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 - Cấu trúc test mirror package của `src/main`; tên class `XxxTest` (unit) / `XxxIT` (integration).
 - Service: JUnit 5 + Mockito (`@ExtendWith(MockitoExtension.class)`), không khởi động Spring context.
 - Controller: `@WebMvcTest` + `MockMvc` + `@MockitoBean` cho Service; test có POST phải kèm `.with(csrf())` và user giả lập (`@WithMockUser` hoặc `oauth2Login()`).
-- Repository: `@DataJpaTest` cho query custom (`@Query`, projection).
+- Repository: `@DataJpaTest` cho query custom (`@Query`, projection), kèm `@AutoConfigureTestDatabase(replace = NONE)` + `@Import(TestcontainersConfiguration.class)` để chạy trên MySQL Testcontainers — không bao giờ chạy test ghi dữ liệu vào DB dev.
 - Excel: test importer/exporter với workbook tạo trong bộ nhớ (round-trip export → import).
 - Integration test cuối: `@SpringBootTest` chạy luồng import → JMS → cập nhật thống kê → WebSocket event. Ưu tiên Testcontainers (MySQL) nếu có Docker, vì migration viết cho MySQL.
 - Test bảo mật bắt buộc cho mỗi endpoint mới: chưa đăng nhập → 401/redirect login; thiếu CSRF → 403; truy cập tài nguyên của user khác → 403/404 (IDOR); input không hợp lệ → 400. Với Excel: file sai định dạng, quá dung lượng, chứa công thức (`=...`).
