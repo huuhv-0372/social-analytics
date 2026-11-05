@@ -61,6 +61,8 @@ services:
     container_name: social-analytics-app
     environment:
       <<: *app-env
+      # Compose dùng cho môi trường local → mặc định profile dev (bật Swagger, log DEBUG)
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     depends_on:

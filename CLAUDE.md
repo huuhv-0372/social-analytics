@@ -54,6 +54,8 @@ Windows dùng `mvnw.cmd`, Mac/Linux dùng `./mvnw`:
   - Chạy Maven trong container JDK 25, không cần JDK local: `docker compose run --rm maven test` (thay `test` bằng goal bất kỳ)
   - Trong mạng Docker, app/maven kết nối `mysql:3306`, `artemis:61616`; `DB_PORT` trong `.env` chỉ là port mở ra máy host.
 - Swagger UI: `http://localhost:8080/swagger-ui.html` — chỉ dùng trên trình duyệt, **không** hardcode trong code/template.
+  - Chỉ bật ở profile `dev` (`springdoc.*.enabled` tắt trong `application.yml`, bật trong `application-dev.yml`); container `app` mặc định `SPRING_PROFILES_ACTIVE=dev`.
+  - Title/version + security scheme `basicAuth` khai báo ở `config/OpenApiConfig`. Controller mới thêm `@Tag` + `@Operation(summary = ...)`, tham số `Pageable` dùng `@ParameterObject`.
 
 ## 4. Kiến Trúc Mã Nguồn
 Kiến trúc 3 lớp, package gốc **`com.huuhv.socialanalytics`**:
@@ -189,7 +191,7 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 ## 6. Hướng Dẫn Theo Từng Mảng
 
 ### 6.1. Security, CSRF & OAuth2 Login
-> **Trạng thái tạm thời (Task 1.4 → Task 3.1):** `config/SecurityConfig` đang `permitAll` + bỏ CSRF cho `/api/**` và public Swagger để thử API; danh tính gửi bằng HTTP Basic (`spring.security.user.*` ← env `API_USER_NAME`/`API_USER_PASSWORD`), `CurrentUserServiceImpl` map username → `User.email` và tạo mới nếu chưa có. Request ẩn danh bị Service từ chối 401. Task 3.1 phải gỡ bỏ các ngoại lệ này theo các quy tắc bên dưới.
+> **Trạng thái tạm thời (Task 1.4 → Task 3.1):** `config/SecurityConfig` đang `permitAll` + bỏ CSRF cho `/api/**` và public Swagger (khi bật profile dev) để thử API; danh tính gửi bằng HTTP Basic (`spring.security.user.*` ← env `API_USER_NAME`/`API_USER_PASSWORD`), `CurrentUserServiceImpl` map username → `User.email` và tạo mới nếu chưa có. Request ẩn danh bị Service từ chối 401. Task 3.1 phải gỡ bỏ các ngoại lệ này theo các quy tắc bên dưới.
 
 - **Giữ CSRF bật** cho cả web lẫn API (app dùng session sau OAuth2 login). Không `csrf.disable()` để "cho nhanh".
 - Form Thymeleaf dùng `th:action="@{...}"` để tự chèn hidden `_csrf`. JS `fetch`/upload đọc token từ `<meta name="_csrf">` + `<meta name="_csrf_header">` trong layout và gửi kèm header.
@@ -266,7 +268,7 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 
 ## 10. Lộ Trình & Trạng Thái
 Cập nhật checkbox khi hoàn thành từng giai đoạn để AI biết phạm vi hiện tại:
-- [ ] **1. Khởi tạo project**: cấu trúc nền, config, logging, JPA + MySQL + Flyway, entity `User`/`Post`/`SocialMetric`, CRUD `/api/posts`, `/api/metrics`, Swagger.
+- [x] **1. Khởi tạo project**: cấu trúc nền, config, logging, JPA + MySQL + Flyway, entity `User`/`Post`/`SocialMetric`, CRUD `/api/posts`, `/api/metrics`, Swagger.
 - [ ] **2. Unit Test + Excel**: test `PostService`, `MetricService`, controller; `/api/import-posts`, `/api/export-report`; Reflection mapping.
 - [ ] **3. Security + CSRF + Social Login**: Facebook & Twitter login → `/dashboard`, lưu token & user.
 - [ ] **4. Background Job & Multithread**: `updateSocialMetricsJob` mỗi giờ, mock API, màn hình "Last updated time".

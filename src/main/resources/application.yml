@@ -42,6 +42,13 @@ server:
     include-binding-errors: never
     include-exception: false
 
+# Swagger / OpenAPI tắt mặc định (không public ở production — OWASP A01), chỉ bật ở profile dev
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
 logging:
   file:
     # Thư mục log file (logback-spring.xml), mỗi ngày 1 file

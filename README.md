@@ -67,15 +67,17 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
    ```bash
    docker compose up -d mysql artemis
 
-   mvnw.cmd spring-boot:run         # Windows
-   ./mvnw spring-boot:run           # Mac/Linux
+   mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=dev   # Windows
+   ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev     # Mac/Linux
    ```
+
+   Container `app` (cách A) mặc định chạy profile `dev` (`SPRING_PROFILES_ACTIVE` trong `.env`). Không bật `dev` thì Swagger UI bị tắt.
 
    Flyway tự tạo bảng khi app khởi động.
 
 3. Truy cập:
    - Ứng dụng: http://localhost:8080
-   - Swagger UI (sau Task 1.5): http://localhost:8080/swagger-ui.html
+   - Swagger UI (chỉ profile `dev`): http://localhost:8080/swagger-ui.html — bấm **Authorize**, nhập `API_USER_NAME` / `API_USER_PASSWORD` để gọi thử API
    - Artemis console: http://localhost:8161 (tài khoản `ARTEMIS_USER` / `ARTEMIS_PASSWORD`)
    - MySQL từ máy host (DBeaver, Workbench...): `localhost:33069` (theo `DB_PORT` trong `.env`)
 
@@ -137,8 +139,9 @@ src/main/resources/
 
 | File | Vai trò |
 |---|---|
-| `application.yml` | Cấu hình chung, an toàn cho production: datasource, JPA (`ddl-auto=validate`), Flyway, Artemis, ẩn chi tiết lỗi, `app.*` |
-| `application-dev.yml` | Profile `dev`: log DEBUG cho app, SQL, Security (`-Dspring-boot.run.profiles=dev`) |
+| `application.yml` | Cấu hình chung, an toàn cho production: datasource, JPA (`ddl-auto=validate`), Flyway, Artemis, ẩn chi tiết lỗi, tắt Swagger, `app.*` |
+| `application-dev.yml` | Profile `dev`: bật Swagger UI, log DEBUG cho app, SQL, Security (`-Dspring-boot.run.profiles=dev`) |
+| `config/OpenApiConfig` | Thông tin tài liệu OpenAPI (title, version) + khai báo HTTP Basic cho nút Authorize của Swagger UI |
 | `application-test.yml` | Profile `test` cho test (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
 | `logback-spring.xml` | Log console + file theo ngày trong `logs/` (giữ 30 ngày), pattern kèm MDC `jobId` / `importId` |
 | `config/AppProperties` | Bind cấu hình `app.*` (record + validation), vd `app.pagination.default-size` / `max-size` |
@@ -154,6 +157,7 @@ src/main/resources/
 | `MYSQL_ROOT_PASSWORD` | ✅ (compose) | Mật khẩu root của container MySQL |
 | `DB_HOST` / `DB_PORT` / `DB_NAME` | — | Mặc định `localhost` / `33069` / `social_analytics`. `DB_PORT` là port MySQL mở ra máy host; app chạy trong Docker luôn dùng `mysql:3306` |
 | `APP_PORT` | — | Port app mở ra máy host khi chạy bằng Docker (mặc định `8080`) |
+| `SPRING_PROFILES_ACTIVE` | — | Profile của container `app` (mặc định `dev`). Đặt profile khác (vd `prod`) để chạy cấu hình production-safe, Swagger tắt |
 | `LOG_PATH` | — | Thư mục log file (mặc định `logs`; trong Docker là `/app/logs`) |
 | `ARTEMIS_USER` / `ARTEMIS_PASSWORD` | ✅ | Tài khoản broker Artemis |
 | `API_USER_NAME` / `API_USER_PASSWORD` | — | **Tạm thời tới giai đoạn 3:** tài khoản HTTP Basic để gọi `/api/**`. Mặc định `dev@social-analytics.local`; để trống mật khẩu thì Spring sinh ngẫu nhiên và in ra log |
