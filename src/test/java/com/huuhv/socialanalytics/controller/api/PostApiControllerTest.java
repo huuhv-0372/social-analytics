@@ -32,9 +32,11 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -187,10 +189,38 @@ class PostApiControllerTest {
     }
 
     @Test
+    void updateWithInvalidBodyReturns400() throws Exception {
+        String body = VALID_BODY.replace("\"fb-1\"", "\"\"");
+
+        mockMvc.perform(put("/api/posts/10").with(user("dev@example.com")).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[*].field", hasItem("externalId")));
+        verifyNoInteractions(postService);
+    }
+
+    @Test
+    void updateOfOtherUsersPostReturns404() throws Exception {
+        when(postService.update(eq(99L), any(PostRequest.class))).thenThrow(new ResourceNotFoundException("Post"));
+
+        mockMvc.perform(put("/api/posts/99").with(user("dev@example.com")).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void deleteReturns204() throws Exception {
         mockMvc.perform(delete("/api/posts/10").with(user("dev@example.com")).with(csrf()))
                 .andExpect(status().isNoContent());
         verify(postService).delete(10L);
+    }
+
+    @Test
+    void deleteOfOtherUsersPostReturns404() throws Exception {
+        doThrow(new ResourceNotFoundException("Post")).when(postService).delete(99L);
+
+        mockMvc.perform(delete("/api/posts/99").with(user("dev@example.com")).with(csrf()))
+                .andExpect(status().isNotFound());
     }
 
     @Test

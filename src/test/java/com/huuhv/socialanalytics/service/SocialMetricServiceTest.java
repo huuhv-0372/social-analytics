@@ -103,6 +103,28 @@ class SocialMetricServiceTest {
     }
 
     @Test
+    void findLatestReturnsNewestSnapshot() {
+        when(socialMetricRepository.findTopByPostIdOrderByCollectedAtDesc(10L)).thenReturn(Optional.of(metric(7L)));
+
+        SocialMetricResponse response = socialMetricService.findLatest(10L);
+
+        verify(postService).checkOwnedPost(10L);
+        assertThat(response.id()).isEqualTo(7L);
+        assertThat(response.collectedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void findByIdReturnsMetricOfOwnedPost() {
+        givenCurrentUser();
+        when(socialMetricRepository.findByIdAndPostUserId(5L, OWNER_ID)).thenReturn(Optional.of(metric(5L)));
+
+        SocialMetricResponse response = socialMetricService.findById(5L);
+
+        assertThat(response.id()).isEqualTo(5L);
+        assertThat(response.postId()).isEqualTo(10L);
+    }
+
+    @Test
     void findByIdOfOtherUserIsNotFound() {
         givenCurrentUser();
         when(socialMetricRepository.findByIdAndPostUserId(5L, OWNER_ID)).thenReturn(Optional.empty());
@@ -145,6 +167,17 @@ class SocialMetricServiceTest {
         assertThatThrownBy(() -> socialMetricService.delete(5L))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(socialMetricRepository, never()).delete(any());
+    }
+
+    @Test
+    void deleteRemovesMetricOfOwnedPost() {
+        givenCurrentUser();
+        SocialMetric existing = metric(5L);
+        when(socialMetricRepository.findByIdAndPostUserId(5L, OWNER_ID)).thenReturn(Optional.of(existing));
+
+        socialMetricService.delete(5L);
+
+        verify(socialMetricRepository).delete(existing);
     }
 
     private void givenCurrentUser() {

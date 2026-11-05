@@ -5,6 +5,8 @@ import com.huuhv.socialanalytics.config.WebConfig;
 import com.huuhv.socialanalytics.dto.request.SocialMetricRequest;
 import com.huuhv.socialanalytics.dto.response.PageResponse;
 import com.huuhv.socialanalytics.dto.response.SocialMetricResponse;
+import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
+import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
 import com.huuhv.socialanalytics.service.SocialMetricService;
 import org.junit.jupiter.api.Test;
@@ -23,6 +25,7 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -32,6 +35,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -82,6 +86,67 @@ class SocialMetricApiControllerTest {
                         .with(user("dev@example.com")))
                 .andExpect(status().isBadRequest());
         verifyNoInteractions(socialMetricService);
+    }
+
+    @Test
+    void listWithInvertedRangeReturns400() throws Exception {
+        when(socialMetricService.findByPost(eq(10L), any(), any(), any(Pageable.class)))
+                .thenThrow(new BadRequestException("from must not be after to"));
+
+        mockMvc.perform(get("/api/metrics").param("postId", "10")
+                        .param("from", "2026-02-01T00:00:00").param("to", "2026-01-01T00:00:00")
+                        .with(user("dev@example.com")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("from must not be after to"));
+    }
+
+    @Test
+    void listWithInvalidSortReturns400() throws Exception {
+        when(socialMetricService.findByPost(eq(10L), any(), any(), any(Pageable.class)))
+                .thenThrow(new BadRequestException("Sort property is not allowed"));
+
+        mockMvc.perform(get("/api/metrics").param("postId", "10").param("sort", "post.user.email")
+                        .with(user("dev@example.com")))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON));
+    }
+
+    @Test
+    void requestWithoutAuthenticationReturns401() throws Exception {
+        when(socialMetricService.findLatest(10L)).thenThrow(new AuthenticationRequiredException());
+
+        mockMvc.perform(get("/api/metrics/latest").param("postId", "10"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().exists(HttpHeaders.WWW_AUTHENTICATE));
+    }
+
+    @Test
+    void latestReturnsNewestSnapshot() throws Exception {
+        when(socialMetricService.findLatest(10L)).thenReturn(response(7L));
+
+        mockMvc.perform(get("/api/metrics/latest").param("postId", "10").with(user("dev@example.com")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(7))
+                .andExpect(jsonPath("$.collectedAt").value("2026-01-01T12:00:00"));
+    }
+
+    @Test
+    void getReturnsMetric() throws Exception {
+        when(socialMetricService.findById(5L)).thenReturn(response(5L));
+
+        mockMvc.perform(get("/api/metrics/5").with(user("dev@example.com")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(5))
+                .andExpect(jsonPath("$.likes").value(100));
+    }
+
+    @Test
+    void getOfOtherUsersMetricReturns404() throws Exception {
+        when(socialMetricService.findById(99L)).thenThrow(new ResourceNotFoundException("Metric"));
+
+        mockMvc.perform(get("/api/metrics/99").with(user("dev@example.com")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.detail").value("Metric not found"));
     }
 
     @Test
@@ -142,6 +207,28 @@ class SocialMetricApiControllerTest {
         mockMvc.perform(delete("/api/metrics/5").with(user("dev@example.com")).with(csrf()))
                 .andExpect(status().isNoContent());
         verify(socialMetricService).delete(5L);
+    }
+
+    @Test
+    void deleteOfOtherUsersMetricReturns404() throws Exception {
+        doThrow(new ResourceNotFoundException("Metric")).when(socialMetricService).delete(99L);
+
+        mockMvc.perform(delete("/api/metrics/99").with(user("dev@example.com")).with(csrf()))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void writeWithoutCsrfTokenReturns403() throws Exception {
+        String body = """
+                {"postId":10,"likes":1,"shares":1,"comments":1,"followers":1,"collectedAt":"2026-01-01T12:00:00"}
+                """;
+
+        mockMvc.perform(post("/api/metrics").with(user("dev@example.com"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/api/metrics/5").with(user("dev@example.com")))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(socialMetricService);
     }
 
     private static SocialMetricResponse response(Long id) {

@@ -75,6 +75,16 @@ class PostServiceTest {
     }
 
     @Test
+    void findByIdReturnsOwnedPost() {
+        when(postRepository.findByIdAndUserId(10L, OWNER_ID)).thenReturn(Optional.of(post(10L)));
+
+        PostResponse response = postService.findById(10L);
+
+        assertThat(response.id()).isEqualTo(10L);
+        assertThat(response.externalId()).isEqualTo("fb-10");
+    }
+
+    @Test
     void findByIdOfOtherUserIsNotFound() {
         when(postRepository.findByIdAndUserId(99L, OWNER_ID)).thenReturn(Optional.empty());
 
@@ -128,6 +138,27 @@ class PostServiceTest {
         assertThat(response.provider()).isEqualTo(Provider.TWITTER);
         assertThat(existing.getUrl()).isEqualTo("https://x.com/owner/status/1");
         assertThat(existing.getUser()).isSameAs(owner);
+    }
+
+    @Test
+    void updateRejectsDuplicateOfAnotherOwnedPost() {
+        Post existing = post(10L);
+        when(postRepository.findByIdAndUserId(10L, OWNER_ID)).thenReturn(Optional.of(existing));
+        when(postRepository.existsByUserIdAndProviderAndExternalIdAndIdNot(OWNER_ID, Provider.FACEBOOK, "fb-1", 10L)).thenReturn(true);
+
+        assertThatThrownBy(() -> postService.update(10L, request(Provider.FACEBOOK, "https://facebook.com/posts/1")))
+                .isInstanceOf(DuplicateResourceException.class);
+        verify(postRepository, never()).saveAndFlush(any());
+        assertThat(existing.getExternalId()).isEqualTo("fb-10");
+    }
+
+    @Test
+    void updateRejectsUrlOutsideProviderDomain() {
+        when(postRepository.findByIdAndUserId(10L, OWNER_ID)).thenReturn(Optional.of(post(10L)));
+
+        assertThatThrownBy(() -> postService.update(10L, request(Provider.TWITTER, "https://facebook.com/posts/1")))
+                .isInstanceOf(BadRequestException.class);
+        verify(postRepository, never()).saveAndFlush(any());
     }
 
     @Test
