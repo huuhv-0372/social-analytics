@@ -1,0 +1,14 @@
+# Không đưa secret, output build và file IDE vào build context
+.env
+.env.*
+!.env.example
+target/
+logs/
+uploads/
+.git/
+.github/
+.claude/
+.idea/
+.vscode/
+*.iml
+*.log

@@ -48,7 +48,11 @@ Windows dùng `mvnw.cmd`, Mac/Linux dùng `./mvnw`:
 - Chạy toàn bộ test: `./mvnw test`
 - Chạy 1 class test: `./mvnw test -Dtest=PostServiceTest`
 - Sinh class JAXB từ XSD/WSDL: `./mvnw generate-sources`
-- Hạ tầng local (MySQL, Artemis): `docker compose up -d` (file `compose.yaml` ở root)
+- Docker (file `docker-compose.yaml` + `Dockerfile` ở root; trước tiên copy `.env.example` → `.env`, điền mật khẩu):
+  - Chạy toàn bộ (MySQL + Artemis + app): `docker compose up -d --build`
+  - Chỉ hạ tầng, app chạy bằng JDK local: `docker compose up -d mysql artemis` (app tự đọc `.env` qua `spring.config.import`)
+  - Chạy Maven trong container JDK 25, không cần JDK local: `docker compose run --rm maven test` (thay `test` bằng goal bất kỳ)
+  - Trong mạng Docker, app/maven kết nối `mysql:3306`, `artemis:61616`; `DB_PORT` trong `.env` chỉ là port mở ra máy host.
 - Swagger UI: `http://localhost:8080/swagger-ui.html` — chỉ dùng trên trình duyệt, **không** hardcode trong code/template.
 
 ## 4. Kiến Trúc Mã Nguồn
@@ -112,6 +116,7 @@ Luồng chuẩn: `Controller → Service → Repository`. Scheduler, JMS listene
 - Log lỗi kèm exception: `log.error("Crawl failed for post {}", postId, e)`.
 - **Không bao giờ log** access token, client secret, cookie, CSRF token.
 - Job/listener/async task đặt MDC (`jobId`, `importId`) để trace log đa luồng; nhớ `MDC.clear()` trong `finally`.
+- `logback-spring.xml`: console + file theo ngày (`${LOG_PATH:logs}/social-analytics.yyyy-MM-dd.i.log`, 10MB/file, giữ 30 ngày); profile `test` chỉ log console. Pattern đã in sẵn `jobId`/`importId` và bỏ CR/LF trong message — thêm khoá MDC mới thì cập nhật `LOG_PATTERN`. Mức log theo package chỉnh ở `application*.yml`.
 
 ### 5.6. Bảo Mật — OWASP Secure Coding
 Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 10 (bản 2025)**. Khi viết hoặc review code, kiểm tra theo các nhóm dưới đây. Nếu một yêu cầu tính năng buộc phải làm trái quy tắc nào, dừng lại và nêu rõ rủi ro trước khi code.
@@ -240,7 +245,8 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 
 ## 8. Cấu Hình & Môi Trường
 - Dùng `application.yml` + `application-dev.yml` / `application-test.yml`. Giá trị nhạy cảm dùng `${ENV_VAR}`.
-- Cấu hình riêng của app gom dưới prefix `app.*` và bind bằng `@ConfigurationProperties` (record), không rải `@Value`.
+- `application.yml` là cấu hình an toàn cho production (không show-sql, không trả stacktrace/message lỗi); `dev` chỉ tăng mức log; test dùng `@ActiveProfiles("test")`.
+- Cấu hình riêng của app gom dưới prefix `app.*` và bind bằng `@ConfigurationProperties` (record), không rải `@Value`. Tất cả nằm trong `config/AppProperties` (nested record theo nhóm, có Bean Validation + `@DefaultValue` để fail fast khi sai cấu hình); thêm nhóm mới thì thêm nested record + giá trị trong `application.yml` + test binding trong `AppPropertiesTest`.
 - `.env`, file Excel mẫu chứa dữ liệu thật, thư mục `logs/` phải nằm trong `.gitignore`.
 
 ## 9. Quy Trình Git

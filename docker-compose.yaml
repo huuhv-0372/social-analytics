@@ -1,0 +1,89 @@
+# Chạy toàn bộ trong Docker, không cần JDK/Maven trên máy:
+#   docker compose up -d --build            # MySQL + Artemis + app (http://localhost:8080)
+#   docker compose run --rm maven test      # Chạy lệnh Maven bất kỳ trong container JDK 25
+#   docker compose up -d mysql artemis      # Chỉ hạ tầng, app chạy bằng JDK local
+# Biến môi trường lấy từ file .env (copy từ .env.example)
+
+# Thông tin kết nối dùng chung cho app và maven — trong mạng Docker dùng tên service + port nội bộ
+x-app-env: &app-env
+  DB_HOST: mysql
+  DB_PORT: 3306
+  DB_NAME: ${DB_NAME:-social_analytics}
+  DB_USERNAME: ${DB_USERNAME:?DB_USERNAME is required}
+  DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+  ARTEMIS_HOST: artemis
+  ARTEMIS_PORT: 61616
+  ARTEMIS_USER: ${ARTEMIS_USER:?ARTEMIS_USER is required}
+  ARTEMIS_PASSWORD: ${ARTEMIS_PASSWORD:?ARTEMIS_PASSWORD is required}
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: social-analytics-mysql
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:-social_analytics}
+      MYSQL_USER: ${DB_USERNAME:?DB_USERNAME is required}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "127.0.0.1:${DB_PORT:-33069}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      # Ping qua TCP (127.0.0.1) thay vì socket: lúc khởi tạo lần đầu MySQL chạy server tạm với --skip-networking,
+      # ping qua socket sẽ báo healthy quá sớm khiến app bị "Connection refused"
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  artemis:
+    image: apache/activemq-artemis:2.38.0
+    container_name: social-analytics-artemis
+    environment:
+      ARTEMIS_USER: ${ARTEMIS_USER:?ARTEMIS_USER is required}
+      ARTEMIS_PASSWORD: ${ARTEMIS_PASSWORD:?ARTEMIS_PASSWORD is required}
+    ports:
+      - "127.0.0.1:${ARTEMIS_PORT:-61616}:61616"   # JMS (core / OpenWire)
+      - "127.0.0.1:8161:8161"                       # Web console
+    volumes:
+      - artemis-data:/var/lib/artemis-instance
+
+  app:
+    build: .
+    image: social-analytics:local
+    container_name: social-analytics-app
+    environment:
+      <<: *app-env
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      artemis:
+        condition: service_started
+
+  # Container JDK 25 để chạy lệnh Maven (test, package...) mà không cần cài JDK local.
+  # Chỉ chạy khi gọi: docker compose run --rm maven <goal>
+  maven:
+    image: eclipse-temurin:25-jdk
+    profiles: ["tools"]
+    working_dir: /workspace
+    entrypoint: ["sh", "./mvnw", "-B"]
+    command: ["test"]
+    environment:
+      <<: *app-env
+    volumes:
+      - .:/workspace
+      - maven-repo:/root/.m2
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  mysql-data:
+  artemis-data:
+  maven-repo:
