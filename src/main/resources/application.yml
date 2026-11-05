@@ -24,7 +24,7 @@ spring:
 
   security:
     # TẠM THỜI tới Task 3.1: user HTTP Basic để gọi /api/**. Username dùng làm email của User (owner).
-    # Để trống API_USER_PASSWORD thì Spring sinh mật khẩu ngẫu nhiên và in ra log lúc khởi động.
+    # API_USER_PASSWORD bắt buộc: để trống thì app dừng khởi động (SecurityConfig), không sinh mật khẩu in ra log.
     user:
       name: ${API_USER_NAME:dev@social-analytics.local}
       password: ${API_USER_PASSWORD:}
@@ -48,6 +48,9 @@ springdoc:
     enabled: false
   swagger-ui:
     enabled: false
+    # Swagger UI đọc cookie XSRF-TOKEN và gửi header X-XSRF-TOKEN cho POST/PUT/DELETE
+    csrf:
+      enabled: true
 
 logging:
   file:

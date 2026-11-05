@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.service.impl;
+package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.dto.request.SocialMetricRequest;
 import com.huuhv.socialanalytics.dto.response.SocialMetricResponse;
@@ -7,9 +7,7 @@ import com.huuhv.socialanalytics.entity.SocialMetric;
 import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
-import com.huuhv.socialanalytics.repository.PostRepository;
 import com.huuhv.socialanalytics.repository.SocialMetricRepository;
-import com.huuhv.socialanalytics.service.CurrentUserService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -29,13 +27,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class SocialMetricServiceImplTest {
+class SocialMetricServiceTest {
 
     private static final long OWNER_ID = 1L;
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 1, 1, 12, 0);
@@ -44,13 +43,13 @@ class SocialMetricServiceImplTest {
     private SocialMetricRepository socialMetricRepository;
 
     @Mock
-    private PostRepository postRepository;
+    private PostService postService;
 
     @Mock
     private CurrentUserService currentUserService;
 
     @InjectMocks
-    private SocialMetricServiceImpl socialMetricService;
+    private SocialMetricService socialMetricService;
 
     private final User owner = User.builder().id(OWNER_ID).email("owner@example.com").displayName("Owner").build();
     private final Post post = Post.builder().id(10L).user(owner).build();
@@ -59,13 +58,12 @@ class SocialMetricServiceImplTest {
     void findByPostRejectsInvertedRangeBeforeQuerying() {
         assertThatThrownBy(() -> socialMetricService.findByPost(10L, NOW, NOW.minusDays(1), PageRequest.of(0, 20)))
                 .isInstanceOf(BadRequestException.class);
-        verifyNoInteractions(postRepository, socialMetricRepository);
+        verifyNoInteractions(postService, socialMetricRepository);
     }
 
     @Test
     void findByPostOfOtherUserIsNotFound() {
-        givenCurrentUser();
-        when(postRepository.findByIdAndUserId(99L, OWNER_ID)).thenReturn(Optional.empty());
+        doThrow(new ResourceNotFoundException("Post")).when(postService).checkOwnedPost(99L);
 
         assertThatThrownBy(() -> socialMetricService.findByPost(99L, null, null, PageRequest.of(0, 20)))
                 .isInstanceOf(ResourceNotFoundException.class);
@@ -74,12 +72,12 @@ class SocialMetricServiceImplTest {
 
     @Test
     void findByPostUsesDefaultSortCollectedAtDesc() {
-        givenOwnedPost();
         when(socialMetricRepository.search(eq(10L), eq(null), eq(NOW), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(metric(5L))));
 
         var result = socialMetricService.findByPost(10L, null, NOW, PageRequest.of(0, 20));
 
+        verify(postService).checkOwnedPost(10L);
         ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
         verify(socialMetricRepository).search(eq(10L), eq(null), eq(NOW), captor.capture());
         assertThat(captor.getValue().getSort()).isEqualTo(Sort.by(Sort.Direction.DESC, "collectedAt"));
@@ -87,12 +85,21 @@ class SocialMetricServiceImplTest {
     }
 
     @Test
+    void findLatestOfOtherUserIsNotFound() {
+        doThrow(new ResourceNotFoundException("Post")).when(postService).checkOwnedPost(99L);
+
+        assertThatThrownBy(() -> socialMetricService.findLatest(99L))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verifyNoInteractions(socialMetricRepository);
+    }
+
+    @Test
     void findLatestWithoutSnapshotIsNotFound() {
-        givenOwnedPost();
         when(socialMetricRepository.findTopByPostIdOrderByCollectedAtDesc(10L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> socialMetricService.findLatest(10L))
                 .isInstanceOf(ResourceNotFoundException.class);
+        verify(postService).checkOwnedPost(10L);
     }
 
     @Test
@@ -106,7 +113,7 @@ class SocialMetricServiceImplTest {
 
     @Test
     void createSavesSnapshotForOwnedPost() {
-        givenOwnedPost();
+        when(postService.getOwnedPost(10L)).thenReturn(post);
         when(socialMetricRepository.save(any(SocialMetric.class))).thenAnswer(invocation -> {
             SocialMetric metric = invocation.getArgument(0);
             metric.setId(5L);
@@ -123,8 +130,7 @@ class SocialMetricServiceImplTest {
 
     @Test
     void createForPostOfOtherUserIsNotFound() {
-        givenCurrentUser();
-        when(postRepository.findByIdAndUserId(99L, OWNER_ID)).thenReturn(Optional.empty());
+        when(postService.getOwnedPost(99L)).thenThrow(new ResourceNotFoundException("Post"));
 
         assertThatThrownBy(() -> socialMetricService.create(new SocialMetricRequest(99L, 1L, 1L, 1L, 1L, NOW)))
                 .isInstanceOf(ResourceNotFoundException.class);
@@ -143,11 +149,6 @@ class SocialMetricServiceImplTest {
 
     private void givenCurrentUser() {
         when(currentUserService.getCurrentUser()).thenReturn(owner);
-    }
-
-    private void givenOwnedPost() {
-        givenCurrentUser();
-        when(postRepository.findByIdAndUserId(10L, OWNER_ID)).thenReturn(Optional.of(post));
     }
 
     private SocialMetric metric(Long id) {

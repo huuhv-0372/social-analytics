@@ -68,14 +68,34 @@ class PostRepositoryTest {
     }
 
     @Test
-    void rejectsDuplicateProviderAndExternalId() {
+    void sameExternalIdIsAllowedForDifferentUsers() {
+        User owner = saveUser("owner@example.com");
+        User other = saveUser("other@example.com");
+        postRepository.saveAndFlush(newPost(owner, Provider.FACEBOOK, "fb-1"));
+
+        postRepository.saveAndFlush(newPost(other, Provider.FACEBOOK, "fb-1"));
+
+        assertThat(postRepository.existsByUserIdAndProviderAndExternalId(owner.getId(), Provider.FACEBOOK, "fb-1")).isTrue();
+        assertThat(postRepository.existsByUserIdAndProviderAndExternalId(owner.getId(), Provider.TWITTER, "fb-1")).isFalse();
+    }
+
+    @Test
+    void rejectsDuplicateProviderAndExternalIdOfSameUser() {
         User owner = saveUser("owner@example.com");
         postRepository.saveAndFlush(newPost(owner, Provider.FACEBOOK, "fb-1"));
 
-        assertThat(postRepository.existsByProviderAndExternalId(Provider.FACEBOOK, "fb-1")).isTrue();
-        assertThat(postRepository.existsByProviderAndExternalId(Provider.TWITTER, "fb-1")).isFalse();
         assertThatThrownBy(() -> postRepository.saveAndFlush(newPost(owner, Provider.FACEBOOK, "fb-1")))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void existsByIdAndUserIdChecksOwnership() {
+        User owner = saveUser("owner@example.com");
+        User other = saveUser("other@example.com");
+        Post post = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));
+
+        assertThat(postRepository.existsByIdAndUserId(post.getId(), owner.getId())).isTrue();
+        assertThat(postRepository.existsByIdAndUserId(post.getId(), other.getId())).isFalse();
     }
 
     @Test
@@ -84,8 +104,9 @@ class PostRepositoryTest {
         Post first = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));
         Post second = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-2"));
 
-        assertThat(postRepository.existsByProviderAndExternalIdAndIdNot(Provider.FACEBOOK, "fb-1", first.getId())).isFalse();
-        assertThat(postRepository.existsByProviderAndExternalIdAndIdNot(Provider.FACEBOOK, "fb-1", second.getId())).isTrue();
+        Long ownerId = owner.getId();
+        assertThat(postRepository.existsByUserIdAndProviderAndExternalIdAndIdNot(ownerId, Provider.FACEBOOK, "fb-1", first.getId())).isFalse();
+        assertThat(postRepository.existsByUserIdAndProviderAndExternalIdAndIdNot(ownerId, Provider.FACEBOOK, "fb-1", second.getId())).isTrue();
     }
 
     private User saveUser(String email) {

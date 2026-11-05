@@ -37,6 +37,8 @@ class PageableUtilsTest {
         Pageable pageable = PageRequest.of(0, 10, Sort.by("createdAt", "user.email"));
 
         assertThatThrownBy(() -> PageableUtils.withAllowedSort(pageable, ALLOWED, DEFAULT_SORT))
-                .isInstanceOf(BadRequestException.class);
+                .isInstanceOf(BadRequestException.class)
+                // Danh sách field được sắp xếp → thông điệp ổn định giữa các lần chạy
+                .hasMessage("Sort property is not allowed. Allowed: createdAt, provider");
     }
 }

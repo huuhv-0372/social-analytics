@@ -6,6 +6,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 
 import java.util.Set;
+import java.util.stream.Collectors;
 
 public final class PageableUtils {
 
@@ -21,7 +22,9 @@ public final class PageableUtils {
         }
         for (Sort.Order order : pageable.getSort()) {
             if (!allowedProperties.contains(order.getProperty())) {
-                throw new BadRequestException("Sort property is not allowed. Allowed: " + String.join(", ", allowedProperties));
+                // Sắp xếp để thông điệp ổn định (thứ tự duyệt Set.of thay đổi giữa các lần chạy JVM)
+                throw new BadRequestException("Sort property is not allowed. Allowed: "
+                        + allowedProperties.stream().sorted().collect(Collectors.joining(", ")));
             }
         }
         return pageable;

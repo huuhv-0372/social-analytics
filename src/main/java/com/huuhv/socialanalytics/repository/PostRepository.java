@@ -13,10 +13,14 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     /** Tìm theo id kèm điều kiện chủ sở hữu — dùng cho mọi thao tác theo id để chống IDOR. */
     Optional<Post> findByIdAndUserId(Long id, Long userId);
 
+    /** Chỉ kiểm tra quyền sở hữu, không load Entity. */
+    boolean existsByIdAndUserId(Long id, Long userId);
+
     Page<Post> findByUserId(Long userId, Pageable pageable);
 
-    boolean existsByProviderAndExternalId(Provider provider, String externalId);
+    /** Trùng bài trong phạm vi 1 user (unique {@code user_id, provider, external_id}). */
+    boolean existsByUserIdAndProviderAndExternalId(Long userId, Provider provider, String externalId);
 
     /** Kiểm tra trùng khi cập nhật, bỏ qua chính bản ghi đang sửa. */
-    boolean existsByProviderAndExternalIdAndIdNot(Provider provider, String externalId, Long id);
+    boolean existsByUserIdAndProviderAndExternalIdAndIdNot(Long userId, Provider provider, String externalId, Long id);
 }

@@ -72,7 +72,7 @@ com.huuhv.socialanalytics
 ├── entity/          # User, SocialAccount, Post, SocialMetric, ImportHistory ...
 ├── enums/           # Provider (FACEBOOK, TWITTER), ImportStatus, Role ...
 ├── repository/
-├── service/         # Toàn bộ business logic (interface + impl)
+├── service/         # Toàn bộ business logic — class @Service trực tiếp, không tách interface + impl
 ├── client/
 │   ├── social/      # SocialPlatformClient + FacebookMockClient, TwitterMockClient
 │   └── soap/        # Spring-WS client (WebServiceGatewaySupport)
@@ -85,6 +85,8 @@ com.huuhv.socialanalytics
 ```
 
 Luồng chuẩn: `Controller → Service → Repository`. Scheduler, JMS listener, WebSocket publisher cũng chỉ gọi **Service**, không gọi thẳng Repository.
+
+Service viết thẳng thành class (Spring proxy `@Transactional` bằng CGLIB, Mockito/`@MockitoBean` mock được class) — chỉ tạo interface khi thực sự có nhiều implementation (vd `SocialPlatformClient`). Không khai báo class/method `@Transactional` là `final` (CGLIB không override được). Service cần logic của service khác (vd kiểm tra quyền sở hữu) thì inject service đó, không lặp lại query.
 
 ## 5. Quy Chuẩn Code (BẮT BUỘC)
 
@@ -101,7 +103,7 @@ Luồng chuẩn: `Controller → Service → Repository`. Scheduler, JMS listene
 - Xoá `Post` sẽ xoá snapshot `social_metrics` (FK `ON DELETE CASCADE`); `users → posts` không cascade.
 - Schema chỉ thay đổi qua Flyway migration (`V{n}__mo_ta.sql`), `spring.jpa.hibernate.ddl-auto=validate`. Không sửa migration đã commit — tạo version mới.
 - `SocialMetric` lưu dạng **snapshot theo thời gian** (mỗi lần crawl là 1 bản ghi có `collected_at`) để vẽ biểu đồ xu hướng; truy vấn "metric mới nhất" viết query riêng.
-- Thêm index cho các cột lọc/tra cứu thường xuyên (`posts.external_id` + `provider` unique, `social_metrics(post_id, collected_at)`).
+- Thêm index cho các cột lọc/tra cứu thường xuyên (`posts(user_id, provider, external_id)` unique — trùng bài chỉ tính trong phạm vi 1 user để không lộ dữ liệu user khác; `social_metrics(post_id, collected_at)`).
 
 ### 5.3. Logic & Tối ưu
 - Thin Controller: validate (`@Valid`), gọi Service, trả DTO/View. Không đặt loop/tính toán trong Controller.
@@ -191,7 +193,7 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 ## 6. Hướng Dẫn Theo Từng Mảng
 
 ### 6.1. Security, CSRF & OAuth2 Login
-> **Trạng thái tạm thời (Task 1.4 → Task 3.1):** `config/SecurityConfig` đang `permitAll` + bỏ CSRF cho `/api/**` và public Swagger (khi bật profile dev) để thử API; danh tính gửi bằng HTTP Basic (`spring.security.user.*` ← env `API_USER_NAME`/`API_USER_PASSWORD`), `CurrentUserServiceImpl` map username → `User.email` và tạo mới nếu chưa có. Request ẩn danh bị Service từ chối 401. Task 3.1 phải gỡ bỏ các ngoại lệ này theo các quy tắc bên dưới.
+> **Trạng thái tạm thời (Task 1.4 → Task 3.1):** `config/SecurityConfig` đang `permitAll` cho `/api/**` và public Swagger (khi bật profile dev) để thử API; danh tính gửi bằng HTTP Basic (`spring.security.user.*` ← env `API_USER_NAME`/`API_USER_PASSWORD`, thiếu mật khẩu thì app không khởi động), `CurrentUserService` map username → `User.email` và tạo mới nếu chưa có (qua `UserProvisioningService`, transaction `REQUIRES_NEW` vì caller thường đang ở transaction `readOnly`). Request ẩn danh bị Service từ chối 401. CSRF **vẫn bật** cho `/api/**` theo kiểu SPA (`csrf.spa()`): cookie `XSRF-TOKEN` → header `X-XSRF-TOKEN`. Task 3.1 phải gỡ bỏ các ngoại lệ này theo các quy tắc bên dưới.
 
 - **Giữ CSRF bật** cho cả web lẫn API (app dùng session sau OAuth2 login). Không `csrf.disable()` để "cho nhanh".
 - Form Thymeleaf dùng `th:action="@{...}"` để tự chèn hidden `_csrf`. JS `fetch`/upload đọc token từ `<meta name="_csrf">` + `<meta name="_csrf_header">` trong layout và gửi kèm header.

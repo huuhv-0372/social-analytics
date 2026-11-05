@@ -11,6 +11,7 @@ import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.DuplicateResourceException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
 import com.huuhv.socialanalytics.service.PostService;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +20,9 @@ import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -35,18 +39,21 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(PostApiController.class)
 @Import({SecurityConfig.class, WebConfig.class})
+@ActiveProfiles("test")
 class PostApiControllerTest {
 
     private static final String VALID_BODY = """
@@ -129,7 +136,7 @@ class PostApiControllerTest {
     void createReturns201WithLocation() throws Exception {
         when(postService.create(any(PostRequest.class))).thenReturn(response(10L));
 
-        mockMvc.perform(post("/api/posts").with(user("dev@example.com"))
+        mockMvc.perform(post("/api/posts").with(user("dev@example.com")).with(csrf())
                         .contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isCreated())
                 .andExpect(header().string(HttpHeaders.LOCATION, "http://localhost/api/posts/10"))
@@ -142,7 +149,7 @@ class PostApiControllerTest {
                 {"provider":null,"externalId":"bad id!","url":"","content":"x"}
                 """;
 
-        mockMvc.perform(post("/api/posts").with(user("dev@example.com"))
+        mockMvc.perform(post("/api/posts").with(user("dev@example.com")).with(csrf())
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail").value("Validation failed"))
@@ -154,7 +161,7 @@ class PostApiControllerTest {
     void createWithUnknownProviderReturns400() throws Exception {
         String body = VALID_BODY.replace("FACEBOOK", "MYSPACE");
 
-        mockMvc.perform(post("/api/posts").with(user("dev@example.com"))
+        mockMvc.perform(post("/api/posts").with(user("dev@example.com")).with(csrf())
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest());
         verifyNoInteractions(postService);
@@ -164,7 +171,7 @@ class PostApiControllerTest {
     void createDuplicateReturns409() throws Exception {
         when(postService.create(any(PostRequest.class))).thenThrow(new DuplicateResourceException("Duplicate"));
 
-        mockMvc.perform(post("/api/posts").with(user("dev@example.com"))
+        mockMvc.perform(post("/api/posts").with(user("dev@example.com")).with(csrf())
                         .contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isConflict());
     }
@@ -173,7 +180,7 @@ class PostApiControllerTest {
     void updateReturnsUpdatedPost() throws Exception {
         when(postService.update(eq(10L), any(PostRequest.class))).thenReturn(response(10L));
 
-        mockMvc.perform(put("/api/posts/10").with(user("dev@example.com"))
+        mockMvc.perform(put("/api/posts/10").with(user("dev@example.com")).with(csrf())
                         .contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(10));
@@ -181,7 +188,7 @@ class PostApiControllerTest {
 
     @Test
     void deleteReturns204() throws Exception {
-        mockMvc.perform(delete("/api/posts/10").with(user("dev@example.com")))
+        mockMvc.perform(delete("/api/posts/10").with(user("dev@example.com")).with(csrf()))
                 .andExpect(status().isNoContent());
         verify(postService).delete(10L);
     }
@@ -195,6 +202,53 @@ class PostApiControllerTest {
                 .andExpect(jsonPath("$.detail").value("An unexpected error occurred"))
                 .andExpect(content().string(not(containsString("secret"))))
                 .andExpect(content().string(not(containsString("IllegalStateException"))));
+    }
+
+    @Test
+    void writeWithoutCsrfTokenReturns403() throws Exception {
+        mockMvc.perform(post("/api/posts").with(user("dev@example.com"))
+                        .contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/api/posts/10").with(user("dev@example.com")))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(postService);
+    }
+
+    @Test
+    void writeWithInvalidCsrfTokenReturns403() throws Exception {
+        mockMvc.perform(put("/api/posts/10").with(user("dev@example.com")).with(csrf().useInvalidToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(postService);
+    }
+
+    // Context mới: post-processor csrf() ở test khác thay CsrfTokenRepository của filter dùng chung bằng bản test
+    // (chỉ ghi cookie cho request có csrf()), nên cookie thật chỉ kiểm tra được trên context chưa bị thay
+    @Test
+    @DirtiesContext(methodMode = DirtiesContext.MethodMode.BEFORE_METHOD)
+    void clientCanWriteByEchoingCsrfCookieInHeader() throws Exception {
+        when(postService.findAll(any(Pageable.class))).thenReturn(new PageResponse<>(List.of(), 0, 20, 0, 0));
+        when(postService.create(any(PostRequest.class))).thenReturn(response(10L));
+
+        Cookie csrfCookie = mockMvc.perform(get("/api/posts").with(user("dev@example.com")))
+                .andExpect(status().isOk())
+                .andExpect(cookie().httpOnly("XSRF-TOKEN", false))
+                .andReturn().getResponse().getCookie("XSRF-TOKEN");
+        assertThat(csrfCookie).isNotNull();
+
+        // Luồng của Swagger UI / Postman / curl: gửi lại cookie và giá trị của nó qua header X-XSRF-TOKEN
+        mockMvc.perform(post("/api/posts").with(user("dev@example.com"))
+                        .cookie(csrfCookie).header("X-XSRF-TOKEN", csrfCookie.getValue())
+                        .contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void accessDeniedFromServiceReturns403Not500() throws Exception {
+        when(postService.findById(10L)).thenThrow(new AccessDeniedException("denied"));
+
+        mockMvc.perform(get("/api/posts/10").with(user("dev@example.com")))
+                .andExpect(status().isForbidden());
     }
 
     private static PostResponse response(Long id) {

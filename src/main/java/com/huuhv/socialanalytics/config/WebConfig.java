@@ -6,6 +6,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.web.config.PageableHandlerMethodArgumentResolverCustomizer;
 
+// Trùng với @ConfigurationPropertiesScan khi chạy app (vô hại), nhưng bắt buộc cho test slice:
+// @WebMvcTest không chạy @ConfigurationPropertiesScan nên @Import(WebConfig.class) cần tự đăng ký AppProperties
 @Configuration
 @EnableConfigurationProperties(AppProperties.class)
 public class WebConfig {

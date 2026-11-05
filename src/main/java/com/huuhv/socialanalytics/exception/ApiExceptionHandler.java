@@ -3,12 +3,13 @@ package com.huuhv.socialanalytics.exception;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.Nullable;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.data.core.PropertyReferenceException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -37,11 +38,6 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return problem(HttpStatus.BAD_REQUEST, ex.getMessage());
     }
 
-    @ExceptionHandler(PropertyReferenceException.class)
-    ProblemDetail handleInvalidProperty(PropertyReferenceException ex) {
-        return problem(HttpStatus.BAD_REQUEST, "Invalid sort property");
-    }
-
     @ExceptionHandler(DuplicateResourceException.class)
     ProblemDetail handleDuplicate(DuplicateResourceException ex) {
         return problem(HttpStatus.CONFLICT, ex.getMessage());
@@ -59,6 +55,15 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                 .header(HttpHeaders.WWW_AUTHENTICATE, "Basic realm=\"social-analytics\"")
                 .body(problem(HttpStatus.UNAUTHORIZED, ex.getMessage()));
+    }
+
+    /**
+     * Ném lại để {@code ExceptionTranslationFilter} của Spring Security trả 401/403 (vd {@code @PreAuthorize} từ chối),
+     * thay vì bị handler {@link Exception} bên dưới biến thành 500.
+     */
+    @ExceptionHandler({AccessDeniedException.class, AuthenticationException.class})
+    void rethrowSecurityException(RuntimeException ex) {
+        throw ex;
     }
 
     @ExceptionHandler(Exception.class)

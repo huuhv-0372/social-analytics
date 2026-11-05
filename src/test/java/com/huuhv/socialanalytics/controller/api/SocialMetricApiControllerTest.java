@@ -14,6 +14,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -25,6 +26,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -36,6 +38,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(SocialMetricApiController.class)
 @Import({SecurityConfig.class, WebConfig.class})
+@ActiveProfiles("test")
 class SocialMetricApiControllerTest {
 
     private static final LocalDateTime COLLECTED_AT = LocalDateTime.of(2026, 1, 1, 12, 0);
@@ -96,7 +99,7 @@ class SocialMetricApiControllerTest {
                 {"postId":10,"likes":100,"shares":10,"comments":20,"followers":1000,"collectedAt":"2026-01-01T12:00:00"}
                 """;
 
-        mockMvc.perform(post("/api/metrics").with(user("dev@example.com"))
+        mockMvc.perform(post("/api/metrics").with(user("dev@example.com")).with(csrf())
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isCreated())
                 .andExpect(header().string(HttpHeaders.LOCATION, "http://localhost/api/metrics/5"));
@@ -108,7 +111,7 @@ class SocialMetricApiControllerTest {
                 {"postId":10,"likes":-1,"shares":10,"comments":20,"followers":1000,"collectedAt":"2026-01-01T12:00:00"}
                 """;
 
-        mockMvc.perform(post("/api/metrics").with(user("dev@example.com"))
+        mockMvc.perform(post("/api/metrics").with(user("dev@example.com")).with(csrf())
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors[0].field").value("likes"));
@@ -121,7 +124,7 @@ class SocialMetricApiControllerTest {
                 {"postId":10,"likes":1,"shares":1,"comments":1,"followers":1,"collectedAt":"2999-01-01T00:00:00"}
                 """;
 
-        mockMvc.perform(post("/api/metrics").with(user("dev@example.com"))
+        mockMvc.perform(post("/api/metrics").with(user("dev@example.com")).with(csrf())
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest());
         verifyNoInteractions(socialMetricService);
@@ -130,13 +133,13 @@ class SocialMetricApiControllerTest {
     @Test
     void putIsNotSupportedForImmutableSnapshot() throws Exception {
         mockMvc.perform(put("/api/metrics/5")
-                        .with(user("dev@example.com")).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                        .with(user("dev@example.com")).with(csrf()).contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isMethodNotAllowed());
     }
 
     @Test
     void deleteReturns204() throws Exception {
-        mockMvc.perform(delete("/api/metrics/5").with(user("dev@example.com")))
+        mockMvc.perform(delete("/api/metrics/5").with(user("dev@example.com")).with(csrf()))
                 .andExpect(status().isNoContent());
         verify(socialMetricService).delete(5L);
     }

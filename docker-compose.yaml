@@ -17,7 +17,7 @@ x-app-env: &app-env
   ARTEMIS_PASSWORD: ${ARTEMIS_PASSWORD:?ARTEMIS_PASSWORD is required}
   # TẠM THỜI tới Task 3.1: tài khoản HTTP Basic cho /api/**
   API_USER_NAME: ${API_USER_NAME:-dev@social-analytics.local}
-  API_USER_PASSWORD: ${API_USER_PASSWORD:-}
+  API_USER_PASSWORD: ${API_USER_PASSWORD:?API_USER_PASSWORD is required}
 
 services:
   mysql:

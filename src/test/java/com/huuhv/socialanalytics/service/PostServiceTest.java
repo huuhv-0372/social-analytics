@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.service.impl;
+package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.dto.request.PostRequest;
 import com.huuhv.socialanalytics.dto.response.PageResponse;
@@ -10,7 +10,6 @@ import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.DuplicateResourceException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
 import com.huuhv.socialanalytics.repository.PostRepository;
-import com.huuhv.socialanalytics.service.CurrentUserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,7 +34,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class PostServiceImplTest {
+class PostServiceTest {
 
     private static final long OWNER_ID = 1L;
 
@@ -46,7 +45,7 @@ class PostServiceImplTest {
     private CurrentUserService currentUserService;
 
     @InjectMocks
-    private PostServiceImpl postService;
+    private PostService postService;
 
     private User owner;
 
@@ -85,7 +84,7 @@ class PostServiceImplTest {
 
     @Test
     void createAssignsCurrentUserAsOwner() {
-        when(postRepository.existsByProviderAndExternalId(Provider.FACEBOOK, "fb-1")).thenReturn(false);
+        when(postRepository.existsByUserIdAndProviderAndExternalId(OWNER_ID, Provider.FACEBOOK, "fb-1")).thenReturn(false);
         when(postRepository.save(any(Post.class))).thenAnswer(invocation -> {
             Post post = invocation.getArgument(0);
             post.setId(10L);
@@ -110,7 +109,7 @@ class PostServiceImplTest {
 
     @Test
     void createRejectsDuplicate() {
-        when(postRepository.existsByProviderAndExternalId(Provider.FACEBOOK, "fb-1")).thenReturn(true);
+        when(postRepository.existsByUserIdAndProviderAndExternalId(OWNER_ID, Provider.FACEBOOK, "fb-1")).thenReturn(true);
 
         assertThatThrownBy(() -> postService.create(request(Provider.FACEBOOK, "https://facebook.com/posts/1")))
                 .isInstanceOf(DuplicateResourceException.class);
@@ -121,7 +120,7 @@ class PostServiceImplTest {
     void updateChangesOwnedPost() {
         Post existing = post(10L);
         when(postRepository.findByIdAndUserId(10L, OWNER_ID)).thenReturn(Optional.of(existing));
-        when(postRepository.existsByProviderAndExternalIdAndIdNot(Provider.TWITTER, "fb-1", 10L)).thenReturn(false);
+        when(postRepository.existsByUserIdAndProviderAndExternalIdAndIdNot(OWNER_ID, Provider.TWITTER, "fb-1", 10L)).thenReturn(false);
         when(postRepository.saveAndFlush(existing)).thenReturn(existing);
 
         PostResponse response = postService.update(10L, request(Provider.TWITTER, "https://x.com/owner/status/1"));
@@ -157,6 +156,23 @@ class PostServiceImplTest {
         postService.delete(10L);
 
         verify(postRepository).delete(existing);
+    }
+
+    @Test
+    void checkOwnedPostPassesWithoutLoadingEntity() {
+        when(postRepository.existsByIdAndUserId(10L, OWNER_ID)).thenReturn(true);
+
+        postService.checkOwnedPost(10L);
+
+        verify(postRepository, never()).findByIdAndUserId(any(), any());
+    }
+
+    @Test
+    void checkOwnedPostOfOtherUserIsNotFound() {
+        when(postRepository.existsByIdAndUserId(99L, OWNER_ID)).thenReturn(false);
+
+        assertThatThrownBy(() -> postService.checkOwnedPost(99L))
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 
     private Post post(Long id) {

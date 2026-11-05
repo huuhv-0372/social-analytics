@@ -160,7 +160,7 @@ src/main/resources/
 | `SPRING_PROFILES_ACTIVE` | — | Profile của container `app` (mặc định `dev`). Đặt profile khác (vd `prod`) để chạy cấu hình production-safe, Swagger tắt |
 | `LOG_PATH` | — | Thư mục log file (mặc định `logs`; trong Docker là `/app/logs`) |
 | `ARTEMIS_USER` / `ARTEMIS_PASSWORD` | ✅ | Tài khoản broker Artemis |
-| `API_USER_NAME` / `API_USER_PASSWORD` | — | **Tạm thời tới giai đoạn 3:** tài khoản HTTP Basic để gọi `/api/**`. Mặc định `dev@social-analytics.local`; để trống mật khẩu thì Spring sinh ngẫu nhiên và in ra log |
+| `API_USER_NAME` / `API_USER_PASSWORD` | ✅ (mật khẩu) | **Tạm thời tới giai đoạn 3:** tài khoản HTTP Basic để gọi `/api/**`. Tên mặc định `dev@social-analytics.local`; thiếu mật khẩu thì app không khởi động |
 | `ARTEMIS_HOST` / `ARTEMIS_PORT` | — | Mặc định `localhost` / `61616` |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | Từ giai đoạn 3 | OAuth2 credentials từ Facebook Developers |
 | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | Từ giai đoạn 3 | OAuth2 credentials từ X Developer Portal |
@@ -173,17 +173,19 @@ Dùng **Flyway**, tự chạy khi ứng dụng khởi động. File đặt tại
 
 Quy ước: tên bảng số nhiều, snake_case (`users`, `posts`, `social_metrics`...); `ddl-auto=validate` nên schema chỉ thay đổi qua migration. **Không sửa migration đã commit** — muốn đổi schema thì thêm file version mới.
 
-Schema hiện tại (`V1__init_schema.sql`):
+Schema hiện tại (`V1__init_schema.sql` + `V2__posts_unique_per_user.sql`):
 
 | Bảng | Mô tả | Ràng buộc / index chính |
 |---|---|---|
 | `users` | Người dùng (email có thể NULL vì X không trả email), `role` USER/ADMIN | `uk_users_email` |
-| `posts` | Bài viết FB/X, `user_id` là chủ sở hữu (phân quyền theo owner) | `uk_posts_provider_external_id (provider, external_id)`, FK `users` |
+| `posts` | Bài viết FB/X, `user_id` là chủ sở hữu (phân quyền theo owner) | `uk_posts_user_provider_external_id (user_id, provider, external_id)` — nhiều user theo dõi được cùng 1 bài, FK `users` |
 | `social_metrics` | Snapshot likes/shares/comments/followers theo `collected_at` — mỗi lần crawl thêm 1 dòng | `idx_social_metrics_post_collected (post_id, collected_at)`, FK `posts` `ON DELETE CASCADE` |
 
 ## REST API
 
-Tạm thời (tới giai đoạn 3) `/api/**` xác thực bằng **HTTP Basic** (`API_USER_NAME` / `API_USER_PASSWORD`), không cần CSRF; gọi ẩn danh trả 401. Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
+Tạm thời (tới giai đoạn 3) `/api/**` xác thực bằng **HTTP Basic** (`API_USER_NAME` / `API_USER_PASSWORD`); gọi ẩn danh trả 401. Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
+
+**CSRF:** mọi response đều đặt cookie `XSRF-TOKEN`; request POST/PUT/DELETE phải gửi lại cookie đó **và** giá trị của nó trong header `X-XSRF-TOKEN`, thiếu thì trả 403. Swagger UI tự làm việc này. Với Postman, sau 1 request GET, thêm header `X-XSRF-TOKEN: {{xsrf}}` với `xsrf` lấy từ cookie.
 
 | Method | Endpoint | Mô tả |
 |---|---|---|
@@ -201,7 +203,13 @@ Tạm thời (tới giai đoạn 3) `/api/**` xác thực bằng **HTTP Basic** 
 Ví dụ:
 
 ```bash
-curl -u "$API_USER_NAME:$API_USER_PASSWORD" -X POST http://localhost:8080/api/posts \
+# 1. Request GET bất kỳ để nhận cookie XSRF-TOKEN
+curl -s -o /dev/null -c cookies.txt -u "$API_USER_NAME:$API_USER_PASSWORD" http://localhost:8080/api/posts
+XSRF=$(awk '$6 == "XSRF-TOKEN" {print $7}' cookies.txt)
+
+# 2. Gửi lại cookie + header X-XSRF-TOKEN
+curl -b cookies.txt -u "$API_USER_NAME:$API_USER_PASSWORD" -X POST http://localhost:8080/api/posts \
+  -H "X-XSRF-TOKEN: $XSRF" \
   -H "Content-Type: application/json" \
   -d '{"provider":"FACEBOOK","externalId":"123","url":"https://www.facebook.com/page/posts/123","content":"Hello"}'
 ```
