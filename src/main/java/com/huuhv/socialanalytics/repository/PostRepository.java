@@ -16,4 +16,7 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     Page<Post> findByUserId(Long userId, Pageable pageable);
 
     boolean existsByProviderAndExternalId(Provider provider, String externalId);
+
+    /** Kiểm tra trùng khi cập nhật, bỏ qua chính bản ghi đang sửa. */
+    boolean existsByProviderAndExternalIdAndIdNot(Provider provider, String externalId, Long id);
 }

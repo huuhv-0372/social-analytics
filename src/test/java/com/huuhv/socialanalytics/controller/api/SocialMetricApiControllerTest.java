@@ -1,0 +1,147 @@
+package com.huuhv.socialanalytics.controller.api;
+
+import com.huuhv.socialanalytics.config.SecurityConfig;
+import com.huuhv.socialanalytics.config.WebConfig;
+import com.huuhv.socialanalytics.dto.request.SocialMetricRequest;
+import com.huuhv.socialanalytics.dto.response.PageResponse;
+import com.huuhv.socialanalytics.dto.response.SocialMetricResponse;
+import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
+import com.huuhv.socialanalytics.service.SocialMetricService;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@WebMvcTest(SocialMetricApiController.class)
+@Import({SecurityConfig.class, WebConfig.class})
+class SocialMetricApiControllerTest {
+
+    private static final LocalDateTime COLLECTED_AT = LocalDateTime.of(2026, 1, 1, 12, 0);
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @MockitoBean
+    private SocialMetricService socialMetricService;
+
+    @Test
+    void listParsesIsoDateRange() throws Exception {
+        LocalDateTime from = LocalDateTime.of(2026, 1, 1, 0, 0);
+        when(socialMetricService.findByPost(eq(10L), eq(from), eq(null), any(Pageable.class)))
+                .thenReturn(new PageResponse<>(List.of(response(5L)), 0, 20, 1, 1));
+
+        mockMvc.perform(get("/api/metrics").param("postId", "10").param("from", "2026-01-01T00:00:00")
+                        .with(user("dev@example.com")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].id").value(5))
+                .andExpect(jsonPath("$.content[0].postId").value(10));
+    }
+
+    @Test
+    void listWithoutPostIdReturns400() throws Exception {
+        mockMvc.perform(get("/api/metrics").with(user("dev@example.com")))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(socialMetricService);
+    }
+
+    @Test
+    void listWithNonPositivePostIdReturns400() throws Exception {
+        mockMvc.perform(get("/api/metrics").param("postId", "0").with(user("dev@example.com")))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(socialMetricService);
+    }
+
+    @Test
+    void listWithInvalidDateReturns400() throws Exception {
+        mockMvc.perform(get("/api/metrics").param("postId", "10").param("from", "yesterday")
+                        .with(user("dev@example.com")))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(socialMetricService);
+    }
+
+    @Test
+    void latestOfOtherUsersPostReturns404() throws Exception {
+        when(socialMetricService.findLatest(99L)).thenThrow(new ResourceNotFoundException("Post"));
+
+        mockMvc.perform(get("/api/metrics/latest").param("postId", "99").with(user("dev@example.com")))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void createReturns201WithLocation() throws Exception {
+        when(socialMetricService.create(any(SocialMetricRequest.class))).thenReturn(response(5L));
+        String body = """
+                {"postId":10,"likes":100,"shares":10,"comments":20,"followers":1000,"collectedAt":"2026-01-01T12:00:00"}
+                """;
+
+        mockMvc.perform(post("/api/metrics").with(user("dev@example.com"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andExpect(header().string(HttpHeaders.LOCATION, "http://localhost/api/metrics/5"));
+    }
+
+    @Test
+    void createWithNegativeCountReturns400() throws Exception {
+        String body = """
+                {"postId":10,"likes":-1,"shares":10,"comments":20,"followers":1000,"collectedAt":"2026-01-01T12:00:00"}
+                """;
+
+        mockMvc.perform(post("/api/metrics").with(user("dev@example.com"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("likes"));
+        verifyNoInteractions(socialMetricService);
+    }
+
+    @Test
+    void createWithFutureCollectedAtReturns400() throws Exception {
+        String body = """
+                {"postId":10,"likes":1,"shares":1,"comments":1,"followers":1,"collectedAt":"2999-01-01T00:00:00"}
+                """;
+
+        mockMvc.perform(post("/api/metrics").with(user("dev@example.com"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(socialMetricService);
+    }
+
+    @Test
+    void putIsNotSupportedForImmutableSnapshot() throws Exception {
+        mockMvc.perform(put("/api/metrics/5")
+                        .with(user("dev@example.com")).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isMethodNotAllowed());
+    }
+
+    @Test
+    void deleteReturns204() throws Exception {
+        mockMvc.perform(delete("/api/metrics/5").with(user("dev@example.com")))
+                .andExpect(status().isNoContent());
+        verify(socialMetricService).delete(5L);
+    }
+
+    private static SocialMetricResponse response(Long id) {
+        return new SocialMetricResponse(id, 10L, 100, 10, 20, 1000, COLLECTED_AT);
+    }
+}

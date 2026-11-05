@@ -107,11 +107,16 @@ Luồng chuẩn: `Controller → Service → Repository`. Scheduler, JMS listene
 - Dùng `@Query` với `LEFT JOIN FETCH` khi cần dữ liệu quan hệ để tránh N+1; dữ liệu tổng hợp cho chart dùng projection/DTO query (`SELECT new ...`), không load entity rồi cộng trong Java.
 - Tìm 1 bản ghi trả `Optional<T>`.
 - `@Transactional` đặt ở Service; method chỉ đọc dùng `@Transactional(readOnly = true)`.
+- Owner lấy qua `CurrentUserService.getCurrentUser()` (không nhận `userId` từ client). Thao tác theo id dùng repository method kèm điều kiện owner (`findByIdAndUserId`, `findByIdAndPostUserId`); không thuộc user → `ResourceNotFoundException` (404).
+- API danh sách nhận `Pageable` (size bị chặn bởi `app.pagination.*` qua `config/WebConfig`), Service lọc sort bằng `PageableUtils.withAllowedSort` (whitelist) và trả `PageResponse<T>` — không trả `Page`/`PageImpl` trực tiếp.
+- URL bài viết kiểm tra bằng `SocialUrlPolicy` (https + domain whitelist khai báo trong enum `Provider`).
+- Mapping Entity → DTO bằng static factory `XxxResponse.from(entity)`.
 
 ### 5.4. Xử Lý Lỗi
 - REST (`controller/api`): `ApiExceptionHandler` (`@RestControllerAdvice`) trả `ProblemDetail` (RFC 9457).
 - Web (`controller/web`): `WebExceptionHandler` (`@ControllerAdvice`) hoặc `RedirectAttributes` với flash message thân thiện.
 - Khi thêm exception nghiệp vụ mới, sửa đúng handler theo package của controller.
+- Exception nghiệp vụ hiện có: `ResourceNotFoundException` (404), `BadRequestException` (400), `DuplicateResourceException` (409), `AuthenticationRequiredException` (401). Lỗi `@Valid` trả 400 kèm `errors[{field, message}]`; exception không lường trước → 500 thông điệp chung + log.
 - Không trả stack trace / thông báo lỗi nội bộ ra client.
 
 ### 5.5. Logging
@@ -184,6 +189,8 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 ## 6. Hướng Dẫn Theo Từng Mảng
 
 ### 6.1. Security, CSRF & OAuth2 Login
+> **Trạng thái tạm thời (Task 1.4 → Task 3.1):** `config/SecurityConfig` đang `permitAll` + bỏ CSRF cho `/api/**` và public Swagger để thử API; danh tính gửi bằng HTTP Basic (`spring.security.user.*` ← env `API_USER_NAME`/`API_USER_PASSWORD`), `CurrentUserServiceImpl` map username → `User.email` và tạo mới nếu chưa có. Request ẩn danh bị Service từ chối 401. Task 3.1 phải gỡ bỏ các ngoại lệ này theo các quy tắc bên dưới.
+
 - **Giữ CSRF bật** cho cả web lẫn API (app dùng session sau OAuth2 login). Không `csrf.disable()` để "cho nhanh".
 - Form Thymeleaf dùng `th:action="@{...}"` để tự chèn hidden `_csrf`. JS `fetch`/upload đọc token từ `<meta name="_csrf">` + `<meta name="_csrf_header">` trong layout và gửi kèm header.
 - Swagger UI gọi API POST/PUT/DELETE cần bật `springdoc.swagger-ui.csrf.enabled=true`.
@@ -239,7 +246,7 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 ## 7. Testing
 - Cấu trúc test mirror package của `src/main`; tên class `XxxTest` (unit) / `XxxIT` (integration).
 - Service: JUnit 5 + Mockito (`@ExtendWith(MockitoExtension.class)`), không khởi động Spring context.
-- Controller: `@WebMvcTest` + `MockMvc` + `@MockitoBean` cho Service; test có POST phải kèm `.with(csrf())` và user giả lập (`@WithMockUser` hoặc `oauth2Login()`).
+- Controller: `@WebMvcTest` + `MockMvc` + `@MockitoBean` cho Service; test có POST phải kèm `.with(csrf())` và user giả lập (`@WithMockUser` hoặc `oauth2Login()`). Slice Boot 4 không tự nạp config của app → thêm `@Import({SecurityConfig.class, WebConfig.class})`.
 - Repository: `@DataJpaTest` cho query custom (`@Query`, projection), kèm `@AutoConfigureTestDatabase(replace = NONE)` + `@Import(TestcontainersConfiguration.class)` để chạy trên MySQL Testcontainers — không bao giờ chạy test ghi dữ liệu vào DB dev.
 - Excel: test importer/exporter với workbook tạo trong bộ nhớ (round-trip export → import).
 - Integration test cuối: `@SpringBootTest` chạy luồng import → JMS → cập nhật thống kê → WebSocket event. Ưu tiên Testcontainers (MySQL) nếu có Docker, vì migration viết cho MySQL.

@@ -22,6 +22,13 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  security:
+    # TẠM THỜI tới Task 3.1: user HTTP Basic để gọi /api/**. Username dùng làm email của User (owner).
+    # Để trống API_USER_PASSWORD thì Spring sinh mật khẩu ngẫu nhiên và in ra log lúc khởi động.
+    user:
+      name: ${API_USER_NAME:dev@social-analytics.local}
+      password: ${API_USER_PASSWORD:}
+
   artemis:
     broker-url: tcp://${ARTEMIS_HOST:localhost}:${ARTEMIS_PORT:61616}
     user: ${ARTEMIS_USER}

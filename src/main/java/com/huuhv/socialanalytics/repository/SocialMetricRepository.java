@@ -1,7 +1,11 @@
 package com.huuhv.socialanalytics.repository;
 
 import com.huuhv.socialanalytics.entity.SocialMetric;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -15,4 +19,25 @@ public interface SocialMetricRepository extends JpaRepository<SocialMetric, Long
     /** Chuỗi snapshot trong khoảng thời gian (bao gồm 2 đầu), sắp xếp tăng dần để vẽ xu hướng. */
     List<SocialMetric> findByPostIdAndCollectedAtBetweenOrderByCollectedAtAsc(
             Long postId, LocalDateTime from, LocalDateTime to);
+
+    /** Tìm theo id kèm điều kiện chủ sở hữu của bài viết — chống IDOR. */
+    Optional<SocialMetric> findByIdAndPostUserId(Long id, Long userId);
+
+    /** Snapshot của 1 bài viết, lọc khoảng thời gian tuỳ chọn ({@code null} = không giới hạn). */
+    @Query(value = """
+            SELECT m FROM SocialMetric m
+            WHERE m.post.id = :postId
+              AND (:from IS NULL OR m.collectedAt >= :from)
+              AND (:to IS NULL OR m.collectedAt <= :to)
+            """,
+            countQuery = """
+            SELECT COUNT(m) FROM SocialMetric m
+            WHERE m.post.id = :postId
+              AND (:from IS NULL OR m.collectedAt >= :from)
+              AND (:to IS NULL OR m.collectedAt <= :to)
+            """)
+    Page<SocialMetric> search(@Param("postId") Long postId,
+                              @Param("from") LocalDateTime from,
+                              @Param("to") LocalDateTime to,
+                              Pageable pageable);
 }

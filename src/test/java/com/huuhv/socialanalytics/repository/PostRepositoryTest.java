@@ -78,6 +78,16 @@ class PostRepositoryTest {
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
+    @Test
+    void existsIgnoringSelfDetectsDuplicateOnlyFromOtherPosts() {
+        User owner = saveUser("owner@example.com");
+        Post first = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));
+        Post second = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-2"));
+
+        assertThat(postRepository.existsByProviderAndExternalIdAndIdNot(Provider.FACEBOOK, "fb-1", first.getId())).isFalse();
+        assertThat(postRepository.existsByProviderAndExternalIdAndIdNot(Provider.FACEBOOK, "fb-1", second.getId())).isTrue();
+    }
+
     private User saveUser(String email) {
         return userRepository.save(User.builder().email(email).displayName("Test User").build());
     }

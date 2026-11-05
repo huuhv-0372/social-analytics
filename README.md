@@ -8,7 +8,7 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 
 | Tính năng | Mô tả | Giai đoạn | Trạng thái |
 |---|---|---|---|
-| CRUD bài viết & metrics | REST API `/api/posts`, `/api/metrics` + Swagger UI | 1 | ⏳ |
+| CRUD bài viết & metrics | REST API `/api/posts`, `/api/metrics` + Swagger UI | 1 | ✅ |
 | Import / Export Excel | Upload danh sách bài viết (`/api/import-posts`), xuất báo cáo (`/api/export-report`) bằng Apache POI + Reflection | 2 | ⏳ |
 | Social Login | Đăng nhập Facebook & Twitter/X qua OAuth2, bảo vệ CSRF | 3 | ⏳ |
 | Background job | `updateSocialMetricsJob` chạy mỗi giờ, crawl metrics (mock API) đa luồng | 4 | ⏳ |
@@ -156,6 +156,7 @@ src/main/resources/
 | `APP_PORT` | — | Port app mở ra máy host khi chạy bằng Docker (mặc định `8080`) |
 | `LOG_PATH` | — | Thư mục log file (mặc định `logs`; trong Docker là `/app/logs`) |
 | `ARTEMIS_USER` / `ARTEMIS_PASSWORD` | ✅ | Tài khoản broker Artemis |
+| `API_USER_NAME` / `API_USER_PASSWORD` | — | **Tạm thời tới giai đoạn 3:** tài khoản HTTP Basic để gọi `/api/**`. Mặc định `dev@social-analytics.local`; để trống mật khẩu thì Spring sinh ngẫu nhiên và in ra log |
 | `ARTEMIS_HOST` / `ARTEMIS_PORT` | — | Mặc định `localhost` / `61616` |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | Từ giai đoạn 3 | OAuth2 credentials từ Facebook Developers |
 | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | Từ giai đoạn 3 | OAuth2 credentials từ X Developer Portal |
@@ -176,9 +177,34 @@ Schema hiện tại (`V1__init_schema.sql`):
 | `posts` | Bài viết FB/X, `user_id` là chủ sở hữu (phân quyền theo owner) | `uk_posts_provider_external_id (provider, external_id)`, FK `users` |
 | `social_metrics` | Snapshot likes/shares/comments/followers theo `collected_at` — mỗi lần crawl thêm 1 dòng | `idx_social_metrics_post_collected (post_id, collected_at)`, FK `posts` `ON DELETE CASCADE` |
 
+## REST API
+
+Tạm thời (tới giai đoạn 3) `/api/**` xác thực bằng **HTTP Basic** (`API_USER_NAME` / `API_USER_PASSWORD`), không cần CSRF; gọi ẩn danh trả 401. Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
+
+| Method | Endpoint | Mô tả |
+|---|---|---|
+| GET | `/api/posts?page=0&size=20&sort=createdAt,desc` | Danh sách bài viết (size tối đa 100; sort: `createdAt`, `updatedAt`, `publishedAt`, `provider`) |
+| GET | `/api/posts/{id}` | Chi tiết bài viết |
+| POST | `/api/posts` | Tạo bài viết — `url` phải là https thuộc domain của provider (`facebook.com`; `x.com`/`twitter.com`) |
+| PUT | `/api/posts/{id}` | Cập nhật (thay thế toàn bộ) |
+| DELETE | `/api/posts/{id}` | Xoá bài viết kèm toàn bộ snapshot metric |
+| GET | `/api/metrics?postId=1&from=2026-01-01T00:00:00&to=...` | Snapshot của 1 bài viết (phân trang; sort: `collectedAt`, `likes`, `shares`, `comments`, `followers`) |
+| GET | `/api/metrics/latest?postId=1` | Snapshot mới nhất |
+| GET | `/api/metrics/{id}` | Chi tiết snapshot |
+| POST | `/api/metrics` | Ghi nhận snapshot thủ công (snapshot bất biến — không có PUT) |
+| DELETE | `/api/metrics/{id}` | Xoá snapshot |
+
+Ví dụ:
+
+```bash
+curl -u "$API_USER_NAME:$API_USER_PASSWORD" -X POST http://localhost:8080/api/posts \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"FACEBOOK","externalId":"123","url":"https://www.facebook.com/page/posts/123","content":"Hello"}'
+```
+
 ## Xử Lý Lỗi
 
-- REST (`controller/api`): `ApiExceptionHandler` (`@RestControllerAdvice`) trả `ProblemDetail` (RFC 9457).
+- REST (`controller/api`): `ApiExceptionHandler` (`@RestControllerAdvice`) trả `ProblemDetail` (RFC 9457): 400 (validation, kèm `errors[{field, message}]`), 401, 404, 409, 500 (thông điệp chung).
 - Web (`controller/web`): `WebExceptionHandler` (`@ControllerAdvice`) trả view lỗi hoặc flash message.
 - Không trả stack trace / thông tin nội bộ ra client.
 

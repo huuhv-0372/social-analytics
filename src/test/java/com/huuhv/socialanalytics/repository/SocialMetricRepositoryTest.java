@@ -11,6 +11,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDateTime;
@@ -35,11 +38,12 @@ class SocialMetricRepositoryTest {
     @Autowired
     private SocialMetricRepository socialMetricRepository;
 
+    private User owner;
     private Post post;
 
     @BeforeEach
     void setUp() {
-        User owner = userRepository.save(User.builder().email("owner@example.com").displayName("Owner").build());
+        owner = userRepository.save(User.builder().email("owner@example.com").displayName("Owner").build());
         post = postRepository.save(Post.builder()
                 .user(owner)
                 .provider(Provider.TWITTER)
@@ -73,8 +77,36 @@ class SocialMetricRepositoryTest {
         assertThat(trend).extracting(SocialMetric::getLikes).containsExactly(10L, 20L);
     }
 
-    private void saveSnapshot(LocalDateTime collectedAt, long likes) {
-        socialMetricRepository.save(SocialMetric.builder()
+    @Test
+    void searchWithoutRangeReturnsAllSnapshotsPaged() {
+        Page<SocialMetric> page = socialMetricRepository.search(post.getId(), null, null,
+                PageRequest.of(0, 2, Sort.by(Sort.Direction.DESC, "collectedAt")));
+
+        assertThat(page.getTotalElements()).isEqualTo(3);
+        assertThat(page.getContent()).extracting(SocialMetric::getLikes).containsExactly(30L, 20L);
+    }
+
+    @Test
+    void searchAppliesOptionalBounds() {
+        Sort ascending = Sort.by("collectedAt");
+
+        assertThat(socialMetricRepository.search(post.getId(), BASE.plusHours(1), null, PageRequest.of(0, 10, ascending)))
+                .extracting(SocialMetric::getLikes).containsExactly(20L, 30L);
+        assertThat(socialMetricRepository.search(post.getId(), null, BASE.plusHours(1), PageRequest.of(0, 10, ascending)))
+                .extracting(SocialMetric::getLikes).containsExactly(10L, 20L);
+    }
+
+    @Test
+    void findByIdAndPostUserIdReturnsEmptyForOtherUser() {
+        SocialMetric metric = saveSnapshot(BASE.plusHours(3), 40);
+        User other = userRepository.save(User.builder().email("other@example.com").displayName("Other").build());
+
+        assertThat(socialMetricRepository.findByIdAndPostUserId(metric.getId(), owner.getId())).isPresent();
+        assertThat(socialMetricRepository.findByIdAndPostUserId(metric.getId(), other.getId())).isEmpty();
+    }
+
+    private SocialMetric saveSnapshot(LocalDateTime collectedAt, long likes) {
+        return socialMetricRepository.save(SocialMetric.builder()
                 .post(post)
                 .likes(likes)
                 .shares(likes / 10)
