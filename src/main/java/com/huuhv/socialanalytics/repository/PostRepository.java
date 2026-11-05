@@ -6,6 +6,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 public interface PostRepository extends JpaRepository<Post, Long> {
@@ -23,4 +25,7 @@ public interface PostRepository extends JpaRepository<Post, Long> {
 
     /** Kiểm tra trùng khi cập nhật, bỏ qua chính bản ghi đang sửa. */
     boolean existsByUserIdAndProviderAndExternalIdAndIdNot(Long userId, Provider provider, String externalId, Long id);
+
+    /** Bài đã có của user theo lô externalId (import upsert) — 1 query cho mỗi provider thay vì mỗi dòng. */
+    List<Post> findByUserIdAndProviderAndExternalIdIn(Long userId, Provider provider, Collection<String> externalIds);
 }

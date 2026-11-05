@@ -15,6 +15,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -107,6 +109,21 @@ class PostRepositoryTest {
         Long ownerId = owner.getId();
         assertThat(postRepository.existsByUserIdAndProviderAndExternalIdAndIdNot(ownerId, Provider.FACEBOOK, "fb-1", first.getId())).isFalse();
         assertThat(postRepository.existsByUserIdAndProviderAndExternalIdAndIdNot(ownerId, Provider.FACEBOOK, "fb-1", second.getId())).isTrue();
+    }
+
+    @Test
+    void findByExternalIdInReturnsOnlyOwnPostsOfProvider() {
+        User owner = saveUser("owner@example.com");
+        User other = saveUser("other@example.com");
+        postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));
+        postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-2"));
+        postRepository.save(newPost(owner, Provider.TWITTER, "fb-3"));
+        postRepository.save(newPost(other, Provider.FACEBOOK, "fb-3"));
+
+        List<Post> found = postRepository.findByUserIdAndProviderAndExternalIdIn(
+                owner.getId(), Provider.FACEBOOK, List.of("fb-1", "fb-3", "missing"));
+
+        assertThat(found).extracting(Post::getExternalId).containsExactly("fb-1");
     }
 
     private User saveUser(String email) {

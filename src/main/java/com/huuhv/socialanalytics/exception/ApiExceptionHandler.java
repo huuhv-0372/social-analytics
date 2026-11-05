@@ -14,6 +14,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import java.util.List;
@@ -86,6 +87,17 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 .toList();
         body.setProperty("errors", errors);
         return handleExceptionInternal(ex, body, headers, status, request);
+    }
+
+    /** Cần {@code spring.servlet.multipart.resolve-lazily=true} để lỗi phát sinh trong controller và tới được đây. */
+    @Override
+    protected ResponseEntity<Object> handleMaxUploadSizeExceededException(MaxUploadSizeExceededException ex,
+                                                                          HttpHeaders headers,
+                                                                          HttpStatusCode status,
+                                                                          WebRequest request) {
+        log.warn("Rejected upload exceeding the size limit");
+        ProblemDetail body = problem(HttpStatus.PAYLOAD_TOO_LARGE, "File exceeds the maximum allowed size");
+        return handleExceptionInternal(ex, body, headers, HttpStatus.PAYLOAD_TOO_LARGE, request);
     }
 
     @Override

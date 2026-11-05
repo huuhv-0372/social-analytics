@@ -144,7 +144,7 @@ src/main/resources/
 | `config/OpenApiConfig` | Thông tin tài liệu OpenAPI (title, version) + khai báo HTTP Basic cho nút Authorize của Swagger UI |
 | `application-test.yml` | Profile `test` cho test (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
 | `logback-spring.xml` | Log console + file theo ngày trong `logs/` (giữ 30 ngày), pattern kèm MDC `jobId` / `importId` |
-| `config/AppProperties` | Bind cấu hình `app.*` (record + validation), vd `app.pagination.default-size` / `max-size` |
+| `config/AppProperties` | Bind cấu hình `app.*` (record + validation), vd `app.pagination.default-size` / `max-size`, `app.import.max-rows` |
 | `.env` | Giá trị bí mật cho môi trường local — copy từ `.env.example` |
 | `docker-compose.yaml` | MySQL 8.4 + ActiveMQ Artemis + app, và service `maven` (JDK 25) để chạy lệnh Maven |
 | `Dockerfile` | Build multi-stage: JDK 25 build JAR → JRE 25 chạy app bằng user không phải root |
@@ -199,6 +199,8 @@ Tạm thời (tới giai đoạn 3) `/api/**` xác thực bằng **HTTP Basic** 
 | GET | `/api/metrics/{id}` | Chi tiết snapshot |
 | POST | `/api/metrics` | Ghi nhận snapshot thủ công (snapshot bất biến — không có PUT) |
 | DELETE | `/api/metrics/{id}` | Xoá snapshot |
+| POST | `/api/import-posts` | Import bài viết từ file `.xlsx` (multipart, field `file`) — xem bên dưới |
+| GET | `/api/import-posts/template` | Tải file `.xlsx` mẫu (header + dữ liệu giả + sheet hướng dẫn) |
 
 Ví dụ:
 
@@ -212,6 +214,26 @@ curl -b cookies.txt -u "$API_USER_NAME:$API_USER_PASSWORD" -X POST http://localh
   -H "X-XSRF-TOKEN: $XSRF" \
   -H "Content-Type: application/json" \
   -d '{"provider":"FACEBOOK","externalId":"123","url":"https://www.facebook.com/page/posts/123","content":"Hello"}'
+```
+
+### Import bài viết từ Excel
+
+File mẫu: tải qua Swagger UI (`GET /api/import-posts/template` → *Download file*) hoặc lấy trực tiếp [`src/main/resources/excel/posts-import-template.xlsx`](src/main/resources/excel/posts-import-template.xlsx) — import nguyên file sẽ thành công.
+
+File `.xlsx`, sheet đầu tiên, dòng 1 là header (không phân biệt hoa thường, thứ tự cột tuỳ ý, cột thừa bị bỏ qua):
+
+| Provider | External ID | URL | Content | Published At |
+|---|---|---|---|---|
+| `FACEBOOK` / `TWITTER` | chữ, số, `_`, `-` (≤ 100) | https, đúng domain của provider | tuỳ chọn (≤ 5000) | tuỳ chọn — ô kiểu ngày hoặc `yyyy-MM-dd HH:mm:ss` |
+
+- Giới hạn: tối đa **5MB** (`spring.servlet.multipart.max-file-size`, vượt → 413) và **1000 dòng** (`app.import.max-rows`).
+- Chỉ nhận `.xlsx` thật (kiểm tra cả nội dung); ô chứa công thức bị từ chối.
+- Dòng lỗi trả về kèm số dòng, dòng hợp lệ vẫn được lưu. Bài đã có (cùng provider + External ID, không phân biệt hoa thường) được **cập nhật**.
+
+```bash
+curl -b cookies.txt -u "$API_USER_NAME:$API_USER_PASSWORD" -X POST http://localhost:8080/api/import-posts \
+  -H "X-XSRF-TOKEN: $XSRF" -F "file=@posts.xlsx"
+# {"totalRows":3,"created":1,"updated":1,"failed":1,"errors":[{"row":4,"column":"URL","message":"must not be blank"}]}
 ```
 
 ## Xử Lý Lỗi

@@ -109,7 +109,7 @@ public class PostService {
 
     private static void validateUrl(PostRequest request) {
         if (!SocialUrlPolicy.isAllowed(request.provider(), request.url())) {
-            throw new BadRequestException("url must be an https link on a domain of the selected provider");
+            throw new BadRequestException("url " + SocialUrlPolicy.VIOLATION_MESSAGE);
         }
     }
 
