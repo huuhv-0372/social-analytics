@@ -11,6 +11,9 @@ import java.net.URISyntaxException;
  */
 public final class SocialUrlPolicy {
 
+    /** Thông điệp lỗi dùng chung cho mọi nơi kiểm tra URL (REST API, import Excel). */
+    public static final String VIOLATION_MESSAGE = "must be an https link on a domain of the selected provider";
+
     private static final int UNSPECIFIED_PORT = -1;
     private static final int HTTPS_PORT = 443;
 

@@ -1,7 +1,9 @@
 package com.huuhv.socialanalytics.repository;
 
 import com.huuhv.socialanalytics.TestcontainersConfiguration;
+import com.huuhv.socialanalytics.dto.response.PostReportRow;
 import com.huuhv.socialanalytics.entity.Post;
+import com.huuhv.socialanalytics.entity.SocialMetric;
 import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.enums.Provider;
 import com.huuhv.socialanalytics.enums.Role;
@@ -11,12 +13,17 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.time.LocalDateTime;
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 // Chạy trên MySQL riêng của Testcontainers (migration viết cho MySQL, cần Docker); mỗi test tự rollback
 @DataJpaTest
@@ -30,6 +37,55 @@ class PostRepositoryTest {
 
     @Autowired
     private PostRepository postRepository;
+
+    @Autowired
+    private SocialMetricRepository socialMetricRepository;
+
+    @Test
+    void reportRowsHaveLatestSnapshotPerOwnPost() {
+        User owner = saveUser("owner@example.com");
+        User other = saveUser("other@example.com");
+        LocalDateTime base = LocalDateTime.of(2026, 1, 1, 0, 0);
+        Post withMetrics = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));
+        postRepository.save(newPost(owner, Provider.TWITTER, "tw-1"));
+        Post otherPost = postRepository.save(newPost(other, Provider.FACEBOOK, "fb-9"));
+        saveMetric(withMetrics, 10, base);
+        saveMetric(withMetrics, 30, base.plusHours(2));
+        saveMetric(withMetrics, 20, base.plusHours(1));
+        saveMetric(otherPost, 99, base.plusHours(5));
+
+        List<PostReportRow> rows = postRepository.findReportRows(owner.getId(), Limit.unlimited());
+
+        // Chỉ bài của owner, sắp theo provider rồi externalId; bài chưa có snapshot vẫn có dòng với metric null
+        assertThat(rows).extracting(PostReportRow::externalId, PostReportRow::likes, PostReportRow::metricsCollectedAt)
+                .containsExactly(
+                        tuple("fb-1", 30L, base.plusHours(2)),
+                        tuple("tw-1", null, null));
+    }
+
+    @Test
+    void reportHasOneRowWhenSnapshotsShareCollectedAt() {
+        User owner = saveUser("owner@example.com");
+        Post post = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));
+        LocalDateTime at = LocalDateTime.of(2026, 1, 1, 0, 0);
+        saveMetric(post, 1, at);
+        saveMetric(post, 2, at);
+
+        List<PostReportRow> rows = postRepository.findReportRows(owner.getId(), Limit.unlimited());
+
+        assertThat(rows).singleElement().extracting(PostReportRow::likes).isEqualTo(2L);
+    }
+
+    @Test
+    void reportRowsRespectLimit() {
+        User owner = saveUser("owner@example.com");
+        postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));
+        postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-2"));
+        postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-3"));
+
+        assertThat(postRepository.findReportRows(owner.getId(), Limit.of(2)))
+                .extracting(PostReportRow::externalId).containsExactly("fb-1", "fb-2");
+    }
 
     @Test
     void savesPostWithOwnerAndAuditTimestamps() {
@@ -107,6 +163,26 @@ class PostRepositoryTest {
         Long ownerId = owner.getId();
         assertThat(postRepository.existsByUserIdAndProviderAndExternalIdAndIdNot(ownerId, Provider.FACEBOOK, "fb-1", first.getId())).isFalse();
         assertThat(postRepository.existsByUserIdAndProviderAndExternalIdAndIdNot(ownerId, Provider.FACEBOOK, "fb-1", second.getId())).isTrue();
+    }
+
+    @Test
+    void findByExternalIdInReturnsOnlyOwnPostsOfProvider() {
+        User owner = saveUser("owner@example.com");
+        User other = saveUser("other@example.com");
+        postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));
+        postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-2"));
+        postRepository.save(newPost(owner, Provider.TWITTER, "fb-3"));
+        postRepository.save(newPost(other, Provider.FACEBOOK, "fb-3"));
+
+        List<Post> found = postRepository.findByUserIdAndProviderAndExternalIdIn(
+                owner.getId(), Provider.FACEBOOK, List.of("fb-1", "fb-3", "missing"));
+
+        assertThat(found).extracting(Post::getExternalId).containsExactly("fb-1");
+    }
+
+    private void saveMetric(Post post, long likes, LocalDateTime collectedAt) {
+        socialMetricRepository.saveAndFlush(SocialMetric.builder()
+                .post(post).likes(likes).shares(1).comments(2).followers(3).collectedAt(collectedAt).build());
     }
 
     private User saveUser(String email) {

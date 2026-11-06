@@ -63,7 +63,7 @@ Kiến trúc 3 lớp, package gốc **`com.huuhv.socialanalytics`**:
 
 ```
 com.huuhv.socialanalytics
-├── config/          # SecurityConfig, AsyncConfig, SchedulingConfig, JmsConfig, WebSocketConfig, WebServiceConfig, OpenApiConfig
+├── config/          # SecurityConfig, AsyncConfig, SchedulingConfig, JmsConfig, WebSocketConfig, WebServiceConfig, OpenApiConfig, ClockConfig
 ├── controller/
 │   ├── web/         # Thymeleaf: /login, /dashboard, /posts ...
 │   └── api/         # REST: /api/posts, /api/metrics, /api/import-posts, /api/export-report, /api/chart-data
@@ -121,7 +121,7 @@ Service viết thẳng thành class (Spring proxy `@Transactional` bằng CGLIB,
 - REST (`controller/api`): `ApiExceptionHandler` (`@RestControllerAdvice`) trả `ProblemDetail` (RFC 9457).
 - Web (`controller/web`): `WebExceptionHandler` (`@ControllerAdvice`) hoặc `RedirectAttributes` với flash message thân thiện.
 - Khi thêm exception nghiệp vụ mới, sửa đúng handler theo package của controller.
-- Exception nghiệp vụ hiện có: `ResourceNotFoundException` (404), `BadRequestException` (400), `DuplicateResourceException` (409), `AuthenticationRequiredException` (401). Lỗi `@Valid` trả 400 kèm `errors[{field, message}]`; exception không lường trước → 500 thông điệp chung + log.
+- Exception nghiệp vụ hiện có: `ResourceNotFoundException` (404), `BadRequestException` (400), `DuplicateResourceException` (409), `AuthenticationRequiredException` (401), `TooManyRequestsException` (429 + `Retry-After`). Lỗi `@Valid` trả 400 kèm `errors[{field, message}]`; exception không lường trước → 500 thông điệp chung + log.
 - Không trả stack trace / thông báo lỗi nội bộ ra client.
 
 ### 5.5. Logging
@@ -194,7 +194,7 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 ## 6. Hướng Dẫn Theo Từng Mảng
 
 ### 6.1. Security, CSRF & OAuth2 Login
-> **Trạng thái tạm thời (Task 1.4 → Task 3.1):** `config/SecurityConfig` đang `permitAll` cho `/api/**` và public Swagger (khi bật profile dev) để thử API; danh tính gửi bằng HTTP Basic (`spring.security.user.*` ← env `API_USER_NAME`/`API_USER_PASSWORD`, thiếu mật khẩu thì app không khởi động), `CurrentUserService` map username → `User.email`. User được tạo mới nếu chưa có bởi interceptor `/api/**` trong `config/WebConfig` (`provisionCurrentUserIfMissing()`, chạy **trước** transaction của Service để mỗi request chỉ giữ 1 connection); `getCurrentUser()` chỉ đọc, không tìm thấy user thì trả 401. Request ẩn danh bị Service từ chối 401. CSRF **vẫn bật** cho `/api/**` theo kiểu SPA (`csrf.spa()`): cookie `XSRF-TOKEN` → header `X-XSRF-TOKEN`. Task 3.1 phải gỡ bỏ các ngoại lệ này theo các quy tắc bên dưới.
+> **Trạng thái tạm thời (Task 1.4 → Task 3.1):** `config/SecurityConfig` đang `permitAll` cho `/api/**` và public Swagger (khi bật profile dev) để thử API; danh tính gửi bằng HTTP Basic (`spring.security.user.*` ← env `API_USER_NAME`/`API_USER_PASSWORD`, thiếu mật khẩu thì app không khởi động), `CurrentUserService` map username → `User.email`. User được tạo mới nếu chưa có bởi interceptor `/api/**` trong `config/WebConfig` (`provisionCurrentUserIfMissing()`, chạy **trước** transaction của Service để mỗi request chỉ giữ 1 connection); `getCurrentUser()` chỉ đọc, không tìm thấy user thì trả 401. Request ẩn danh bị Service từ chối 401; riêng `POST /api/import-posts` và `/api/export-report` yêu cầu đăng nhập ngay ở filter chain (không tốn tài nguyên đọc file upload / dựng báo cáo). CSRF **vẫn bật** cho `/api/**` theo kiểu SPA (`csrf.spa()`): cookie `XSRF-TOKEN` → header `X-XSRF-TOKEN`. Task 3.1 phải gỡ bỏ các ngoại lệ này theo các quy tắc bên dưới.
 
 - **Giữ CSRF bật** cho cả web lẫn API (app dùng session sau OAuth2 login). Không `csrf.disable()` để "cho nhanh".
 - Form Thymeleaf dùng `th:action="@{...}"` để tự chèn hidden `_csrf`. JS `fetch`/upload đọc token từ `<meta name="_csrf">` + `<meta name="_csrf_header">` trong layout và gửi kèm header.
@@ -208,10 +208,16 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 
 ### 6.2. Excel Import/Export (Apache POI + Reflection)
 - Annotation `@ExcelColumn(name = "...", order = n)` đánh dấu field trên **DTO** (không phải Entity).
-- `GenericExcelImporter<T>` đọc header → map cột vào field bằng Reflection, convert kiểu (String, Long, Integer, LocalDate, LocalDateTime, Enum). Cache metadata field theo class (`ConcurrentHashMap<Class<?>, List<FieldMeta>>`) để không reflect lại mỗi dòng.
-- `GenericExcelExporter<T>` sinh header + dòng từ field có `@ExcelColumn`; dùng `SXSSFWorkbook` cho dữ liệu lớn và `dispose()` sau khi ghi.
-- Import: giới hạn kích thước file (`spring.servlet.multipart.max-file-size`), chỉ nhận `.xlsx`, validate từng dòng và trả về danh sách lỗi theo số dòng thay vì fail cả file khi lỗi lẻ.
-- Export: escape giá trị bắt đầu bằng `=`, `+`, `-`, `@` để chống CSV/Formula Injection.
+- `GenericExcelImporter` (`read(InputStream, Class<T>, maxRows, maxUncompressedBytes)`) đọc header → map cột vào field theo tên (không phân biệt hoa thường) bằng Reflection, convert kiểu (String, Long, Integer, LocalDate, LocalDateTime, Enum). Đọc sheet **streaming** (SAX qua `XSSFReader` + `XMLHelper.newXMLReader()`), dừng ngay khi vượt `maxRows`; tổng dung lượng giải nén bị chặn trước khi mở file (`app.import.max-uncompressed-size`). Không dùng `XSSFWorkbook` (DOM) để đọc file upload. Importer không giữ trạng thái (không để `DataFormatter` hay object không thread-safe làm field). Metadata field cache theo class trong `excel/ExcelColumnMetadata` (`ConcurrentHashMap<Class<?>, List<FieldMeta>>`, dùng chung cho exporter) để không reflect lại mỗi dòng.
+- DTO import là class mutable có constructor rỗng (`@Getter @Setter @NoArgsConstructor`, vd `PostImportRow`) vì importer gán field bằng Reflection. DTO import **không** đặt Bean Validation: Service validate DTO request tương ứng (`PostImportRow.toPostRequest()` → `PostRequest`) để import và REST API dùng chung 1 bộ quy tắc; tên field DTO import phải trùng tên component của request.
+- Importer chỉ chuyển kiểu: ô công thức (FORMULA) bị từ chối, ô số ≥ 10^15 map vào field String bị từ chối (Excel đã làm tròn — phải nhập dạng text), lỗi ghi `ExcelRowError(row, column, message)` — thông điệp không echo giá trị ô. Dòng lỗi chuyển kiểu vẫn được trả về (`ExcelRow.errors()`) để Service validate tiếp các cột còn lại, báo đủ lỗi của dòng trong 1 lần. Lỗi cả file (không mở được, vượt dung lượng giải nén, thiếu cột, quá `app.import.max-rows`) ném `ExcelFileException` → Service đổi thành `BadRequestException`.
+- Import bài viết upsert theo `(user, provider, externalId)` — so khớp không phân biệt hoa thường như collation MySQL; tra bài đã có theo lô (`findByUserIdAndProviderAndExternalIdIn`), không query từng dòng. Parse + validate chạy ngoài transaction; chỉ bước ghi (`PostUpsertService`) là `@Transactional`. Ô Content / Published At trống giữ nguyên giá trị cũ của bài đã có.
+- `spring.servlet.multipart.resolve-lazily=true` để lỗi quá dung lượng phát sinh trong controller → `ApiExceptionHandler` trả 413 ProblemDetail.
+- `GenericExcelExporter` (`write(List<T>, Class<T>, sheetName, OutputStream)`) sinh header + dòng từ field có `@ExcelColumn` (theo `order`); dùng `SXSSFWorkbook` trong try-with-resources (close lỗi không che exception gốc) và `dispose()` trong `finally` (file tạm luôn bị xoá). DTO export có thể là record (annotation trên component); kiểu hỗ trợ: String, Long/Integer/Short/Byte/Double/Float, Boolean, LocalDate, LocalDateTime, Enum — **không** BigDecimal/BigInteger (ô số Excel là double); Long vượt ±2^53 ghi dạng text để không mất chữ số. Hằng số content-type dùng chung: `GenericExcelExporter.XLSX_CONTENT_TYPE`.
+- Báo cáo export lấy dữ liệu bằng projection (`PostRepository.findReportRows` → `PostReportRow`, `SELECT new` + `LEFT JOIN` snapshot mới nhất), không load Entity. "Snapshot mới nhất" dùng subquery `ORDER BY collectedAt DESC, id DESC LIMIT 1` theo từng bài (đi trên index `(post_id, collected_at)`, O(1)/bài) — **không** dùng `NOT EXISTS` + điều kiện `OR` (MySQL không range-scan được, O(n²) theo số snapshot). Giới hạn `app.export.max-rows` (query lấy `max + 1` dòng qua `Limit`, vượt → 400); query chạy trong `PostService.findReportRows` (`@Transactional(readOnly = true)`), `PostReportService` cố ý không có transaction để không giữ connection khi dựng file. Cột của DTO export trùng tên cột DTO import để file export import lại được (round-trip); `PostRequest` cắt `publishedAt` về giây vì ô ngày giờ Excel chỉ giữ tới mili giây.
+- Export trả `StreamingResponseBody`: Service kiểm tra quyền/tần suất/giới hạn dòng và đọc dữ liệu trước, trả `ExportFile(filename, content)`; file ghi thẳng vào response, không gom vào `byte[]`. Tần suất export mỗi user giới hạn bởi `UserRateLimiter` (`app.export.min-interval`, vượt → 429; trạng thái in-memory, 1 instance). Thời gian lấy từ bean `Clock` (`config/ClockConfig`), không gọi `now()` trực tiếp.
+- Import: giới hạn kích thước file (`spring.servlet.multipart.max-file-size`), chỉ nhận `.xlsx` (đuôi file + magic bytes qua POI `FileMagic`), validate từng dòng và trả về danh sách lỗi theo số dòng thay vì fail cả file khi lỗi lẻ.
+- Export: escape giá trị bắt đầu bằng `=`, `+`, `-`, `@` (và tab, CR) để chống CSV/Formula Injection — với .xlsx dùng style `quotePrefixed` (tương đương gõ `'` trong Excel) thay vì chèn `'` vào giá trị, để giá trị ô giữ nguyên khi import lại. Ô luôn ghi dạng giá trị, không bao giờ `setCellFormula`.
 - API: `POST /api/import-posts` (multipart), `GET /api/export-report` (trả `Content-Disposition: attachment`).
 
 ### 6.3. Background Job & Multithreading
@@ -272,7 +278,7 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 ## 10. Lộ Trình & Trạng Thái
 Cập nhật checkbox khi hoàn thành từng giai đoạn để AI biết phạm vi hiện tại:
 - [x] **1. Khởi tạo project**: cấu trúc nền, config, logging, JPA + MySQL + Flyway, entity `User`/`Post`/`SocialMetric`, CRUD `/api/posts`, `/api/metrics`, Swagger.
-- [ ] **2. Unit Test + Excel**: test `PostService`, `MetricService`, controller; `/api/import-posts`, `/api/export-report`; Reflection mapping.
+- [x] **2. Unit Test + Excel**: test `PostService`, `MetricService`, controller; `/api/import-posts`, `/api/export-report`; Reflection mapping.
 - [ ] **3. Security + CSRF + Social Login**: Facebook & Twitter login → `/dashboard`, lưu token & user.
 - [ ] **4. Background Job & Multithread**: `updateSocialMetricsJob` mỗi giờ, mock API, màn hình "Last updated time".
 - [ ] **5. JMS**: `IMPORT_COMPLETED` → listener cập nhật thống kê tổng hợp, retry + DLQ.

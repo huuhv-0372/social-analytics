@@ -22,6 +22,14 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  servlet:
+    multipart:
+      # Giới hạn upload (import Excel — OWASP A06). Quá giới hạn → 413
+      max-file-size: 5MB
+      max-request-size: 6MB
+      # Parse multipart khi controller đọc tham số → lỗi quá dung lượng do ApiExceptionHandler xử lý (ProblemDetail)
+      resolve-lazily: true
+
   security:
     # TẠM THỜI tới Task 3.1: user HTTP Basic để gọi /api/**. Username dùng làm email của User (owner).
     # API_USER_PASSWORD bắt buộc: để trống thì app dừng khởi động (SecurityConfig), không sinh mật khẩu in ra log.
@@ -65,3 +73,13 @@ app:
   pagination:
     default-size: 20
     max-size: 100
+  import:
+    # Số dòng dữ liệu tối đa mỗi file import Excel
+    max-rows: 1000
+    # Tổng dung lượng sau giải nén của file .xlsx — chặn file nén cao (zip bomb) làm tràn heap
+    max-uncompressed-size: 20MB
+  export:
+    # Số dòng tối đa mỗi báo cáo export Excel — vượt thì trả 400
+    max-rows: 10000
+    # Khoảng cách tối thiểu giữa 2 lần export của cùng 1 user — gọi sớm hơn trả 429 (0 = tắt)
+    min-interval: 10s
