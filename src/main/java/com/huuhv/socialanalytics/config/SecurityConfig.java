@@ -30,7 +30,8 @@ import static org.springframework.security.config.Customizer.withDefaults;
  * <ul>
  *     <li>{@code /api/**} permitAll; danh tính gửi qua HTTP Basic (user cấu hình ở {@code spring.security.user.*}).
  *     Request ẩn danh vẫn bị Service từ chối với 401 vì không xác định được owner (fail closed).
- *     Riêng {@code POST /api/import-posts} yêu cầu đăng nhập ngay ở filter chain để không tốn tài nguyên đọc file upload.</li>
+ *     Riêng {@code POST /api/import-posts} và {@code /api/export-report} yêu cầu đăng nhập ngay ở filter chain để không
+ *     tốn tài nguyên đọc file upload / dựng báo cáo.</li>
  *     <li>CSRF bật cho mọi request ghi (kể cả {@code /api/**}): token nằm trong cookie {@code XSRF-TOKEN},
  *     client gửi lại qua header {@code X-XSRF-TOKEN} (Swagger UI tự làm qua {@code springdoc.swagger-ui.csrf.enabled}).</li>
  *     <li>Mọi đường dẫn khác vẫn deny-by-default.</li>
@@ -51,6 +52,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Upload: chặn request ẩn danh ở filter chain, trước khi multipart được parse (OWASP A06)
                         .requestMatchers(HttpMethod.POST, "/api/import-posts").authenticated()
+                        // Export tốn tài nguyên (query + dựng file): từ chối ẩn danh trước khi tới Service
+                        .requestMatchers("/api/export-report").authenticated()
                         .requestMatchers("/api/**").permitAll()
                         .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
                         .anyRequest().authenticated())

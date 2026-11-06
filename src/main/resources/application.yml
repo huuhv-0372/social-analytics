@@ -78,3 +78,8 @@ app:
     max-rows: 1000
     # Tổng dung lượng sau giải nén của file .xlsx — chặn file nén cao (zip bomb) làm tràn heap
     max-uncompressed-size: 20MB
+  export:
+    # Số dòng tối đa mỗi báo cáo export Excel — vượt thì trả 400
+    max-rows: 10000
+    # Khoảng cách tối thiểu giữa 2 lần export của cùng 1 user — gọi sớm hơn trả 429 (0 = tắt)
+    min-interval: 10s

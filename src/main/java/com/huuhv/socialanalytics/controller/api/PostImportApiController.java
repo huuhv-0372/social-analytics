@@ -1,6 +1,7 @@
 package com.huuhv.socialanalytics.controller.api;
 
 import com.huuhv.socialanalytics.dto.response.ImportResultResponse;
+import com.huuhv.socialanalytics.excel.GenericExcelExporter;
 import com.huuhv.socialanalytics.service.PostImportService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -24,7 +25,7 @@ import org.springframework.web.multipart.MultipartFile;
 @RequiredArgsConstructor
 public class PostImportApiController {
 
-    static final String XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    static final String XLSX_MEDIA_TYPE = GenericExcelExporter.XLSX_CONTENT_TYPE;
     private static final String TEMPLATE_FILENAME = "posts-import-template.xlsx";
 
     private final PostImportService postImportService;

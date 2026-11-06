@@ -27,6 +27,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.util.unit.DataSize;
 
 import java.lang.reflect.RecordComponent;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.Collection;
@@ -70,7 +71,8 @@ class PostImportServiceTest {
         Validator validator = VALIDATOR_FACTORY.getValidator();
         AppProperties properties = new AppProperties(
                 new AppProperties.Pagination(20, 100),
-                new AppProperties.ImportSettings(maxRows, DataSize.ofMegabytes(20)));
+                new AppProperties.ImportSettings(maxRows, DataSize.ofMegabytes(20)),
+                new AppProperties.ExportSettings(10000, Duration.ZERO));
         return new PostImportService(new GenericExcelImporter(), new PostUpsertService(postRepository),
                 currentUserService, validator, properties);
     }

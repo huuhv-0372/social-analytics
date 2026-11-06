@@ -11,6 +11,8 @@ import org.springframework.boot.context.properties.bind.Name;
 import org.springframework.util.unit.DataSize;
 import org.springframework.validation.annotation.Validated;
 
+import java.time.Duration;
+
 /**
  * Cấu hình riêng của ứng dụng, prefix {@code app.*}. Sai giá trị → app không khởi động (fail fast).
  */
@@ -19,7 +21,8 @@ import org.springframework.validation.annotation.Validated;
 public record AppProperties(
         @Valid @DefaultValue Pagination pagination,
         // "import" là từ khoá Java → đặt tên khác cho component, bind theo key app.import.*
-        @Valid @DefaultValue @Name("import") ImportSettings importSettings) {
+        @Valid @DefaultValue @Name("import") ImportSettings importSettings,
+        @Valid @DefaultValue @Name("export") ExportSettings exportSettings) {
 
     /**
      * Giới hạn phân trang cho API danh sách (OWASP A06 — giới hạn tài nguyên).
@@ -46,6 +49,21 @@ public record AppProperties(
         @AssertTrue(message = "app.import.max-uncompressed-size must be positive")
         public boolean isMaxUncompressedSizePositive() {
             return maxUncompressedSize == null || maxUncompressedSize.toBytes() > 0;
+        }
+    }
+
+    /**
+     * Giới hạn export Excel (OWASP A06): báo cáo vượt {@code maxRows} dòng bị từ chối thay vì dựng file khổng lồ.
+     *
+     * @param minInterval khoảng cách tối thiểu giữa 2 lần export của cùng 1 user (vi phạm → 429); {@code 0} = tắt
+     */
+    public record ExportSettings(
+            @Positive @Max(100000) @DefaultValue("10000") int maxRows,
+            @NotNull @DefaultValue("10s") Duration minInterval) {
+
+        @AssertTrue(message = "app.export.min-interval must not be negative")
+        public boolean isMinIntervalNotNegative() {
+            return minInterval == null || !minInterval.isNegative();
         }
     }
 }

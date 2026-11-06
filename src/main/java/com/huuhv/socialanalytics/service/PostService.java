@@ -2,6 +2,7 @@ package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.dto.request.PostRequest;
 import com.huuhv.socialanalytics.dto.response.PageResponse;
+import com.huuhv.socialanalytics.dto.response.PostReportRow;
 import com.huuhv.socialanalytics.dto.response.PostResponse;
 import com.huuhv.socialanalytics.entity.Post;
 import com.huuhv.socialanalytics.entity.User;
@@ -13,11 +14,13 @@ import com.huuhv.socialanalytics.util.PageableUtils;
 import com.huuhv.socialanalytics.util.SocialUrlPolicy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -105,6 +108,15 @@ public class PostService {
         if (!postRepository.existsByIdAndUserId(id, userId)) {
             throw new ResourceNotFoundException(RESOURCE);
         }
+    }
+
+    /**
+     * Dữ liệu báo cáo export của owner (projection, không load Entity): mỗi bài kèm snapshot metric mới nhất.
+     * {@code ownerId} lấy từ user đang đăng nhập ở Service gọi tới, không bao giờ từ client.
+     */
+    @Transactional(readOnly = true)
+    public List<PostReportRow> findReportRows(Long ownerId, int limit) {
+        return postRepository.findReportRows(ownerId, Limit.of(limit));
     }
 
     private static void validateUrl(PostRequest request) {

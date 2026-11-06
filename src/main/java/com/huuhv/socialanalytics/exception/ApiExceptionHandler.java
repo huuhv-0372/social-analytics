@@ -64,6 +64,15 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 .body(problem(HttpStatus.UNAUTHORIZED, ex.getMessage()));
     }
 
+    @ExceptionHandler(TooManyRequestsException.class)
+    ResponseEntity<ProblemDetail> handleTooManyRequests(TooManyRequestsException ex) {
+        // Làm tròn lên để client không gọi lại sớm hơn giới hạn
+        long retryAfterSeconds = Math.max(1, (ex.getRetryAfter().toMillis() + 999) / 1000);
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
+                .body(problem(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage()));
+    }
+
     /**
      * Ném lại để {@code ExceptionTranslationFilter} của Spring Security trả 401/403 (vd {@code @PreAuthorize} từ chối),
      * thay vì bị handler {@link Exception} bên dưới biến thành 500.
