@@ -11,9 +11,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Optional;
 
 /**
- * Tạo/đọc user trong transaction riêng ({@code REQUIRES_NEW}), tách khỏi {@link CurrentUserService} để đi qua proxy.
- * Lý do: {@link CurrentUserService#getCurrentUser()} thường chạy bên trong transaction {@code readOnly} của service gọi nó,
- * MySQL từ chối INSERT trong transaction READ ONLY.
+ * Tạo/đọc user, mỗi lời gọi một transaction riêng ({@code REQUIRES_NEW}); tách khỏi {@link CurrentUserService} để đi
+ * qua proxy. Chỉ gọi qua {@link CurrentUserService#provisionCurrentUserIfMissing()} — ngoài mọi transaction khác,
+ * để mỗi request chỉ giữ 1 connection tại một thời điểm.
  */
 @Slf4j
 @Service

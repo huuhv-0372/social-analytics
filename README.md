@@ -85,9 +85,13 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 
 ```bash
 # Chạy Maven trong container JDK 25 (không cần JDK local) — tự bật MySQL nếu chưa chạy
-docker compose run --rm maven test                          # Chạy toàn bộ test
-docker compose run --rm maven test -Dtest=PostServiceTest   # Chạy 1 class test
 docker compose run --rm maven clean package -DskipTests     # Build file JAR vào target/
+docker compose run --rm maven test -Dtest=PostServiceTest   # Chạy 1 class test không cần Testcontainers
+
+# Toàn bộ test (kể cả Testcontainers) trong container: service này mount Docker socket của host,
+# tức là cấp quyền tương đương root cho mọi code chạy trong build — chỉ dùng khi tin các dependency hiện tại,
+# ưu tiên ./mvnw test bằng JDK local
+docker compose run --rm maven-testcontainers test
 
 # Hoặc bằng JDK local (cần MySQL đang chạy cho SocialAnalyticsApplicationTests)
 ./mvnw test
@@ -142,7 +146,7 @@ src/main/resources/
 | `application.yml` | Cấu hình chung, an toàn cho production: datasource, JPA (`ddl-auto=validate`), Flyway, Artemis, ẩn chi tiết lỗi, tắt Swagger, `app.*` |
 | `application-dev.yml` | Profile `dev`: bật Swagger UI, log DEBUG cho app, SQL, Security (`-Dspring-boot.run.profiles=dev`) |
 | `config/OpenApiConfig` | Thông tin tài liệu OpenAPI (title, version) + khai báo HTTP Basic cho nút Authorize của Swagger UI |
-| `application-test.yml` | Profile `test` cho test (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
+| `src/test/resources/application-test.yml` | Profile `test` chỉ dành cho test, không đóng gói vào JAR (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
 | `logback-spring.xml` | Log console + file theo ngày trong `logs/` (giữ 30 ngày), pattern kèm MDC `jobId` / `importId` |
 | `config/AppProperties` | Bind cấu hình `app.*` (record + validation), vd `app.pagination.default-size` / `max-size`, `app.import.max-rows` |
 | `.env` | Giá trị bí mật cho môi trường local — copy từ `.env.example` |

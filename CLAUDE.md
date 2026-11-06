@@ -51,7 +51,8 @@ Windows dùng `mvnw.cmd`, Mac/Linux dùng `./mvnw`:
 - Docker (file `docker-compose.yaml` + `Dockerfile` ở root; trước tiên copy `.env.example` → `.env`, điền mật khẩu):
   - Chạy toàn bộ (MySQL + Artemis + app): `docker compose up -d --build`
   - Chỉ hạ tầng, app chạy bằng JDK local: `docker compose up -d mysql artemis` (app tự đọc `.env` qua `spring.config.import`)
-  - Chạy Maven trong container JDK 25, không cần JDK local: `docker compose run --rm maven test` (thay `test` bằng goal bất kỳ)
+  - Chạy Maven trong container JDK 25, không cần JDK local: `docker compose run --rm maven package -DskipTests` (thay bằng goal bất kỳ). Service `maven` **không** có Docker socket nên test Testcontainers không chạy được ở đó.
+  - Toàn bộ test trong container: `docker compose run --rm maven-testcontainers test` — mount Docker socket của host (quyền tương đương root cho mọi code trong build); không thêm socket vào service `maven`.
   - Trong mạng Docker, app/maven kết nối `mysql:3306`, `artemis:61616`; `DB_PORT` trong `.env` chỉ là port mở ra máy host.
 - Swagger UI: `http://localhost:8080/swagger-ui.html` — chỉ dùng trên trình duyệt, **không** hardcode trong code/template.
   - Chỉ bật ở profile `dev` (`springdoc.*.enabled` tắt trong `application.yml`, bật trong `application-dev.yml`); container `app` mặc định `SPRING_PROFILES_ACTIVE=dev`.
@@ -193,7 +194,7 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 ## 6. Hướng Dẫn Theo Từng Mảng
 
 ### 6.1. Security, CSRF & OAuth2 Login
-> **Trạng thái tạm thời (Task 1.4 → Task 3.1):** `config/SecurityConfig` đang `permitAll` cho `/api/**` và public Swagger (khi bật profile dev) để thử API; danh tính gửi bằng HTTP Basic (`spring.security.user.*` ← env `API_USER_NAME`/`API_USER_PASSWORD`, thiếu mật khẩu thì app không khởi động), `CurrentUserService` map username → `User.email` và tạo mới nếu chưa có (qua `UserProvisioningService`, transaction `REQUIRES_NEW` vì caller thường đang ở transaction `readOnly`). Request ẩn danh bị Service từ chối 401; riêng `POST /api/import-posts` yêu cầu đăng nhập ngay ở filter chain (không tốn tài nguyên đọc file upload). CSRF **vẫn bật** cho `/api/**` theo kiểu SPA (`csrf.spa()`): cookie `XSRF-TOKEN` → header `X-XSRF-TOKEN`. Task 3.1 phải gỡ bỏ các ngoại lệ này theo các quy tắc bên dưới.
+> **Trạng thái tạm thời (Task 1.4 → Task 3.1):** `config/SecurityConfig` đang `permitAll` cho `/api/**` và public Swagger (khi bật profile dev) để thử API; danh tính gửi bằng HTTP Basic (`spring.security.user.*` ← env `API_USER_NAME`/`API_USER_PASSWORD`, thiếu mật khẩu thì app không khởi động), `CurrentUserService` map username → `User.email`. User được tạo mới nếu chưa có bởi interceptor `/api/**` trong `config/WebConfig` (`provisionCurrentUserIfMissing()`, chạy **trước** transaction của Service để mỗi request chỉ giữ 1 connection); `getCurrentUser()` chỉ đọc, không tìm thấy user thì trả 401. Request ẩn danh bị Service từ chối 401; riêng `POST /api/import-posts` yêu cầu đăng nhập ngay ở filter chain (không tốn tài nguyên đọc file upload). CSRF **vẫn bật** cho `/api/**` theo kiểu SPA (`csrf.spa()`): cookie `XSRF-TOKEN` → header `X-XSRF-TOKEN`. Task 3.1 phải gỡ bỏ các ngoại lệ này theo các quy tắc bên dưới.
 
 - **Giữ CSRF bật** cho cả web lẫn API (app dùng session sau OAuth2 login). Không `csrf.disable()` để "cho nhanh".
 - Form Thymeleaf dùng `th:action="@{...}"` để tự chèn hidden `_csrf`. JS `fetch`/upload đọc token từ `<meta name="_csrf">` + `<meta name="_csrf_header">` trong layout và gửi kèm header.

@@ -10,10 +10,12 @@ import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.DuplicateResourceException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
+import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.PostService;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -37,6 +39,7 @@ import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -67,6 +70,21 @@ class PostApiControllerTest {
 
     @MockitoBean
     private PostService postService;
+
+    // WebConfig cần cho interceptor provision user
+    @MockitoBean
+    private CurrentUserService currentUserService;
+
+    @Test
+    void apiRequestProvisionsCurrentUserBeforeCallingService() throws Exception {
+        when(postService.findAll(any(Pageable.class))).thenReturn(new PageResponse<>(List.of(), 0, 20, 0, 0));
+
+        mockMvc.perform(get("/api/posts").with(user("dev@example.com"))).andExpect(status().isOk());
+
+        InOrder inOrder = inOrder(currentUserService, postService);
+        inOrder.verify(currentUserService).provisionCurrentUserIfMissing();
+        inOrder.verify(postService).findAll(any(Pageable.class));
+    }
 
     @Test
     void listReturnsPage() throws Exception {

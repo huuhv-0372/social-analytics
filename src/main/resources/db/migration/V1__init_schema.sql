@@ -29,9 +29,10 @@ CREATE TABLE posts
     created_at   DATETIME(6)  NOT NULL,
     updated_at   DATETIME(6)  NOT NULL,
     CONSTRAINT pk_posts PRIMARY KEY (id),
-    CONSTRAINT uk_posts_provider_external_id UNIQUE (provider, external_id),
-    CONSTRAINT fk_posts_user FOREIGN KEY (user_id) REFERENCES users (id),
-    INDEX idx_posts_user_id (user_id)
+    -- Unique theo từng user: nhiều user theo dõi được cùng 1 bài, kiểm tra trùng không làm lộ bài viết
+    -- của user khác (OWASP A01). Bắt đầu bằng user_id nên cũng là index cho FK fk_posts_user.
+    CONSTRAINT uk_posts_user_provider_external_id UNIQUE (user_id, provider, external_id),
+    CONSTRAINT fk_posts_user FOREIGN KEY (user_id) REFERENCES users (id)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_unicode_ci;

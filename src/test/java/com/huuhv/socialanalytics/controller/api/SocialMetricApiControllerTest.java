@@ -8,6 +8,7 @@ import com.huuhv.socialanalytics.dto.response.SocialMetricResponse;
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
+import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.SocialMetricService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +22,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -53,6 +55,10 @@ class SocialMetricApiControllerTest {
     @MockitoBean
     private SocialMetricService socialMetricService;
 
+    // WebConfig cần cho interceptor provision user
+    @MockitoBean
+    private CurrentUserService currentUserService;
+
     @Test
     void listParsesIsoDateRange() throws Exception {
         LocalDateTime from = LocalDateTime.of(2026, 1, 1, 0, 0);
@@ -76,7 +82,12 @@ class SocialMetricApiControllerTest {
     @Test
     void listWithNonPositivePostIdReturns400() throws Exception {
         mockMvc.perform(get("/api/metrics").param("postId", "0").with(user("dev@example.com")))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                // Lỗi ràng buộc trên tham số method có cùng định dạng errors[] như lỗi body
+                .andExpect(jsonPath("$.detail").value("Validation failed"))
+                .andExpect(jsonPath("$.errors[0].field").value("postId"))
+                .andExpect(jsonPath("$.errors[0].message").isNotEmpty());
         verifyNoInteractions(socialMetricService);
     }
 
@@ -193,6 +204,34 @@ class SocialMetricApiControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest());
         verifyNoInteractions(socialMetricService);
+    }
+
+    @Test
+    void createAcceptsCurrentLocalTimeOfClientAheadOfServer() throws Exception {
+        when(socialMetricService.create(any(SocialMetricRequest.class))).thenReturn(response(5L));
+        // "Bây giờ" của client ở múi giờ đi trước xa nhất — hợp lệ dù server chạy múi giờ nào
+        LocalDateTime clientNow = LocalDateTime.now(ZoneOffset.ofHours(14)).withNano(0);
+
+        mockMvc.perform(post("/api/metrics").with(user("dev@example.com")).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(metricBody(clientNow)))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void createBeyondEveryTimeZoneReturns400() throws Exception {
+        LocalDateTime future = LocalDateTime.now(ZoneOffset.ofHours(14)).plusHours(2).withNano(0);
+
+        mockMvc.perform(post("/api/metrics").with(user("dev@example.com")).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(metricBody(future)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("collectedAt"));
+        verifyNoInteractions(socialMetricService);
+    }
+
+    private static String metricBody(LocalDateTime collectedAt) {
+        return """
+                {"postId":10,"likes":1,"shares":1,"comments":1,"followers":1,"collectedAt":"%s"}
+                """.formatted(collectedAt);
     }
 
     @Test

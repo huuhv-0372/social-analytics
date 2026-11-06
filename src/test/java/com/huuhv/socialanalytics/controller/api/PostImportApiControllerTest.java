@@ -4,6 +4,7 @@ import com.huuhv.socialanalytics.config.SecurityConfig;
 import com.huuhv.socialanalytics.config.WebConfig;
 import com.huuhv.socialanalytics.dto.response.ImportResultResponse;
 import com.huuhv.socialanalytics.exception.BadRequestException;
+import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.PostImportService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,6 +48,10 @@ class PostImportApiControllerTest {
 
     @MockitoBean
     private PostImportService postImportService;
+
+    // Interceptor /api/** trong WebConfig gọi provisionCurrentUserIfMissing() trước controller
+    @MockitoBean
+    private CurrentUserService currentUserService;
 
     @Test
     void importReturnsSummaryWithRowErrors() throws Exception {
