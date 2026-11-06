@@ -1,5 +1,6 @@
 package com.huuhv.socialanalytics.config;
 
+import com.huuhv.socialanalytics.util.LogSanitizer;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -38,7 +39,8 @@ class OAuth2LoginResultHandler implements AuthenticationSuccessHandler, Authenti
         String provider = authentication instanceof OAuth2AuthenticationToken token
                 ? token.getAuthorizedClientRegistrationId()
                 : "unknown";
-        log.info("Login succeeded: provider={} user={}", sanitize(provider), sanitize(authentication.getName()));
+        log.info("Login succeeded: provider={} user={}", LogSanitizer.stripLineBreaks(provider),
+                LogSanitizer.stripLineBreaks(authentication.getName()));
         successDelegate.onAuthenticationSuccess(request, response, authentication);
     }
 
@@ -49,11 +51,8 @@ class OAuth2LoginResultHandler implements AuthenticationSuccessHandler, Authenti
         String errorCode = exception instanceof OAuth2AuthenticationException oauth2
                 ? oauth2.getError().getErrorCode()
                 : exception.getClass().getSimpleName();
-        log.warn("Login failed: error={} remoteAddr={}", sanitize(errorCode), request.getRemoteAddr());
+        log.warn("Login failed: error={} remoteAddr={}", LogSanitizer.stripLineBreaks(errorCode),
+                request.getRemoteAddr());
         failureDelegate.onAuthenticationFailure(request, response, exception);
-    }
-
-    private static String sanitize(String value) {
-        return value == null ? "null" : value.replaceAll("[\\r\\n]", "_");
     }
 }

@@ -97,7 +97,10 @@ class ApiSecurityMatrixTest {
     void authenticatedWriteWithoutCsrfReturns403(String name, Supplier<AbstractMockHttpServletRequestBuilder<?>> request)
             throws Exception {
         mockMvc.perform(request.get().with(oauth2Login()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(403))
+                .andExpect(jsonPath("$.detail").value("Access denied"));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -105,7 +108,9 @@ class ApiSecurityMatrixTest {
     void authenticatedWriteWithInvalidCsrfReturns403(String name, Supplier<AbstractMockHttpServletRequestBuilder<?>> request)
             throws Exception {
         mockMvc.perform(request.get().with(oauth2Login()).with(csrf().useInvalidToken()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.detail").value("Access denied"));
     }
 
     static Stream<Arguments> allEndpoints() {

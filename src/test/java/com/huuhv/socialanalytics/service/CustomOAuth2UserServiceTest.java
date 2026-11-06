@@ -4,6 +4,8 @@ import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.enums.Provider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -27,7 +29,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -46,6 +47,7 @@ class CustomOAuth2UserServiceTest {
 
     private static final String X_USER_INFO_URI = "https://api.x.com/2/users/me";
     private static final String FACEBOOK_USER_INFO_URI = "https://graph.facebook.com/me?fields=id,name,email";
+    private static final User SAVED_USER = User.builder().id(7L).displayName("Dev User").build();
 
     private MockRestServiceServer server;
     private SocialAccountService socialAccountService;
@@ -57,8 +59,24 @@ class CustomOAuth2UserServiceTest {
         server = MockRestServiceServer.bindTo(restTemplate).build();
         DefaultOAuth2UserService delegate = new DefaultOAuth2UserService();
         delegate.setRestOperations(restTemplate);
+        // Giống bean providerUserInfoService ở config/OAuth2ClientConfig
+        delegate.setAttributesConverter(OAuth2UserAttributes::converterFor);
         socialAccountService = mock(SocialAccountService.class);
+        when(socialAccountService.recordLogin(any(), any(), any())).thenReturn(SAVED_USER);
         service = new CustomOAuth2UserService(delegate, socialAccountService);
+    }
+
+    @Test
+    void principalCarriesInternalUserIdOfSavedAccount() {
+        expectFacebookUserInfo();
+
+        OAuth2User user = service.loadUser(request("facebook", FACEBOOK_USER_INFO_URI, "fb-access-token"));
+
+        // CurrentUserService lấy owner theo id này mà không query lại
+        assertThat(user).isInstanceOfSatisfying(AppOAuth2User.class,
+                principal -> assertThat(principal.getUserId()).isEqualTo(SAVED_USER.getId()));
+        assertThat(user.getName()).isEqualTo("1234567890");
+        assertThat(user.<String>getAttribute("name")).isEqualTo("Dev User");
     }
 
     @Test
@@ -78,7 +96,8 @@ class CustomOAuth2UserServiceTest {
         assertThat(user.getAttributes()).doesNotContainKey("data");
         server.verify();
         // Lưu tài khoản X theo id đã bóc ra, kèm đúng access token của lần đăng nhập
-        verify(socialAccountService).recordLogin(eq(Provider.TWITTER), same(user),
+        verify(socialAccountService).recordLogin(eq(Provider.TWITTER),
+                argThat(saved -> "2244994945".equals(saved.getName()) && !saved.getAttributes().containsKey("data")),
                 argThat(token -> "x-access-token".equals(token.getTokenValue())));
     }
 
@@ -115,7 +134,8 @@ class CustomOAuth2UserServiceTest {
 
         assertThat(user.getName()).isEqualTo("1234567890");
         assertThat(user.<String>getAttribute("email")).isEqualTo("dev@example.com");
-        verify(socialAccountService).recordLogin(eq(Provider.FACEBOOK), same(user), any(OAuth2AccessToken.class));
+        verify(socialAccountService).recordLogin(eq(Provider.FACEBOOK),
+                argThat(saved -> "1234567890".equals(saved.getName())), any(OAuth2AccessToken.class));
     }
 
     @Test
@@ -129,6 +149,34 @@ class CustomOAuth2UserServiceTest {
 
         assertThat(user.getName()).isEqualTo("1234567890");
         verify(socialAccountService, times(2)).recordLogin(eq(Provider.FACEBOOK), any(), any());
+    }
+
+    @Test
+    void lockConflictOnConcurrentLoginIsRetriedOnce() {
+        // InnoDB chọn transaction này làm nạn nhân deadlock khi nhiều lần đăng nhập đầu tiên chèn cùng unique key
+        expectFacebookUserInfo();
+        when(socialAccountService.recordLogin(any(), any(), any()))
+                .thenThrow(new CannotAcquireLockException("deadlock"))
+                .thenReturn(User.builder().id(1L).displayName("Dev User").build());
+
+        OAuth2User user = service.loadUser(request("facebook", FACEBOOK_USER_INFO_URI, "fb-access-token"));
+
+        assertThat(user.getName()).isEqualTo("1234567890");
+        verify(socialAccountService, times(2)).recordLogin(eq(Provider.FACEBOOK), any(), any());
+    }
+
+    @Test
+    void nonRetryableDatabaseFailureRejectsLoginWithoutRetry() {
+        expectFacebookUserInfo();
+        when(socialAccountService.recordLogin(any(), any(), any()))
+                .thenThrow(new DataAccessResourceFailureException("connection refused"));
+
+        assertThatThrownBy(() -> service.loadUser(request("facebook", FACEBOOK_USER_INFO_URI, "fb-access-token")))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, ex -> {
+                    assertThat(ex.getError().getErrorCode()).isEqualTo(OAuth2ErrorCodes.SERVER_ERROR);
+                    assertThat(ex.getError().getDescription()).doesNotContain("connection refused");
+                });
+        verify(socialAccountService, times(1)).recordLogin(any(), any(), any());
     }
 
     @Test

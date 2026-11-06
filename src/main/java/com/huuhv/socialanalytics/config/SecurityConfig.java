@@ -31,7 +31,8 @@ import java.io.IOException;
  *     <li><b>Deny-by-default</b>: chỉ {@code /login}, {@code /oauth2/**}, {@code /error} và static resource là public;
  *     mọi đường dẫn khác (kể cả {@code /api/**}, Swagger) phải đăng nhập.</li>
  *     <li>Chưa đăng nhập: REST ({@code /api/**}, {@code /v3/api-docs/**}) nhận 401 {@code ProblemDetail};
- *     trang web (kể cả Swagger UI) được redirect về {@code /login}.</li>
+ *     trang web (kể cả Swagger UI) được redirect về {@code /login}. Bị từ chối (403, gồm lỗi CSRF): REST nhận
+ *     {@code ProblemDetail}, trang web nhận trang lỗi 403.</li>
  *     <li>CSRF bật cho mọi request ghi: token nằm trong cookie {@code XSRF-TOKEN}, client gửi lại qua header
  *     {@code X-XSRF-TOKEN} (Swagger UI tự làm qua {@code springdoc.swagger-ui.csrf.enabled}); trang Thymeleaf đọc
  *     token từ {@code <meta name="_csrf">} / form {@code th:action} chèn hidden {@code _csrf}.</li>
@@ -73,6 +74,7 @@ public class SecurityConfig {
     SecurityFilterChain securityFilterChain(HttpSecurity http, CustomOAuth2UserService oauth2UserService)
             throws Exception {
         ApiAuthenticationEntryPoint apiEntryPoint = new ApiAuthenticationEntryPoint();
+        RequestMatcher restRequestMatcher = restRequestMatcher();
         OAuth2LoginResultHandler loginResultHandler = new OAuth2LoginResultHandler(LOGIN_SUCCESS_URL, LOGIN_FAILURE_URL);
         http
                 .authorizeHttpRequests(auth -> auth
@@ -81,10 +83,11 @@ public class SecurityConfig {
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         // Thứ tự quan trọng: REST khớp trước, còn lại (trang web) redirect về trang login
-                        .defaultAuthenticationEntryPointFor(apiEntryPoint, restRequestMatcher())
+                        .defaultAuthenticationEntryPointFor(apiEntryPoint, restRequestMatcher)
                         .defaultAuthenticationEntryPointFor(
                                 new LoginUrlAuthenticationEntryPoint(LOGIN_PAGE), AnyRequestMatcher.INSTANCE)
-                        .accessDeniedHandler(new LoggingAccessDeniedHandler()))
+                        // 403: REST nhận ProblemDetail, trang web dùng trang lỗi mặc định; cả hai đều được log
+                        .accessDeniedHandler(new LoggingAccessDeniedHandler(restRequestMatcher)))
                 // Như csrf.spa() (cookie XSRF-TOKEN đọc được bằng JS) nhưng header nhận cả token đã mask từ <meta>
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())

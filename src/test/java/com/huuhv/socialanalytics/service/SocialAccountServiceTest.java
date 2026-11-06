@@ -16,13 +16,12 @@ import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 
-import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TimeZone;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -48,8 +47,23 @@ class SocialAccountServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new SocialAccountService(socialAccountRepository, userRepository,
-                Clock.fixed(ISSUED_AT, ZoneOffset.ofHours(7)));
+        service = new SocialAccountService(socialAccountRepository, userRepository);
+    }
+
+    @Test
+    void tokenExpiryIsStoredAsUtcRegardlessOfJvmTimeZone() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("Asia/Ho_Chi_Minh"));
+            assertThat(SocialAccountService.toUtcDateTime(Instant.parse("2026-03-02T00:00:00Z")))
+                    .isEqualTo(LocalDateTime.of(2026, 3, 2, 0, 0));
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+            assertThat(SocialAccountService.toUtcDateTime(Instant.parse("2026-03-02T00:00:00Z")))
+                    .isEqualTo(LocalDateTime.of(2026, 3, 2, 0, 0));
+        } finally {
+            TimeZone.setDefault(original);
+        }
+        assertThat(SocialAccountService.toUtcDateTime(null)).isNull();
     }
 
     @Test
@@ -71,8 +85,8 @@ class SocialAccountServiceTest {
         assertThat(saved.getProvider()).isEqualTo(Provider.FACEBOOK);
         assertThat(saved.getProviderUserId()).isEqualTo("1234567890");
         assertThat(saved.getAccessToken()).isEqualTo("fb-access-token");
-        // Instant → LocalDateTime theo múi giờ của Clock (như mọi cột DATETIME khác)
-        assertThat(saved.getTokenExpiresAt()).isEqualTo(LocalDateTime.of(2026, 3, 2, 7, 0));
+        // Thời điểm hết hạn lưu theo giờ UTC (EXPIRES_AT = 2026-03-02T00:00Z)
+        assertThat(saved.getTokenExpiresAt()).isEqualTo(LocalDateTime.of(2026, 3, 2, 0, 0));
     }
 
     @Test
@@ -94,7 +108,7 @@ class SocialAccountServiceTest {
         // Email không đổi theo provider sau lần tạo đầu
         assertThat(owner.getEmail()).isEqualTo("dev@example.com");
         assertThat(existing.getAccessToken()).isEqualTo("new-token");
-        assertThat(existing.getTokenExpiresAt()).isEqualTo(LocalDateTime.of(2026, 3, 2, 7, 0));
+        assertThat(existing.getTokenExpiresAt()).isEqualTo(LocalDateTime.of(2026, 3, 2, 0, 0));
         verify(userRepository, never()).saveAndFlush(any());
     }
 

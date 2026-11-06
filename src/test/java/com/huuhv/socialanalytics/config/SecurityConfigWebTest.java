@@ -230,4 +230,27 @@ class SecurityConfigWebTest {
                 .andExpect(status().isFound())
                 .andExpect(redirectedUrl(SecurityConfig.LOGOUT_SUCCESS_URL));
     }
+
+    // Context mới (như trên); gộp các trường hợp để chỉ dựng lại context 1 lần
+    @Test
+    @DirtiesContext(methodMode = DirtiesContext.MethodMode.BEFORE_METHOD)
+    void csrfHeaderAcceptsRawCookieValueAndRejectsWrongToken() throws Exception {
+        Cookie csrfCookie = mockMvc.perform(get("/login"))
+                .andReturn().getResponse().getCookie("XSRF-TOKEN");
+        assertThat(csrfCookie).isNotNull();
+
+        // Swagger UI / Postman: header = nguyên giá trị cookie
+        mockMvc.perform(post("/logout").with(oauth2Login())
+                        .cookie(csrfCookie).header("X-XSRF-TOKEN", csrfCookie.getValue()))
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl(SecurityConfig.LOGOUT_SUCCESS_URL));
+
+        // Header không khớp cookie → 403; REST nhận ProblemDetail
+        mockMvc.perform(post("/api/posts").with(oauth2Login())
+                        .cookie(csrfCookie).header("X-XSRF-TOKEN", csrfCookie.getValue() + "x")
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(403));
+    }
 }

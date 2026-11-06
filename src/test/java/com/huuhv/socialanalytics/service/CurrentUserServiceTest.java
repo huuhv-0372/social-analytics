@@ -24,6 +24,9 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -52,6 +55,32 @@ class CurrentUserServiceTest {
     void rejectsAnonymousAuthentication() {
         authenticate(new AnonymousAuthenticationToken("key", "anonymousUser",
                 AuthorityUtils.createAuthorityList("ROLE_ANONYMOUS")));
+
+        assertThatThrownBy(() -> currentUserService.getCurrentUser())
+                .isInstanceOf(AuthenticationRequiredException.class);
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void appPrincipalResolvesOwnerByStoredIdWithoutQueryingSocialAccounts() {
+        User reference = User.builder().id(7L).build();
+        AppOAuth2User principal = new AppOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
+                Map.of("id", "1234567890", "name", "Dev"), "id", 7L);
+        authenticate(new OAuth2AuthenticationToken(principal, principal.getAuthorities(), "facebook"));
+        when(userRepository.getReferenceById(7L)).thenReturn(reference);
+
+        assertThat(currentUserService.getCurrentUser()).isSameAs(reference);
+        verify(userRepository, never()).findBySocialAccount(any(), any());
+    }
+
+    @Test
+    void appPrincipalStillRequiresAuthenticatedOAuth2Token() {
+        AppOAuth2User principal = new AppOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
+                Map.of("id", "1234567890"), "id", 7L);
+        OAuth2AuthenticationToken token =
+                new OAuth2AuthenticationToken(principal, principal.getAuthorities(), "facebook");
+        token.setAuthenticated(false);
+        authenticate(token);
 
         assertThatThrownBy(() -> currentUserService.getCurrentUser())
                 .isInstanceOf(AuthenticationRequiredException.class);

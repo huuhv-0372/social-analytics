@@ -13,6 +13,7 @@ import com.huuhv.socialanalytics.exception.DuplicateResourceException;
 import com.huuhv.socialanalytics.repository.PostRepository;
 import com.huuhv.socialanalytics.repository.SocialAccountRepository;
 import com.huuhv.socialanalytics.repository.UserRepository;
+import com.huuhv.socialanalytics.util.AesGcmCipher;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,12 +60,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Import({TestcontainersConfiguration.class, ClockConfig.class, CryptoConfig.class,
-        SocialAccountService.class, CurrentUserService.class, PostService.class})
+        SocialAccountService.class, CurrentUserService.class, PostService.class, PostUpsertService.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class SocialLoginTransactionTest {
 
     @Autowired
     private SocialAccountService socialAccountService;
+
+    @Autowired
+    private CurrentUserService currentUserService;
+
+    @Autowired
+    private PostUpsertService postUpsertService;
 
     @Autowired
     private PostService postService;
@@ -119,6 +126,45 @@ class SocialLoginTransactionTest {
     }
 
     @Test
+    void undecryptableStoredTokenDoesNotLockUserOut() {
+        // Mô phỏng đổi TOKEN_ENCRYPTION_KEY / ô dữ liệu hỏng: ciphertext cũ không giải mã được bằng key hiện tại
+        OAuth2AuthenticationToken first = login("facebook", "1234567890", "old-token");
+        Long userId = userIdOf(first);
+        jdbcTemplate.update("UPDATE social_accounts SET access_token = ?",
+                new AesGcmCipher(new byte[AesGcmCipher.KEY_LENGTH_BYTES]).encrypt("old-token"));
+
+        // Nạp tài khoản không ném lỗi: token không đọc được coi như không có (fail closed, không gọi được API)
+        assertThat(socialAccountRepository
+                .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "1234567890").orElseThrow()
+                .getAccessToken()).isNull();
+
+        // Đăng nhập lại thành công, vẫn là user cũ, token mới ghi đè và đọc lại được
+        login("facebook", "1234567890", "new-token");
+
+        assertThat(userRepository.count()).isEqualTo(1);
+        assertThat(socialAccountRepository.findAll()).singleElement()
+                .satisfies(account -> {
+                    assertThat(account.getAccessToken()).isEqualTo("new-token");
+                    assertThat(account.getUser().getId()).isEqualTo(userId);
+                });
+    }
+
+    @Test
+    void ownerResolvedFromPrincipalOutsideTransactionCanOwnNewPosts() {
+        // Luồng import/export: getCurrentUser() gọi ngoài transaction → reference theo id lưu trong principal
+        OAuth2AuthenticationToken token = login("facebook", "1234567890", "token");
+        assertThat(token.getPrincipal()).isInstanceOf(AppOAuth2User.class);
+        authenticate(token);
+
+        User owner = currentUserService.getCurrentUser();
+        PostUpsertService.Result result = postUpsertService.upsert(owner, List.of(postRequest()));
+
+        assertThat(result.created()).isEqualTo(1);
+        assertThat(postRepository.findAll()).singleElement()
+                .satisfies(post -> assertThat(post.getUser().getId()).isEqualTo(userIdOf(token)));
+    }
+
+    @Test
     void concurrentFirstLoginsResolveToOneUserAndAccount() throws Exception {
         CustomOAuth2UserService oauth2UserService = oauth2UserService("1234567890");
         CountDownLatch start = new CountDownLatch(1);
@@ -160,6 +206,12 @@ class SocialLoginTransactionTest {
     private OAuth2AuthenticationToken login(String registrationId, String providerUserId, String accessToken) {
         OAuth2User user = oauth2UserService(providerUserId).loadUser(request(registrationId, accessToken));
         return new OAuth2AuthenticationToken(user, user.getAuthorities(), registrationId);
+    }
+
+    private Long userIdOf(OAuth2AuthenticationToken token) {
+        return userRepository.findBySocialAccount(
+                Provider.fromRegistrationId(token.getAuthorizedClientRegistrationId()).orElseThrow(), token.getName())
+                .orElseThrow().getId();
     }
 
     private CustomOAuth2UserService oauth2UserService(String providerUserId) {

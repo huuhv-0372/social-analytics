@@ -12,9 +12,9 @@ import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
@@ -42,7 +42,6 @@ public class SocialAccountService {
 
     private final SocialAccountRepository socialAccountRepository;
     private final UserRepository userRepository;
-    private final Clock clock;
 
     /**
      * @return user sở hữu tài khoản
@@ -76,7 +75,7 @@ public class SocialAccountService {
                     .build();
         }
         account.setAccessToken(accessToken.getTokenValue());
-        account.setTokenExpiresAt(toLocalDateTime(accessToken.getExpiresAt()));
+        account.setTokenExpiresAt(toUtcDateTime(accessToken.getExpiresAt()));
         // Flush ngay để vi phạm unique (đăng nhập song song) ném ra tại đây, trong phạm vi transaction này
         socialAccountRepository.saveAndFlush(account);
 
@@ -86,8 +85,13 @@ public class SocialAccountService {
         return account.getUser();
     }
 
-    private LocalDateTime toLocalDateTime(Instant instant) {
-        return instant == null ? null : LocalDateTime.ofInstant(instant, clock.getZone());
+    /**
+     * {@code token_expires_at} là thời điểm tuyệt đối → luôn lưu giờ <b>UTC</b>, không theo múi giờ JVM/Clock: cùng 1 DB
+     * có thể được app chạy ở các múi giờ khác nhau dùng chung (container UTC, máy dev +07). So sánh hết hạn cũng quy về
+     * UTC: {@code LocalDateTime.now(clock.withZone(ZoneOffset.UTC))}.
+     */
+    static LocalDateTime toUtcDateTime(Instant instant) {
+        return instant == null ? null : LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
     }
 
     /** Tên hiển thị: {@code name} → {@code username} (X) → tên mặc định theo provider; cắt theo độ dài cột. */
