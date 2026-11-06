@@ -15,7 +15,7 @@ x-app-env: &app-env
   ARTEMIS_PORT: 61616
   ARTEMIS_USER: ${ARTEMIS_USER:?ARTEMIS_USER is required}
   ARTEMIS_PASSWORD: ${ARTEMIS_PASSWORD:?ARTEMIS_PASSWORD is required}
-  # TẠM THỜI tới Task 3.1: tài khoản HTTP Basic cho /api/**
+  # TẠM THỜI tới Task 3.4: tài khoản HTTP Basic cho /api/** và Swagger UI
   API_USER_NAME: ${API_USER_NAME:-dev@social-analytics.local}
   API_USER_PASSWORD: ${API_USER_PASSWORD:?API_USER_PASSWORD is required}
 

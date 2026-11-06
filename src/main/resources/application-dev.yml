@@ -1,7 +1,14 @@
 # Profile dev: ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 # Chỉ tăng mức log để debug; không bật log giá trị bind tham số SQL (có thể chứa dữ liệu nhạy cảm).
 
-# Bật Swagger UI (http://localhost:8080/swagger-ui.html) — chỉ ở dev
+# Dev chạy HTTP localhost → cookie session không đặt Secure (production giữ mặc định true)
+server:
+  servlet:
+    session:
+      cookie:
+        secure: ${SESSION_COOKIE_SECURE:false}
+
+# Bật Swagger UI (http://localhost:8080/swagger-ui.html) — chỉ ở dev, vẫn phải đăng nhập
 springdoc:
   api-docs:
     enabled: true

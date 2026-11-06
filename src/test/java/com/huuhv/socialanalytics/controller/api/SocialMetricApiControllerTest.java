@@ -5,7 +5,6 @@ import com.huuhv.socialanalytics.config.WebConfig;
 import com.huuhv.socialanalytics.dto.request.SocialMetricRequest;
 import com.huuhv.socialanalytics.dto.response.PageResponse;
 import com.huuhv.socialanalytics.dto.response.SocialMetricResponse;
-import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
 import com.huuhv.socialanalytics.service.CurrentUserService;
@@ -123,12 +122,12 @@ class SocialMetricApiControllerTest {
     }
 
     @Test
-    void requestWithoutAuthenticationReturns401() throws Exception {
-        when(socialMetricService.findLatest(10L)).thenThrow(new AuthenticationRequiredException());
-
+    void requestWithoutAuthenticationReturns401BeforeReachingService() throws Exception {
         mockMvc.perform(get("/api/metrics/latest").param("postId", "10"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(header().exists(HttpHeaders.WWW_AUTHENTICATE));
+                .andExpect(header().exists(HttpHeaders.WWW_AUTHENTICATE))
+                .andExpect(jsonPath("$.status").value(401));
+        verifyNoInteractions(socialMetricService);
     }
 
     @Test

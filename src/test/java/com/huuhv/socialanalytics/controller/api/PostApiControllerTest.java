@@ -6,7 +6,6 @@ import com.huuhv.socialanalytics.dto.request.PostRequest;
 import com.huuhv.socialanalytics.dto.response.PageResponse;
 import com.huuhv.socialanalytics.dto.response.PostResponse;
 import com.huuhv.socialanalytics.enums.Provider;
-import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.DuplicateResourceException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
@@ -54,6 +53,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(PostApiController.class)
@@ -119,20 +119,22 @@ class PostApiControllerTest {
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON));
     }
 
+    // Deny-by-default: request ẩn danh bị filter chain chặn (401 ProblemDetail, không redirect), không tới Service
     @Test
-    void requestWithoutAuthenticationReturns401() throws Exception {
-        when(postService.findAll(any(Pageable.class))).thenThrow(new AuthenticationRequiredException());
-
+    void requestWithoutAuthenticationReturns401BeforeReachingService() throws Exception {
         mockMvc.perform(get("/api/posts"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().exists(HttpHeaders.WWW_AUTHENTICATE))
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(401));
+        verifyNoInteractions(postService);
     }
 
     @Test
-    void nonApiPathIsDeniedByDefault() throws Exception {
+    void nonApiPathRedirectsAnonymousUserToLogin() throws Exception {
         mockMvc.perform(get("/dashboard"))
-                .andExpect(result -> assertThat(result.getResponse().getStatus()).isIn(302, 401));
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl("/login"));
     }
 
     @Test

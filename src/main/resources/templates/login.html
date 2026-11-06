@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en"
+      xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{layout/base}">
+<head>
+    <title>Login</title>
+</head>
+<body>
+<main layout:fragment="content">
+    <div class="row justify-content-center">
+        <div class="col-md-6 col-lg-4">
+            <div class="card shadow-sm">
+                <div class="card-body p-4">
+                    <h1 class="h4 mb-3 text-center">Sign in</h1>
+
+                    <!-- Thông điệp cố định, không echo giá trị tham số -->
+                    <div class="alert alert-success" th:if="${param.logout != null}">You have been signed out.</div>
+                    <div class="alert alert-danger" th:if="${param.error != null}">Sign in failed. Please try again.</div>
+
+                    <p class="text-muted text-center mb-0">Sign in with your social account to continue.</p>
+                    <!-- Nút đăng nhập Facebook / X: Task 3.2 / 3.3 -->
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+</body>
+</html>

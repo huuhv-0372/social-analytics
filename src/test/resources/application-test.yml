@@ -6,6 +6,12 @@ spring:
     user:
       password: test-only-password
 
+server:
+  servlet:
+    session:
+      cookie:
+        secure: false
+
 logging:
   level:
     root: WARN

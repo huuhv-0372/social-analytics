@@ -77,7 +77,7 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 
 3. Truy cập:
    - Ứng dụng: http://localhost:8080
-   - Swagger UI (chỉ profile `dev`): http://localhost:8080/swagger-ui.html — bấm **Authorize**, nhập `API_USER_NAME` / `API_USER_PASSWORD` để gọi thử API
+   - Swagger UI (chỉ profile `dev`, phải đăng nhập): http://localhost:8080/swagger-ui.html — trình duyệt hỏi tài khoản, nhập `API_USER_NAME` / `API_USER_PASSWORD` (tạm thời tới Task 3.4)
    - Artemis console: http://localhost:8161 (tài khoản `ARTEMIS_USER` / `ARTEMIS_PASSWORD`)
    - MySQL từ máy host (DBeaver, Workbench...): `localhost:33069` (theo `DB_PORT` trong `.env`)
 
@@ -144,7 +144,7 @@ src/main/resources/
 | File | Vai trò |
 |---|---|
 | `application.yml` | Cấu hình chung, an toàn cho production: datasource, JPA (`ddl-auto=validate`), Flyway, Artemis, ẩn chi tiết lỗi, tắt Swagger, `app.*` |
-| `application-dev.yml` | Profile `dev`: bật Swagger UI, log DEBUG cho app, SQL, Security (`-Dspring-boot.run.profiles=dev`) |
+| `application-dev.yml` | Profile `dev`: bật Swagger UI, cookie session không `Secure` (HTTP localhost), log DEBUG cho app, SQL, Security (`-Dspring-boot.run.profiles=dev`) |
 | `config/OpenApiConfig` | Thông tin tài liệu OpenAPI (title, version) + khai báo HTTP Basic cho nút Authorize của Swagger UI |
 | `src/test/resources/application-test.yml` | Profile `test` chỉ dành cho test, không đóng gói vào JAR (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
 | `logback-spring.xml` | Log console + file theo ngày trong `logs/` (giữ 30 ngày), pattern kèm MDC `jobId` / `importId` |
@@ -164,7 +164,8 @@ src/main/resources/
 | `SPRING_PROFILES_ACTIVE` | — | Profile của container `app` (mặc định `dev`). Đặt profile khác (vd `prod`) để chạy cấu hình production-safe, Swagger tắt |
 | `LOG_PATH` | — | Thư mục log file (mặc định `logs`; trong Docker là `/app/logs`) |
 | `ARTEMIS_USER` / `ARTEMIS_PASSWORD` | ✅ | Tài khoản broker Artemis |
-| `API_USER_NAME` / `API_USER_PASSWORD` | ✅ (mật khẩu) | **Tạm thời tới giai đoạn 3:** tài khoản HTTP Basic để gọi `/api/**`. Tên mặc định `dev@social-analytics.local`; thiếu mật khẩu thì app không khởi động |
+| `API_USER_NAME` / `API_USER_PASSWORD` | ✅ (mật khẩu) | **Tạm thời tới Task 3.4:** tài khoản HTTP Basic để gọi `/api/**` và mở Swagger UI. Tên mặc định `dev@social-analytics.local`; thiếu mật khẩu thì app không khởi động |
+| `SESSION_COOKIE_SECURE` | — | Cookie session chỉ gửi qua HTTPS. Mặc định `true` (production); profile `dev`/`test` mặc định `false` vì chạy HTTP localhost |
 | `ARTEMIS_HOST` / `ARTEMIS_PORT` | — | Mặc định `localhost` / `61616` |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | Từ giai đoạn 3 | OAuth2 credentials từ Facebook Developers |
 | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | Từ giai đoạn 3 | OAuth2 credentials từ X Developer Portal |
@@ -187,9 +188,11 @@ Schema hiện tại (`V1__init_schema.sql` + `V2__posts_unique_per_user.sql`):
 
 ## REST API
 
-Tạm thời (tới giai đoạn 3) `/api/**` xác thực bằng **HTTP Basic** (`API_USER_NAME` / `API_USER_PASSWORD`); gọi ẩn danh trả 401. Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
+Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); chỉ `/login`, `/oauth2/**` và static resource là public. Gọi `/api/**` khi chưa đăng nhập trả 401 `ProblemDetail`; trang web chưa đăng nhập được redirect về `/login`. Tạm thời (tới Task 3.4) đăng nhập bằng **HTTP Basic** (`API_USER_NAME` / `API_USER_PASSWORD`). Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
 
-**CSRF:** mọi response đều đặt cookie `XSRF-TOKEN`; request POST/PUT/DELETE phải gửi lại cookie đó **và** giá trị của nó trong header `X-XSRF-TOKEN`, thiếu thì trả 403. Swagger UI tự làm việc này. Với Postman, sau 1 request GET, thêm header `X-XSRF-TOKEN: {{xsrf}}` với `xsrf` lấy từ cookie.
+Đăng xuất: `POST /logout` (kèm CSRF) → redirect `/login?logout`, session bị huỷ. `GET /logout` không đăng xuất.
+
+**CSRF:** mọi response đều đặt cookie `XSRF-TOKEN`; request POST/PUT/DELETE phải gửi lại cookie đó **và** giá trị của nó trong header `X-XSRF-TOKEN`, thiếu thì trả 403. Swagger UI tự làm việc này. Với Postman, sau 1 request GET, thêm header `X-XSRF-TOKEN: {{xsrf}}` với `xsrf` lấy từ cookie. Trang Thymeleaf gọi `fetch` thì lấy header bằng `csrfHeaders()` (`static/js/csrf.js`, đọc `<meta name="_csrf">` trong layout).
 
 | Method | Endpoint | Mô tả |
 |---|---|---|

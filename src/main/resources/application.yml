@@ -31,7 +31,7 @@ spring:
       resolve-lazily: true
 
   security:
-    # TẠM THỜI tới Task 3.1: user HTTP Basic để gọi /api/**. Username dùng làm email của User (owner).
+    # TẠM THỜI tới Task 3.4: user HTTP Basic để đăng nhập (chưa có OAuth2). Username dùng làm email của User (owner).
     # API_USER_PASSWORD bắt buộc: để trống thì app dừng khởi động (SecurityConfig), không sinh mật khẩu in ra log.
     user:
       name: ${API_USER_NAME:dev@social-analytics.local}
@@ -43,6 +43,15 @@ spring:
     password: ${ARTEMIS_PASSWORD}
 
 server:
+  servlet:
+    session:
+      timeout: 30m
+      # Cookie session (OWASP A02): JS không đọc được, không gửi kèm request cross-site dạng POST
+      cookie:
+        http-only: true
+        same-site: lax
+        # Chỉ gửi qua HTTPS — mặc định bật (production); dev/test chạy HTTP localhost thì tắt
+        secure: ${SESSION_COOKIE_SECURE:true}
   error:
     # Không trả chi tiết lỗi nội bộ ra client (OWASP A02/A10)
     include-stacktrace: never
