@@ -62,11 +62,6 @@ spring:
             user-info-uri: https://api.x.com/2/users/me
             # Response {"data": {"id", "name", "username"}} — CustomOAuth2UserService bóc "data" trước khi đọc "id"
             user-name-attribute: id
-    # TẠM THỜI tới Task 3.4: user HTTP Basic để đăng nhập (chưa có OAuth2). Username dùng làm email của User (owner).
-    # API_USER_PASSWORD bắt buộc: để trống thì app dừng khởi động (SecurityConfig), không sinh mật khẩu in ra log.
-    user:
-      name: ${API_USER_NAME:dev@social-analytics.local}
-      password: ${API_USER_PASSWORD:}
 
   artemis:
     broker-url: tcp://${ARTEMIS_HOST:localhost}:${ARTEMIS_PORT:61616}
@@ -123,3 +118,7 @@ app:
     max-rows: 10000
     # Khoảng cách tối thiểu giữa 2 lần export của cùng 1 user — gọi sớm hơn trả 429 (0 = tắt)
     min-interval: 10s
+  token-encryption:
+    # Key AES-256 (Base64 của 32 byte) mã hoá access token lưu DB — bắt buộc, sinh bằng: openssl rand -base64 32
+    # Thiếu/sai định dạng → app dừng khởi động. Đổi key → token cũ không giải mã được, user phải đăng nhập lại.
+    key: ${TOKEN_ENCRYPTION_KEY:}

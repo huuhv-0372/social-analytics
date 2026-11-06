@@ -6,7 +6,6 @@ import com.huuhv.socialanalytics.dto.response.ExportFile;
 import com.huuhv.socialanalytics.excel.GenericExcelExporter;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.TooManyRequestsException;
-import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.PostReportService;
 import org.junit.jupiter.api.Test;
@@ -38,7 +37,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // Không có tham số id → không có bề mặt IDOR; dữ liệu lọc theo owner trong query (PostRepositoryTest).
 // GET không đổi trạng thái → không cần CSRF; method ghi tới endpoint này không được hỗ trợ.
 @WebMvcTest(ReportApiController.class)
-@Import({SecurityConfig.class, WebConfig.class, CustomOAuth2UserService.class})
+@Import({SecurityConfig.class, WebConfig.class})
 @ActiveProfiles("test")
 class ReportApiControllerTest {
 
@@ -48,9 +47,9 @@ class ReportApiControllerTest {
     @MockitoBean
     private PostReportService postReportService;
 
-    // Interceptor /api/** trong WebConfig gọi provisionCurrentUserIfMissing() trước controller
+    // SecurityConfig cần bean này (oauth2Login → userInfoEndpoint); bản thật phụ thuộc DB
     @MockitoBean
-    private CurrentUserService currentUserService;
+    private CustomOAuth2UserService customOAuth2UserService;
 
     @Test
     void exportStreamsXlsxAttachment() throws Exception {
@@ -75,7 +74,7 @@ class ReportApiControllerTest {
     void anonymousRequestIsRejectedByFilterChainBeforeService() throws Exception {
         mockMvc.perform(get("/api/export-report"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(header().exists(HttpHeaders.WWW_AUTHENTICATE));
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE));
         verifyNoInteractions(postReportService);
     }
 

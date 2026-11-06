@@ -7,7 +7,6 @@ import com.huuhv.socialanalytics.dto.response.PageResponse;
 import com.huuhv.socialanalytics.dto.response.SocialMetricResponse;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
-import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.SocialMetricService;
 import org.junit.jupiter.api.Test;
@@ -43,7 +42,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(SocialMetricApiController.class)
-@Import({SecurityConfig.class, WebConfig.class, CustomOAuth2UserService.class})
+@Import({SecurityConfig.class, WebConfig.class})
 @ActiveProfiles("test")
 class SocialMetricApiControllerTest {
 
@@ -55,9 +54,9 @@ class SocialMetricApiControllerTest {
     @MockitoBean
     private SocialMetricService socialMetricService;
 
-    // WebConfig cần cho interceptor provision user
+    // SecurityConfig cần bean này (oauth2Login → userInfoEndpoint); bản thật phụ thuộc DB
     @MockitoBean
-    private CurrentUserService currentUserService;
+    private CustomOAuth2UserService customOAuth2UserService;
 
     @Test
     void listParsesIsoDateRange() throws Exception {
@@ -126,7 +125,7 @@ class SocialMetricApiControllerTest {
     void requestWithoutAuthenticationReturns401BeforeReachingService() throws Exception {
         mockMvc.perform(get("/api/metrics/latest").param("postId", "10"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(header().exists(HttpHeaders.WWW_AUTHENTICATE))
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE))
                 .andExpect(jsonPath("$.status").value(401));
         verifyNoInteractions(socialMetricService);
     }

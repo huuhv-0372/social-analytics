@@ -2,7 +2,6 @@ package com.huuhv.socialanalytics.controller.web;
 
 import com.huuhv.socialanalytics.config.SecurityConfig;
 import com.huuhv.socialanalytics.config.WebConfig;
-import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,16 +22,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.view;
 
 @WebMvcTest(DashboardController.class)
-@Import({SecurityConfig.class, WebConfig.class, CustomOAuth2UserService.class})
+@Import({SecurityConfig.class, WebConfig.class})
 @ActiveProfiles("test")
 class DashboardControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
 
-    // Interceptor /api/** trong WebConfig cần bean này
+    // SecurityConfig cần bean này (oauth2Login → userInfoEndpoint); bản thật phụ thuộc DB
     @MockitoBean
-    private CurrentUserService currentUserService;
+    private CustomOAuth2UserService customOAuth2UserService;
 
     @Test
     void anonymousUserIsRedirectedToLogin() throws Exception {

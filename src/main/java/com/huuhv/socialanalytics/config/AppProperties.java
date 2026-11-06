@@ -1,8 +1,10 @@
 package com.huuhv.socialanalytics.config;
 
+import com.huuhv.socialanalytics.util.AesGcmCipher;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -12,6 +14,7 @@ import org.springframework.util.unit.DataSize;
 import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
+import java.util.Base64;
 
 /**
  * Cấu hình riêng của ứng dụng, prefix {@code app.*}. Sai giá trị → app không khởi động (fail fast).
@@ -22,7 +25,45 @@ public record AppProperties(
         @Valid @DefaultValue Pagination pagination,
         // "import" là từ khoá Java → đặt tên khác cho component, bind theo key app.import.*
         @Valid @DefaultValue @Name("import") ImportSettings importSettings,
-        @Valid @DefaultValue @Name("export") ExportSettings exportSettings) {
+        @Valid @DefaultValue @Name("export") ExportSettings exportSettings,
+        @Valid @DefaultValue TokenEncryption tokenEncryption) {
+
+    /**
+     * Key AES-256 mã hoá access token lưu DB (OWASP A04): Base64 của đúng 32 byte, lấy từ biến môi trường
+     * {@code TOKEN_ENCRYPTION_KEY} (sinh bằng {@code openssl rand -base64 32}). Thiếu hoặc sai → app không khởi động.
+     * Đổi key làm token đã lưu không giải mã được — user phải đăng nhập lại.
+     */
+    public record TokenEncryption(
+            @NotBlank(message = "app.token-encryption.key (TOKEN_ENCRYPTION_KEY) must be set") String key) {
+
+        @AssertTrue(message = "app.token-encryption.key must be Base64 of exactly 32 bytes (AES-256)")
+        public boolean isKeyValid() {
+            return key == null || key.isBlank() || decode(key) != null;
+        }
+
+        public byte[] keyBytes() {
+            byte[] bytes = decode(key);
+            if (bytes == null) {
+                throw new IllegalStateException("app.token-encryption.key is invalid");
+            }
+            return bytes;
+        }
+
+        private static byte[] decode(String value) {
+            try {
+                byte[] bytes = Base64.getDecoder().decode(value.strip());
+                return bytes.length == AesGcmCipher.KEY_LENGTH_BYTES ? bytes : null;
+            } catch (IllegalArgumentException e) {
+                return null;
+            }
+        }
+
+        /** Không để key lọt ra log / thông báo lỗi bind cấu hình (toString mặc định của record in mọi component). */
+        @Override
+        public String toString() {
+            return "TokenEncryption[key=******]";
+        }
+    }
 
     /**
      * Giới hạn phân trang cho API danh sách (OWASP A06 — giới hạn tài nguyên).

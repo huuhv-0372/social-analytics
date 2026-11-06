@@ -1,7 +1,10 @@
 package com.huuhv.socialanalytics.service;
 
+import com.huuhv.socialanalytics.entity.User;
+import com.huuhv.socialanalytics.enums.Provider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -12,6 +15,7 @@ import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestTemplate;
@@ -20,13 +24,23 @@ import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /**
- * Gọi user-info-uri qua {@link MockRestServiceServer} — không gọi Facebook / X thật.
+ * Gọi user-info-uri qua {@link MockRestServiceServer} — không gọi Facebook / X thật; lưu DB qua mock
+ * {@link SocialAccountService}.
  */
 class CustomOAuth2UserServiceTest {
 
@@ -34,6 +48,7 @@ class CustomOAuth2UserServiceTest {
     private static final String FACEBOOK_USER_INFO_URI = "https://graph.facebook.com/me?fields=id,name,email";
 
     private MockRestServiceServer server;
+    private SocialAccountService socialAccountService;
     private CustomOAuth2UserService service;
 
     @BeforeEach
@@ -42,7 +57,8 @@ class CustomOAuth2UserServiceTest {
         server = MockRestServiceServer.bindTo(restTemplate).build();
         DefaultOAuth2UserService delegate = new DefaultOAuth2UserService();
         delegate.setRestOperations(restTemplate);
-        service = new CustomOAuth2UserService(delegate);
+        socialAccountService = mock(SocialAccountService.class);
+        service = new CustomOAuth2UserService(delegate, socialAccountService);
     }
 
     @Test
@@ -61,6 +77,9 @@ class CustomOAuth2UserServiceTest {
         assertThat(user.<String>getAttribute("username")).isEqualTo("devuser");
         assertThat(user.getAttributes()).doesNotContainKey("data");
         server.verify();
+        // Lưu tài khoản X theo id đã bóc ra, kèm đúng access token của lần đăng nhập
+        verify(socialAccountService).recordLogin(eq(Provider.TWITTER), same(user),
+                argThat(token -> "x-access-token".equals(token.getTokenValue())));
     }
 
     @Test
@@ -72,6 +91,7 @@ class CustomOAuth2UserServiceTest {
         assertThatThrownBy(() -> service.loadUser(request("twitter", X_USER_INFO_URI, "x-access-token")))
                 .isInstanceOfSatisfying(OAuth2AuthenticationException.class, ex -> assertThat(ex.getError().getErrorCode())
                         .isEqualTo(CustomOAuth2UserService.INVALID_USER_INFO_RESPONSE));
+        verifyNoInteractions(socialAccountService);
     }
 
     @Test
@@ -95,6 +115,61 @@ class CustomOAuth2UserServiceTest {
 
         assertThat(user.getName()).isEqualTo("1234567890");
         assertThat(user.<String>getAttribute("email")).isEqualTo("dev@example.com");
+        verify(socialAccountService).recordLogin(eq(Provider.FACEBOOK), same(user), any(OAuth2AccessToken.class));
+    }
+
+    @Test
+    void concurrentLoginIsRetriedOnceAndSucceeds() {
+        expectFacebookUserInfo();
+        when(socialAccountService.recordLogin(any(), any(), any()))
+                .thenThrow(new DataIntegrityViolationException("duplicate"))
+                .thenReturn(User.builder().id(1L).displayName("Dev User").build());
+
+        OAuth2User user = service.loadUser(request("facebook", FACEBOOK_USER_INFO_URI, "fb-access-token"));
+
+        assertThat(user.getName()).isEqualTo("1234567890");
+        verify(socialAccountService, times(2)).recordLogin(eq(Provider.FACEBOOK), any(), any());
+    }
+
+    @Test
+    void databaseFailureRejectsLoginWithGenericError() {
+        expectFacebookUserInfo();
+        when(socialAccountService.recordLogin(any(), any(), any()))
+                .thenThrow(new DataIntegrityViolationException("duplicate"))
+                .thenThrow(new DataIntegrityViolationException("duplicate again"));
+
+        // Fail closed: không cho đăng nhập khi không lưu được tài khoản; thông điệp không chứa chi tiết DB
+        assertThatThrownBy(() -> service.loadUser(request("facebook", FACEBOOK_USER_INFO_URI, "fb-access-token")))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, ex -> {
+                    assertThat(ex.getError().getErrorCode()).isEqualTo(OAuth2ErrorCodes.SERVER_ERROR);
+                    assertThat(ex.getError().getDescription()).doesNotContain("duplicate");
+                });
+        verify(socialAccountService, times(2)).recordLogin(any(), any(), any());
+    }
+
+    @Test
+    void invalidProviderUserIdRejectsLogin() {
+        expectFacebookUserInfo();
+        when(socialAccountService.recordLogin(any(), any(), any()))
+                .thenThrow(new IllegalArgumentException("Invalid provider user id"));
+
+        assertThatThrownBy(() -> service.loadUser(request("facebook", FACEBOOK_USER_INFO_URI, "fb-access-token")))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, ex -> assertThat(ex.getError().getErrorCode())
+                        .isEqualTo(CustomOAuth2UserService.INVALID_USER_INFO_RESPONSE));
+    }
+
+    @Test
+    void unsupportedRegistrationIsRejectedBeforeCallingProvider() {
+        assertThatThrownBy(() -> service.loadUser(request("github", "https://api.github.com/user", "token")))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+        server.verify();
+        verifyNoInteractions(socialAccountService);
+    }
+
+    private void expectFacebookUserInfo() {
+        server.expect(requestTo(FACEBOOK_USER_INFO_URI))
+                .andRespond(withSuccess("""
+                        {"id":"1234567890","name":"Dev User"}""", MediaType.APPLICATION_JSON));
     }
 
     private static OAuth2UserRequest request(String registrationId, String userInfoUri, String tokenValue) {

@@ -1,13 +1,14 @@
 package com.huuhv.socialanalytics.config;
 
 import com.huuhv.socialanalytics.controller.web.LoginController;
-import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Import;
+import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
@@ -39,7 +40,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Cấu hình filter chain ở {@link SecurityConfig}: deny-by-default, entry point theo loại request, CSRF, logout, header.
  */
 @WebMvcTest(LoginController.class)
-@Import({SecurityConfig.class, WebConfig.class, CustomOAuth2UserService.class})
+@Import({SecurityConfig.class, WebConfig.class})
 @ActiveProfiles("test")
 class SecurityConfigWebTest {
 
@@ -48,9 +49,12 @@ class SecurityConfigWebTest {
     @Autowired
     private MockMvc mockMvc;
 
-    // Interceptor /api/** trong WebConfig cần bean này
+    @Autowired
+    private ApplicationContext applicationContext;
+
+    // SecurityConfig cần bean này (oauth2Login → userInfoEndpoint); bản thật phụ thuộc DB
     @MockitoBean
-    private CurrentUserService currentUserService;
+    private CustomOAuth2UserService customOAuth2UserService;
 
     @Test
     void loginPageIsPublicAndExposesCsrfMetaTags() throws Exception {
@@ -161,22 +165,28 @@ class SecurityConfigWebTest {
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON));
     }
 
-    // TẠM THỜI tới Task 3.4: Swagger UI nhận 401 Basic (trình duyệt hiện hộp thoại đăng nhập) thay vì redirect /login
     @Test
-    void swaggerUiRequiresAuthenticationViaBasicChallenge() throws Exception {
+    void swaggerUiRedirectsAnonymousUserToLogin() throws Exception {
         mockMvc.perform(get("/swagger-ui.html"))
-                .andExpect(status().isUnauthorized())
-                .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, containsString("Basic")));
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl("/login"));
     }
 
     @Test
-    void wrongCredentialsReturn401ProblemDetailWithoutDetails() throws Exception {
-        mockMvc.perform(get("/api/posts").with(httpBasic("dev@example.com", "wrong-password")))
+    void httpBasicCredentialsAreIgnored() throws Exception {
+        // Chỉ đăng nhập OAuth2: header Basic không xác thực được, 401 không kèm challenge Basic
+        mockMvc.perform(get("/api/posts").with(httpBasic("dev@example.com", "any-password")))
                 .andExpect(status().isUnauthorized())
-                .andExpect(header().exists(HttpHeaders.WWW_AUTHENTICATE))
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE))
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(401))
                 .andExpect(jsonPath("$.detail").value("Authentication required"));
+    }
+
+    @Test
+    void noUserDetailsServiceIsRegistered() {
+        // Boot không tạo user mặc định (mật khẩu sinh ngẫu nhiên in ra log) khi chỉ có OAuth2 login
+        assertThat(applicationContext.getBeansOfType(UserDetailsService.class)).isEmpty();
     }
 
     @Test

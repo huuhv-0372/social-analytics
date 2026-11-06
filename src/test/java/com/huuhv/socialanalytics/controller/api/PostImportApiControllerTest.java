@@ -4,7 +4,6 @@ import com.huuhv.socialanalytics.config.SecurityConfig;
 import com.huuhv.socialanalytics.config.WebConfig;
 import com.huuhv.socialanalytics.dto.response.ImportResultResponse;
 import com.huuhv.socialanalytics.exception.BadRequestException;
-import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.PostImportService;
 import org.junit.jupiter.api.Test;
@@ -37,7 +36,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 // Không có tham số id → không có bề mặt IDOR; owner luôn lấy từ principal trong PostImportService
 @WebMvcTest(PostImportApiController.class)
-@Import({SecurityConfig.class, WebConfig.class, CustomOAuth2UserService.class})
+@Import({SecurityConfig.class, WebConfig.class})
 @ActiveProfiles("test")
 class PostImportApiControllerTest {
 
@@ -50,9 +49,9 @@ class PostImportApiControllerTest {
     @MockitoBean
     private PostImportService postImportService;
 
-    // Interceptor /api/** trong WebConfig gọi provisionCurrentUserIfMissing() trước controller
+    // SecurityConfig cần bean này (oauth2Login → userInfoEndpoint); bản thật phụ thuộc DB
     @MockitoBean
-    private CurrentUserService currentUserService;
+    private CustomOAuth2UserService customOAuth2UserService;
 
     @Test
     void importReturnsSummaryWithRowErrors() throws Exception {
@@ -74,7 +73,7 @@ class PostImportApiControllerTest {
         // Chặn ở filter chain → file upload không được đọc, Service không được gọi
         mockMvc.perform(multipart("/api/import-posts").file(FILE).with(csrf()))
                 .andExpect(status().isUnauthorized())
-                .andExpect(header().exists(HttpHeaders.WWW_AUTHENTICATE));
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE));
         verifyNoInteractions(postImportService);
     }
 

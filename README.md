@@ -63,6 +63,18 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
    2. *User authentication settings*: App permissions **Read**, Type of App **Web App, Automated App or Bot** (confidential client), Callback URI `http://localhost:8080/login/oauth2/code/twitter`, Website URL bất kỳ.
    3. *Keys and tokens → OAuth 2.0 Client ID and Client Secret*: copy vào `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` (không phải API Key / Secret của OAuth 1.0a).
 
+   **Key mã hoá access token** (bắt buộc — thiếu hoặc sai định dạng thì app không khởi động): access token Facebook/X được mã hoá AES-256-GCM trước khi lưu DB. Sinh key ngẫu nhiên 32 byte rồi điền vào `TOKEN_ENCRYPTION_KEY`:
+
+   ```bash
+   openssl rand -base64 32                      # Mac/Linux/Git Bash
+   ```
+
+   ```powershell
+   [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))   # PowerShell 7+
+   ```
+
+   > Giữ key cố định: đổi key thì token đã lưu không giải mã được, user phải đăng nhập lại.
+
 2. **Chạy** — chọn 1 trong 2 cách:
 
    **Cách A — Toàn bộ trong Docker (không cần JDK):**
@@ -87,7 +99,7 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 
 3. Truy cập:
    - Ứng dụng: http://localhost:8080 — bấm **Login with Facebook** hoặc **Login with X**, đăng nhập xong được chuyển về `/dashboard`
-   - Swagger UI (chỉ profile `dev`, phải đăng nhập): http://localhost:8080/swagger-ui.html — trình duyệt hỏi tài khoản, nhập `API_USER_NAME` / `API_USER_PASSWORD` (tạm thời tới Task 3.4)
+   - Swagger UI (chỉ profile `dev`, phải đăng nhập): http://localhost:8080/swagger-ui.html — chưa đăng nhập sẽ bị chuyển về `/login`; đăng nhập Facebook/X xong mở lại link này, Swagger UI dùng chung session của trình duyệt
    - Artemis console: http://localhost:8161 (tài khoản `ARTEMIS_USER` / `ARTEMIS_PASSWORD`)
    - MySQL từ máy host (DBeaver, Workbench...): `localhost:33069` (theo `DB_PORT` trong `.env`)
 
@@ -174,7 +186,7 @@ src/main/resources/
 | `SPRING_PROFILES_ACTIVE` | — | Profile của container `app` (mặc định `dev`). Đặt profile khác (vd `prod`) để chạy cấu hình production-safe, Swagger tắt |
 | `LOG_PATH` | — | Thư mục log file (mặc định `logs`; trong Docker là `/app/logs`) |
 | `ARTEMIS_USER` / `ARTEMIS_PASSWORD` | ✅ | Tài khoản broker Artemis |
-| `API_USER_NAME` / `API_USER_PASSWORD` | ✅ (mật khẩu) | **Tạm thời tới Task 3.4:** tài khoản HTTP Basic để gọi `/api/**` và mở Swagger UI. Tên mặc định `dev@social-analytics.local`; thiếu mật khẩu thì app không khởi động |
+| `TOKEN_ENCRYPTION_KEY` | ✅ | Key AES-256 (Base64 của 32 byte) mã hoá access token Facebook/X lưu DB — xem Quick Start. Thiếu/sai thì app không khởi động; đổi key thì user phải đăng nhập lại. Test dùng key giả |
 | `SESSION_COOKIE_SECURE` | — | Cookie session chỉ gửi qua HTTPS. Mặc định `true` (production); profile `dev`/`test` mặc định `false` vì chạy HTTP localhost |
 | `ARTEMIS_HOST` / `ARTEMIS_PORT` | — | Mặc định `localhost` / `61616` |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | ✅ | OAuth2 credentials (App ID / App Secret) từ Facebook Developers — xem Quick Start. Test dùng giá trị giả trong `application-test.yml` |
@@ -188,17 +200,18 @@ Dùng **Flyway**, tự chạy khi ứng dụng khởi động. File đặt tại
 
 Quy ước: tên bảng số nhiều, snake_case (`users`, `posts`, `social_metrics`...); `ddl-auto=validate` nên schema chỉ thay đổi qua migration. **Không sửa migration đã commit** — muốn đổi schema thì thêm file version mới.
 
-Schema hiện tại (`V1__init_schema.sql` + `V2__posts_unique_per_user.sql`):
+Schema hiện tại (`V1__init_schema.sql` + `V2__social_accounts.sql`):
 
 | Bảng | Mô tả | Ràng buộc / index chính |
 |---|---|---|
 | `users` | Người dùng (email có thể NULL vì X không trả email), `role` USER/ADMIN | `uk_users_email` |
+| `social_accounts` | Tài khoản Facebook/X của user, upsert mỗi lần đăng nhập: `provider_user_id`, `access_token` (**mã hoá AES-GCM**), `token_expires_at` | `uk_social_accounts_provider_user (provider, provider_user_id)`, FK `users` |
 | `posts` | Bài viết FB/X, `user_id` là chủ sở hữu (phân quyền theo owner) | `uk_posts_user_provider_external_id (user_id, provider, external_id)` — nhiều user theo dõi được cùng 1 bài, FK `users` |
 | `social_metrics` | Snapshot likes/shares/comments/followers theo `collected_at` — mỗi lần crawl thêm 1 dòng | `idx_social_metrics_post_collected (post_id, collected_at)`, FK `posts` `ON DELETE CASCADE` |
 
 ## REST API
 
-Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); chỉ `/login`, `/oauth2/**` và static resource là public. Gọi `/api/**` khi chưa đăng nhập trả 401 `ProblemDetail`; trang web chưa đăng nhập được redirect về `/login`. Trang web đăng nhập bằng Facebook hoặc X. Tạm thời (tới Task 3.4) API chỉ gọi được bằng **HTTP Basic** (`API_USER_NAME` / `API_USER_PASSWORD`) — user đăng nhập Facebook/X gọi `/api/**` nhận 401 cho tới khi tài khoản mạng xã hội được lưu vào DB. Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
+Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); chỉ `/login`, `/oauth2/**` và static resource là public. Gọi `/api/**` khi chưa đăng nhập trả 401 `ProblemDetail`; trang web chưa đăng nhập được redirect về `/login`. Chỉ đăng nhập bằng **Facebook hoặc X** (không có HTTP Basic / tài khoản mật khẩu); lần đăng nhập đầu tiên tạo user mới, các lần sau cập nhật access token. API dùng chung session cookie (`JSESSIONID`) của trình duyệt — Swagger UI tự gửi; với curl/Postman, copy cookie `JSESSIONID` sau khi đăng nhập (DevTools → Application → Cookies). Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
 
 Đăng xuất: `POST /logout` (kèm CSRF) → redirect `/login?logout`, session bị huỷ. `GET /logout` không đăng xuất.
 
@@ -223,12 +236,15 @@ Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); ch�
 Ví dụ:
 
 ```bash
+# 0. Đăng nhập Facebook/X trên trình duyệt, copy giá trị cookie JSESSIONID
+SESSION='<giá trị JSESSIONID>'
+
 # 1. Request GET bất kỳ để nhận cookie XSRF-TOKEN
-curl -s -o /dev/null -c cookies.txt -u "$API_USER_NAME:$API_USER_PASSWORD" http://localhost:8080/api/posts
+curl -s -o /dev/null -c cookies.txt -b "JSESSIONID=$SESSION" http://localhost:8080/api/posts
 XSRF=$(awk '$6 == "XSRF-TOKEN" {print $7}' cookies.txt)
 
-# 2. Gửi lại cookie + header X-XSRF-TOKEN
-curl -b cookies.txt -u "$API_USER_NAME:$API_USER_PASSWORD" -X POST http://localhost:8080/api/posts \
+# 2. Gửi lại session + cookie XSRF-TOKEN + header X-XSRF-TOKEN
+curl -b "JSESSIONID=$SESSION; XSRF-TOKEN=$XSRF" -X POST http://localhost:8080/api/posts \
   -H "X-XSRF-TOKEN: $XSRF" \
   -H "Content-Type: application/json" \
   -d '{"provider":"FACEBOOK","externalId":"123","url":"https://www.facebook.com/page/posts/123","content":"Hello"}'
@@ -249,7 +265,7 @@ File `.xlsx`, sheet đầu tiên, dòng 1 là header (không phân biệt hoa th
 - Dòng lỗi trả về kèm số dòng, dòng hợp lệ vẫn được lưu. Bài đã có (cùng provider + External ID, không phân biệt hoa thường) được **cập nhật**.
 
 ```bash
-curl -b cookies.txt -u "$API_USER_NAME:$API_USER_PASSWORD" -X POST http://localhost:8080/api/import-posts \
+curl -b "JSESSIONID=$SESSION; XSRF-TOKEN=$XSRF" -X POST http://localhost:8080/api/import-posts \
   -H "X-XSRF-TOKEN: $XSRF" -F "file=@posts.xlsx"
 # {"totalRows":3,"created":1,"updated":1,"failed":1,"errors":[{"row":4,"column":"URL","message":"must not be blank"}]}
 ```
@@ -269,7 +285,7 @@ curl -b cookies.txt -u "$API_USER_NAME:$API_USER_PASSWORD" -X POST http://localh
 - Chống Formula Injection: ô bắt đầu bằng `=`, `+`, `-`, `@`, tab, CR được đánh dấu *quote prefix* (như gõ `'` trong Excel) → Excel hiển thị nguyên văn, không chạy như công thức.
 
 ```bash
-curl -OJ -u "$API_USER_NAME:$API_USER_PASSWORD" http://localhost:8080/api/export-report
+curl -OJ -b "JSESSIONID=$SESSION" http://localhost:8080/api/export-report
 ```
 
 ## Xử Lý Lỗi

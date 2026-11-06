@@ -12,8 +12,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AppPropertiesTest {
 
+    // Base64 của 32 byte 0x01 — key AES-256 hợp lệ, chỉ dùng trong test
+    private static final String VALID_KEY = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
+
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-            .withUserConfiguration(TestConfig.class);
+            .withUserConfiguration(TestConfig.class)
+            .withPropertyValues("app.token-encryption.key=" + VALID_KEY);
 
     @Test
     void bindsDefaultsWhenNotConfigured() {
@@ -115,6 +119,51 @@ class AppPropertiesTest {
         contextRunner
                 .withPropertyValues("app.pagination.default-size=200", "app.pagination.max-size=100")
                 .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void bindsTokenEncryptionKey() {
+        contextRunner.run(context -> assertThat(context.getBean(AppProperties.class).tokenEncryption().keyBytes())
+                .hasSize(32)
+                .containsOnly((byte) 1));
+    }
+
+    @Test
+    void failsStartupWhenTokenEncryptionKeyIsMissing() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(TestConfig.class)
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.token-encryption.key=")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void failsStartupWhenTokenEncryptionKeyIsNotAes256() {
+        // Base64 hợp lệ nhưng chỉ 16 byte (AES-128)
+        contextRunner
+                .withPropertyValues("app.token-encryption.key=AQEBAQEBAQEBAQEBAQEBAQ==")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.token-encryption.key=not-base64!!")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void toStringDoesNotLeakTokenEncryptionKey() {
+        contextRunner.run(context -> assertThat(context.getBean(AppProperties.class).toString())
+                .doesNotContain(VALID_KEY)
+                .contains("key=******"));
+    }
+
+    @Test
+    void bindingFailureMessageDoesNotLeakInvalidKey() {
+        contextRunner
+                .withPropertyValues("app.token-encryption.key=c2VjcmV0LWJ1dC10b28tc2hvcnQ=")
+                .run(context -> assertThat(context.getStartupFailure())
+                        .rootCause()
+                        .message()
+                        .doesNotContain("c2VjcmV0LWJ1dC10b28tc2hvcnQ="));
     }
 
     @Configuration(proxyBeanMethods = false)
