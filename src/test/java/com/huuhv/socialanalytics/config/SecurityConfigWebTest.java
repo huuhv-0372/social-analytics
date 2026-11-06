@@ -26,7 +26,6 @@ import static org.hamcrest.Matchers.not;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oauth2Login;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.unauthenticated;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -191,13 +190,13 @@ class SecurityConfigWebTest {
 
     @Test
     void logoutWithoutCsrfTokenReturns403() throws Exception {
-        mockMvc.perform(post("/logout").with(user("dev@example.com")))
+        mockMvc.perform(post("/logout").with(oauth2Login()))
                 .andExpect(status().isForbidden());
     }
 
     @Test
     void logoutByPostRedirectsToFixedLoginUrl() throws Exception {
-        mockMvc.perform(post("/logout").param("redirect", "https://evil.example").with(user("dev@example.com")).with(csrf()))
+        mockMvc.perform(post("/logout").param("redirect", "https://evil.example").with(oauth2Login()).with(csrf()))
                 .andExpect(status().isFound())
                 .andExpect(redirectedUrl(SecurityConfig.LOGOUT_SUCCESS_URL))
                 .andExpect(unauthenticated());
@@ -206,7 +205,7 @@ class SecurityConfigWebTest {
     @Test
     void logoutByGetIsNotSupported() throws Exception {
         // Không có handler GET /logout → 404, user vẫn đăng nhập (không bị CSRF logout qua link/ảnh)
-        mockMvc.perform(get("/logout").with(user("dev@example.com")))
+        mockMvc.perform(get("/logout").with(oauth2Login()))
                 .andExpect(status().isNotFound());
     }
 
@@ -226,7 +225,7 @@ class SecurityConfigWebTest {
         assertThat(meta.group(1)).isNotEqualTo(csrfCookie.getValue());
 
         // Luồng fetch của trang Thymeleaf: header lấy từ <meta name="_csrf">
-        mockMvc.perform(post("/logout").with(user("dev@example.com"))
+        mockMvc.perform(post("/logout").with(oauth2Login())
                         .cookie(csrfCookie).header("X-XSRF-TOKEN", meta.group(1)))
                 .andExpect(status().isFound())
                 .andExpect(redirectedUrl(SecurityConfig.LOGOUT_SUCCESS_URL));

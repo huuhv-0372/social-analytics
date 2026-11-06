@@ -263,11 +263,11 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 ## 7. Testing
 - Cấu trúc test mirror package của `src/main`; tên class `XxxTest` (unit) / `XxxIT` (integration).
 - Service: JUnit 5 + Mockito (`@ExtendWith(MockitoExtension.class)`), không khởi động Spring context.
-- Controller: `@WebMvcTest` + `MockMvc` + `@MockitoBean` cho Service; test có POST phải kèm `.with(csrf())` và user giả lập (`@WithMockUser` hoặc `oauth2Login()`). Slice Boot 4 không tự nạp config của app → thêm `@Import({SecurityConfig.class, WebConfig.class})` + `@MockitoBean CustomOAuth2UserService`.
+- Controller: `@WebMvcTest` + `MockMvc` + `@MockitoBean` cho Service; test có POST phải kèm `.with(csrf())` và user giả lập `oauth2Login()` (app chỉ có đăng nhập OAuth2 — không dùng `user(...)`/`@WithMockUser`, principal đó không map được sang `User`). Slice Boot 4 không tự nạp config của app → thêm `@Import({SecurityConfig.class, WebConfig.class})` + `@MockitoBean CustomOAuth2UserService`.
 - Repository: `@DataJpaTest` cho query custom (`@Query`, projection), kèm `@AutoConfigureTestDatabase(replace = NONE)` + `@Import(TestcontainersConfiguration.class)` để chạy trên MySQL Testcontainers — không bao giờ chạy test ghi dữ liệu vào DB dev.
 - Excel: test importer/exporter với workbook tạo trong bộ nhớ (round-trip export → import).
 - Integration test cuối: `@SpringBootTest` chạy luồng import → JMS → cập nhật thống kê → WebSocket event. Ưu tiên Testcontainers (MySQL) nếu có Docker, vì migration viết cho MySQL.
-- Test bảo mật bắt buộc cho mỗi endpoint mới: chưa đăng nhập → 401/redirect login; thiếu CSRF → 403; truy cập tài nguyên của user khác → 403/404 (IDOR); input không hợp lệ → 400. Với Excel: file sai định dạng, quá dung lượng, chứa công thức (`=...`).
+- Test bảo mật bắt buộc cho mỗi endpoint mới: chưa đăng nhập → 401/redirect login; thiếu CSRF → 403; truy cập tài nguyên của user khác → 403/404 (IDOR); input không hợp lệ → 400. Với Excel: file sai định dạng, quá dung lượng, chứa công thức (`=...`). Endpoint `/api/**` mới thêm vào ma trận `controller/api/ApiSecurityMatrixTest` (ẩn danh → 401 ProblemDetail, ghi thiếu/sai CSRF → 403, Service không được gọi); IDOR kiểm tra bằng query thật trong `service/OwnershipIsolationTest` (MySQL Testcontainers, user khác → `ResourceNotFoundException`, dữ liệu không đổi).
 - Mỗi tính năng mới phải có test; chạy `./mvnw test` pass trước khi tạo PR.
 
 ## 8. Cấu Hình & Môi Trường
@@ -285,7 +285,7 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 Cập nhật checkbox khi hoàn thành từng giai đoạn để AI biết phạm vi hiện tại:
 - [x] **1. Khởi tạo project**: cấu trúc nền, config, logging, JPA + MySQL + Flyway, entity `User`/`Post`/`SocialMetric`, CRUD `/api/posts`, `/api/metrics`, Swagger.
 - [x] **2. Unit Test + Excel**: test `PostService`, `MetricService`, controller; `/api/import-posts`, `/api/export-report`; Reflection mapping.
-- [ ] **3. Security + CSRF + Social Login**: Facebook & Twitter login → `/dashboard`, lưu token & user.
+- [x] **3. Security + CSRF + Social Login**: Facebook & Twitter login → `/dashboard`, lưu token & user.
 - [ ] **4. Background Job & Multithread**: `updateSocialMetricsJob` mỗi giờ, mock API, màn hình "Last updated time".
 - [ ] **5. JMS**: `IMPORT_COMPLETED` → listener cập nhật thống kê tổng hợp, retry + DLQ.
 - [ ] **6. WebSocket + Chart**: broadcast khi metrics cập nhật, Chart.js realtime, `/api/chart-data`.

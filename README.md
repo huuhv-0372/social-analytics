@@ -10,7 +10,7 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 |---|---|---|---|
 | CRUD bài viết & metrics | REST API `/api/posts`, `/api/metrics` + Swagger UI | 1 | ✅ |
 | Import / Export Excel | Upload danh sách bài viết (`/api/import-posts`), xuất báo cáo (`/api/export-report`) bằng Apache POI + Reflection | 2 | ✅ |
-| Social Login | Đăng nhập Facebook & Twitter/X qua OAuth2, bảo vệ CSRF | 3 | ⏳ |
+| Social Login | Đăng nhập Facebook & Twitter/X qua OAuth2, bảo vệ CSRF | 3 | ✅ |
 | Background job | `updateSocialMetricsJob` chạy mỗi giờ, crawl metrics (mock API) đa luồng | 4 | ⏳ |
 | JMS | Import xong → message `IMPORT_COMPLETED` → listener cập nhật thống kê, có retry + DLQ | 5 | ⏳ |
 | Dashboard realtime | Chart.js cập nhật qua WebSocket (STOMP + SockJS), API `/api/chart-data` | 6 | ⏳ |

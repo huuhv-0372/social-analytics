@@ -7,14 +7,18 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.security.core.authority.AuthorityUtils;
+import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
+import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.Map;
+
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oauth2Login;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
@@ -67,10 +71,13 @@ class DashboardControllerTest {
     }
 
     @Test
-    void basicUserFallsBackToUsername() throws Exception {
-        mockMvc.perform(get("/dashboard").with(user("dev@example.com")))
+    void userWithoutNameAttributeFallsBackToPrincipalName() throws Exception {
+        // Provider không trả "name" → hiển thị tên principal (id phía provider) thay vì để trống
+        OAuth2User principal = new DefaultOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
+                Map.of("id", "2244994945"), "id");
+        mockMvc.perform(get("/dashboard").with(oauth2Login().oauth2User(principal)))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("Welcome, <span>dev@example.com</span>")));
+                .andExpect(content().string(containsString("Welcome, <span>2244994945</span>")));
     }
 
     @Test

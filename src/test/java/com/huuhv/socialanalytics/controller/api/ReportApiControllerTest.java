@@ -24,7 +24,7 @@ import java.time.Duration;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oauth2Login;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -58,7 +58,7 @@ class ReportApiControllerTest {
                 .thenReturn(new ExportFile("posts-report-20260101-090000.xlsx", out -> out.write(content)));
 
         // StreamingResponseBody ghi file ở luồng async → cần asyncDispatch để lấy body
-        MvcResult started = mockMvc.perform(get("/api/export-report").with(user("dev@example.com")))
+        MvcResult started = mockMvc.perform(get("/api/export-report").with(oauth2Login()))
                 .andExpect(request().asyncStarted())
                 .andReturn();
         mockMvc.perform(asyncDispatch(started))
@@ -82,7 +82,7 @@ class ReportApiControllerTest {
     void reportOverRowLimitReturns400ProblemDetail() throws Exception {
         when(postReportService.exportReport()).thenThrow(new BadRequestException("Report exceeds the maximum of 2 rows"));
 
-        mockMvc.perform(get("/api/export-report").with(user("dev@example.com")))
+        mockMvc.perform(get("/api/export-report").with(oauth2Login()))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.detail").value("Report exceeds the maximum of 2 rows"));
@@ -92,7 +92,7 @@ class ReportApiControllerTest {
     void tooFrequentExportReturns429WithRetryAfter() throws Exception {
         when(postReportService.exportReport()).thenThrow(new TooManyRequestsException(Duration.ofMillis(1500)));
 
-        mockMvc.perform(get("/api/export-report").with(user("dev@example.com")))
+        mockMvc.perform(get("/api/export-report").with(oauth2Login()))
                 .andExpect(status().isTooManyRequests())
                 // 1.5 giây làm tròn lên 2 để client không gọi lại quá sớm
                 .andExpect(header().string(HttpHeaders.RETRY_AFTER, "2"))
@@ -101,7 +101,7 @@ class ReportApiControllerTest {
 
     @Test
     void writeMethodIsNotAllowed() throws Exception {
-        mockMvc.perform(post("/api/export-report").with(user("dev@example.com")).with(csrf()))
+        mockMvc.perform(post("/api/export-report").with(oauth2Login()).with(csrf()))
                 .andExpect(status().isMethodNotAllowed());
         verifyNoInteractions(postReportService);
     }
