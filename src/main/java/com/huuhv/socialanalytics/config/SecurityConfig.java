@@ -41,12 +41,15 @@ import java.util.regex.Pattern;
  *     <li>CSRF bật cho mọi request ghi: token nằm trong cookie {@code XSRF-TOKEN}, client gửi lại qua header
  *     {@code X-XSRF-TOKEN} (Swagger UI tự làm qua {@code springdoc.swagger-ui.csrf.enabled}); trang Thymeleaf đọc
  *     token từ {@code <meta name="_csrf">} / form {@code th:action} chèn hidden {@code _csrf}.</li>
+ *     <li>Đăng nhập OAuth2 (Facebook): {@code /oauth2/authorization/{registrationId}} → callback
+ *     {@code /login/oauth2/code/{registrationId}} → luôn redirect {@code /dashboard}; lỗi → {@code /login?error}.</li>
  *     <li>Logout chỉ nhận POST (có CSRF), redirect cố định về {@code /login?logout} (không open redirect).</li>
  *     <li>Security header: CSP, {@code X-Content-Type-Options}, {@code Referrer-Policy}, {@code frame-ancestors 'none'}
  *     + {@code X-Frame-Options: DENY}; HSTS mặc định của Spring (chỉ gửi qua HTTPS).</li>
  * </ul>
- * TẠM THỜI (tới Task 3.4): đăng nhập bằng HTTP Basic (user ở {@code spring.security.user.*}) vì OAuth2 login chưa có.
- * Task 3.4 gỡ {@code httpBasic} và {@link #apiUserDetailsService}.
+ * TẠM THỜI (tới Task 3.4): song song với OAuth2 vẫn giữ HTTP Basic (user ở {@code spring.security.user.*}) để gọi API,
+ * vì user đăng nhập OAuth2 chưa được map sang {@code User} trong DB. Task 3.4 gỡ {@code httpBasic} và
+ * {@link #apiUserDetailsService}.
  */
 @Configuration
 @EnableWebSecurity
@@ -72,12 +75,15 @@ public class SecurityConfig {
 
     static final String LOGIN_PAGE = "/login";
     static final String LOGOUT_SUCCESS_URL = LOGIN_PAGE + "?logout";
+    static final String LOGIN_SUCCESS_URL = "/dashboard";
+    static final String LOGIN_FAILURE_URL = LOGIN_PAGE + "?error";
 
     private static final Pattern ENCODED_PASSWORD = Pattern.compile("^\\{.+}.*$");
 
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         ApiAuthenticationEntryPoint apiEntryPoint = new ApiAuthenticationEntryPoint();
+        OAuth2LoginResultHandler loginResultHandler = new OAuth2LoginResultHandler(LOGIN_SUCCESS_URL, LOGIN_FAILURE_URL);
         http
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(LOGIN_PAGE, "/oauth2/**", "/error").permitAll()
@@ -106,6 +112,12 @@ public class SecurityConfig {
                         .contentSecurityPolicy(csp -> csp.policyDirectives(CONTENT_SECURITY_POLICY))
                         .frameOptions(frame -> frame.deny())
                         .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN)))
+                // Social login: trang login riêng (không dùng trang mặc định của Spring); state + PKCE do Spring xử lý.
+                // Entry point mặc định của oauth2Login không được dùng vì 2 entry point khai báo ở trên khớp trước.
+                .oauth2Login(oauth2 -> oauth2
+                        .loginPage(LOGIN_PAGE)
+                        .successHandler(loginResultHandler)
+                        .failureHandler(loginResultHandler))
                 // TẠM THỜI tới Task 3.4: sai thông tin đăng nhập Basic cũng trả 401 ProblemDetail như request ẩn danh
                 .httpBasic(basic -> basic.authenticationEntryPoint(apiEntryPoint));
         return http.build();

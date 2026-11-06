@@ -31,6 +31,17 @@ spring:
       resolve-lazily: true
 
   security:
+    oauth2:
+      client:
+        registration:
+          # Facebook có sẵn trong CommonOAuth2Provider (authorization/token/user-info URI, user-name-attribute=id).
+          # Redirect URI mặc định {baseUrl}/login/oauth2/code/facebook — phải khai báo y hệt trên Facebook Developers.
+          # Bắt buộc: thiếu biến môi trường thì app dừng khởi động. Không commit secret (OWASP A02/A04).
+          facebook:
+            client-id: ${FACEBOOK_CLIENT_ID}
+            client-secret: ${FACEBOOK_CLIENT_SECRET}
+            # Quyền tối thiểu để đăng nhập (OWASP A01 — least privilege)
+            scope: public_profile,email
     # TẠM THỜI tới Task 3.4: user HTTP Basic để đăng nhập (chưa có OAuth2). Username dùng làm email của User (owner).
     # API_USER_PASSWORD bắt buộc: để trống thì app dừng khởi động (SecurityConfig), không sinh mật khẩu in ra log.
     user:

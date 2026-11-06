@@ -20,7 +20,7 @@
     <div class="container">
         <a class="navbar-brand" th:href="@{/}">Social Analytics</a>
         <div class="ms-auto d-flex align-items-center gap-3" sec:authorize="isAuthenticated()">
-            <span class="navbar-text" sec:authentication="name">user</span>
+            <span class="navbar-text" th:text="${displayName}">user</span>
             <!-- Logout chỉ nhận POST; th:action tự chèn hidden _csrf -->
             <form th:action="@{/logout}" method="post" class="m-0">
                 <button type="submit" class="btn btn-outline-light btn-sm">Logout</button>

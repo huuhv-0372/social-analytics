@@ -5,6 +5,13 @@ spring:
   security:
     user:
       password: test-only-password
+    # Giá trị giả cho test — không gọi Facebook thật
+    oauth2:
+      client:
+        registration:
+          facebook:
+            client-id: test-facebook-client-id
+            client-secret: test-facebook-client-secret
 
 server:
   servlet:

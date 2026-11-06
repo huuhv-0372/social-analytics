@@ -53,6 +53,11 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 
    > `DB_USERNAME` phải là user thường (không dùng `root`) — container MySQL sẽ tự tạo user này.
 
+   **Đăng nhập Facebook** (bắt buộc — thiếu `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` thì app không khởi động):
+   1. Tạo app tại [Facebook Developers](https://developers.facebook.com/apps) (use case *Authenticate and request data from users with Facebook Login*).
+   2. *Facebook Login → Settings → Valid OAuth Redirect URIs*: thêm `http://localhost:8080/login/oauth2/code/facebook` (phải khớp chính xác, kể cả port).
+   3. *App settings → Basic*: copy **App ID** → `FACEBOOK_CLIENT_ID`, **App Secret** → `FACEBOOK_CLIENT_SECRET` trong `.env`.
+
 2. **Chạy** — chọn 1 trong 2 cách:
 
    **Cách A — Toàn bộ trong Docker (không cần JDK):**
@@ -76,7 +81,7 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
    Flyway tự tạo bảng khi app khởi động.
 
 3. Truy cập:
-   - Ứng dụng: http://localhost:8080
+   - Ứng dụng: http://localhost:8080 — bấm **Login with Facebook**, đăng nhập xong được chuyển về `/dashboard`
    - Swagger UI (chỉ profile `dev`, phải đăng nhập): http://localhost:8080/swagger-ui.html — trình duyệt hỏi tài khoản, nhập `API_USER_NAME` / `API_USER_PASSWORD` (tạm thời tới Task 3.4)
    - Artemis console: http://localhost:8161 (tài khoản `ARTEMIS_USER` / `ARTEMIS_PASSWORD`)
    - MySQL từ máy host (DBeaver, Workbench...): `localhost:33069` (theo `DB_PORT` trong `.env`)
@@ -167,7 +172,7 @@ src/main/resources/
 | `API_USER_NAME` / `API_USER_PASSWORD` | ✅ (mật khẩu) | **Tạm thời tới Task 3.4:** tài khoản HTTP Basic để gọi `/api/**` và mở Swagger UI. Tên mặc định `dev@social-analytics.local`; thiếu mật khẩu thì app không khởi động |
 | `SESSION_COOKIE_SECURE` | — | Cookie session chỉ gửi qua HTTPS. Mặc định `true` (production); profile `dev`/`test` mặc định `false` vì chạy HTTP localhost |
 | `ARTEMIS_HOST` / `ARTEMIS_PORT` | — | Mặc định `localhost` / `61616` |
-| `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | Từ giai đoạn 3 | OAuth2 credentials từ Facebook Developers |
+| `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | ✅ | OAuth2 credentials (App ID / App Secret) từ Facebook Developers — xem Quick Start. Test dùng giá trị giả trong `application-test.yml` |
 | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | Từ giai đoạn 3 | OAuth2 credentials từ X Developer Portal |
 
 > Không commit bất kỳ secret nào. Nếu lỡ commit, **thu hồi/đổi secret ngay** — xem [SECURITY.md](.github/SECURITY.md).
@@ -188,7 +193,7 @@ Schema hiện tại (`V1__init_schema.sql` + `V2__posts_unique_per_user.sql`):
 
 ## REST API
 
-Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); chỉ `/login`, `/oauth2/**` và static resource là public. Gọi `/api/**` khi chưa đăng nhập trả 401 `ProblemDetail`; trang web chưa đăng nhập được redirect về `/login`. Tạm thời (tới Task 3.4) đăng nhập bằng **HTTP Basic** (`API_USER_NAME` / `API_USER_PASSWORD`). Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
+Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); chỉ `/login`, `/oauth2/**` và static resource là public. Gọi `/api/**` khi chưa đăng nhập trả 401 `ProblemDetail`; trang web chưa đăng nhập được redirect về `/login`. Trang web đăng nhập bằng Facebook. Tạm thời (tới Task 3.4) API chỉ gọi được bằng **HTTP Basic** (`API_USER_NAME` / `API_USER_PASSWORD`) — user đăng nhập Facebook gọi `/api/**` nhận 401 cho tới khi tài khoản mạng xã hội được lưu vào DB. Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
 
 Đăng xuất: `POST /logout` (kèm CSRF) → redirect `/login?logout`, session bị huỷ. `GET /logout` không đăng xuất.
 

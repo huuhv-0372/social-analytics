@@ -18,8 +18,12 @@
                     <div class="alert alert-success" th:if="${param.logout != null}">You have been signed out.</div>
                     <div class="alert alert-danger" th:if="${param.error != null}">Sign in failed. Please try again.</div>
 
-                    <p class="text-muted text-center mb-0">Sign in with your social account to continue.</p>
-                    <!-- Nút đăng nhập Facebook / X: Task 3.2 / 3.3 -->
+                    <p class="text-muted text-center">Sign in with your social account to continue.</p>
+                    <!-- Bắt đầu luồng OAuth2 Authorization Code (state + PKCE do Spring Security xử lý) -->
+                    <div class="d-grid gap-2">
+                        <a class="btn btn-primary" th:href="@{/oauth2/authorization/facebook}">Login with Facebook</a>
+                        <!-- Nút Login with X: Task 3.3 -->
+                    </div>
                 </div>
             </div>
         </div>

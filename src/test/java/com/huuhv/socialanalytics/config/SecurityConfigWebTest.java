@@ -23,6 +23,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oauth2Login;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.unauthenticated;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -77,6 +78,44 @@ class SecurityConfigWebTest {
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))
                 .andExpect(header().string("X-Frame-Options", "DENY"))
                 .andExpect(header().string("Referrer-Policy", "strict-origin-when-cross-origin"));
+    }
+
+    @Test
+    void loginPageOffersFacebookLogin() throws Exception {
+        mockMvc.perform(get("/login"))
+                .andExpect(content().string(containsString("href=\"/oauth2/authorization/facebook\"")));
+    }
+
+    @Test
+    void authenticatedUserVisitingLoginIsRedirectedToDashboard() throws Exception {
+        mockMvc.perform(get("/login").with(oauth2Login()))
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl(SecurityConfig.LOGIN_SUCCESS_URL));
+    }
+
+    @Test
+    void facebookAuthorizationRequestRedirectsToProviderWithStateAndCallbackUri() throws Exception {
+        String location = mockMvc.perform(get("/oauth2/authorization/facebook"))
+                .andExpect(status().isFound())
+                .andReturn().getResponse().getRedirectedUrl();
+
+        assertThat(location)
+                .startsWith("https://www.facebook.com/")
+                .contains("response_type=code")
+                .contains("client_id=test-facebook-client-id")
+                .contains("scope=public_profile%20email")
+                .contains("state=")
+                .contains("redirect_uri=http://localhost/login/oauth2/code/facebook")
+                // Client secret không bao giờ nằm trong URL trình duyệt
+                .doesNotContain("test-facebook-client-secret");
+    }
+
+    @Test
+    void callbackWithoutMatchingAuthorizationRequestRedirectsToLoginError() throws Exception {
+        // Callback giả mạo / state không khớp (không có authorization request đã lưu trong session) → từ chối
+        mockMvc.perform(get("/login/oauth2/code/facebook").param("code", "forged").param("state", "forged"))
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl(SecurityConfig.LOGIN_FAILURE_URL));
     }
 
     @Test

@@ -15,8 +15,12 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
+import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
+import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -79,6 +83,20 @@ class CurrentUserServiceTest {
         assertThatThrownBy(() -> currentUserService.getCurrentUser())
                 .isInstanceOf(AuthenticationRequiredException.class);
         verifyNoInteractions(userProvisioningService);
+    }
+
+    // TẠM THỜI tới Task 3.4: principal OAuth2 (tên = id phía provider) không được map/tạo User theo email
+    @Test
+    void oauth2PrincipalIsNotMappedByNameUntilSocialAccountExists() {
+        OAuth2User principal = new DefaultOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
+                Map.of("id", "1234567890", "name", "Dev"), "id");
+        authenticate(new OAuth2AuthenticationToken(principal, principal.getAuthorities(), "facebook"));
+
+        assertThatThrownBy(() -> currentUserService.getCurrentUser())
+                .isInstanceOf(AuthenticationRequiredException.class);
+        currentUserService.provisionCurrentUserIfMissing();
+
+        verifyNoInteractions(userRepository, userProvisioningService);
     }
 
     @Test

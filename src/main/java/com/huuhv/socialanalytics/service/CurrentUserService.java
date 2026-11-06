@@ -8,6 +8,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -67,7 +68,10 @@ public class CurrentUserService {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null
                 || !authentication.isAuthenticated()
-                || authentication instanceof AnonymousAuthenticationToken) {
+                || authentication instanceof AnonymousAuthenticationToken
+                // TẠM THỜI tới Task 3.4: tên principal OAuth2 là id phía provider (vd id Facebook), không phải email →
+                // không map/tạo User theo tên này (tránh tạo bản ghi sai); fail closed với 401 cho tới khi có SocialAccount
+                || authentication instanceof OAuth2AuthenticationToken) {
             return Optional.empty();
         }
         return Optional.of(authentication.getName());
