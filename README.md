@@ -8,7 +8,7 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 
 | Tính năng | Mô tả | Giai đoạn | Trạng thái |
 |---|---|---|---|
-| CRUD bài viết & metrics | REST API `/api/posts`, `/api/metrics` + Swagger UI | 1 | ⏳ |
+| CRUD bài viết & metrics | REST API `/api/posts`, `/api/metrics` + Swagger UI | 1 | ✅ |
 | Import / Export Excel | Upload danh sách bài viết (`/api/import-posts`), xuất báo cáo (`/api/export-report`) bằng Apache POI + Reflection | 2 | ⏳ |
 | Social Login | Đăng nhập Facebook & Twitter/X qua OAuth2, bảo vệ CSRF | 3 | ⏳ |
 | Background job | `updateSocialMetricsJob` chạy mỗi giờ, crawl metrics (mock API) đa luồng | 4 | ⏳ |
@@ -67,15 +67,17 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
    ```bash
    docker compose up -d mysql artemis
 
-   mvnw.cmd spring-boot:run         # Windows
-   ./mvnw spring-boot:run           # Mac/Linux
+   mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=dev   # Windows
+   ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev     # Mac/Linux
    ```
+
+   Container `app` (cách A) mặc định chạy profile `dev` (`SPRING_PROFILES_ACTIVE` trong `.env`). Không bật `dev` thì Swagger UI bị tắt.
 
    Flyway tự tạo bảng khi app khởi động.
 
 3. Truy cập:
    - Ứng dụng: http://localhost:8080
-   - Swagger UI (sau Task 1.5): http://localhost:8080/swagger-ui.html
+   - Swagger UI (chỉ profile `dev`): http://localhost:8080/swagger-ui.html — bấm **Authorize**, nhập `API_USER_NAME` / `API_USER_PASSWORD` để gọi thử API
    - Artemis console: http://localhost:8161 (tài khoản `ARTEMIS_USER` / `ARTEMIS_PASSWORD`)
    - MySQL từ máy host (DBeaver, Workbench...): `localhost:33069` (theo `DB_PORT` trong `.env`)
 
@@ -83,17 +85,23 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 
 ```bash
 # Chạy Maven trong container JDK 25 (không cần JDK local) — tự bật MySQL nếu chưa chạy
-docker compose run --rm maven test                          # Chạy toàn bộ test
-docker compose run --rm maven test -Dtest=PostServiceTest   # Chạy 1 class test
 docker compose run --rm maven clean package -DskipTests     # Build file JAR vào target/
+docker compose run --rm maven test -Dtest=PostServiceTest   # Chạy 1 class test không cần Testcontainers
 
-# Hoặc bằng JDK local (cần MySQL đang chạy)
+# Toàn bộ test (kể cả Testcontainers) trong container: service này mount Docker socket của host,
+# tức là cấp quyền tương đương root cho mọi code chạy trong build — chỉ dùng khi tin các dependency hiện tại,
+# ưu tiên ./mvnw test bằng JDK local
+docker compose run --rm maven-testcontainers test
+
+# Hoặc bằng JDK local (cần MySQL đang chạy cho SocialAnalyticsApplicationTests)
 ./mvnw test
 ./mvnw clean package -DskipTests
 
 docker compose up -d --build app     # Build lại image và chạy app sau khi sửa code
 docker compose down                  # Dừng tất cả (thêm -v để xoá cả dữ liệu MySQL/Artemis)
 ```
+
+Test repository (`@DataJpaTest`) chạy trên MySQL riêng do **Testcontainers** tạo (`TestcontainersConfiguration`, image `mysql:8.4`) — cần Docker đang chạy, không đọc/ghi vào DB dev. Container được tạo 1 lần và dùng chung cho các test class cùng cấu hình.
 
 ## Project Structure
 
@@ -135,9 +143,10 @@ src/main/resources/
 
 | File | Vai trò |
 |---|---|
-| `application.yml` | Cấu hình chung, an toàn cho production: datasource, JPA (`ddl-auto=validate`), Flyway, Artemis, ẩn chi tiết lỗi, `app.*` |
-| `application-dev.yml` | Profile `dev`: log DEBUG cho app, SQL, Security (`-Dspring-boot.run.profiles=dev`) |
-| `application-test.yml` | Profile `test` cho test (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
+| `application.yml` | Cấu hình chung, an toàn cho production: datasource, JPA (`ddl-auto=validate`), Flyway, Artemis, ẩn chi tiết lỗi, tắt Swagger, `app.*` |
+| `application-dev.yml` | Profile `dev`: bật Swagger UI, log DEBUG cho app, SQL, Security (`-Dspring-boot.run.profiles=dev`) |
+| `config/OpenApiConfig` | Thông tin tài liệu OpenAPI (title, version) + khai báo HTTP Basic cho nút Authorize của Swagger UI |
+| `src/test/resources/application-test.yml` | Profile `test` chỉ dành cho test, không đóng gói vào JAR (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
 | `logback-spring.xml` | Log console + file theo ngày trong `logs/` (giữ 30 ngày), pattern kèm MDC `jobId` / `importId` |
 | `config/AppProperties` | Bind cấu hình `app.*` (record + validation), vd `app.pagination.default-size` / `max-size` |
 | `.env` | Giá trị bí mật cho môi trường local — copy từ `.env.example` |
@@ -152,8 +161,10 @@ src/main/resources/
 | `MYSQL_ROOT_PASSWORD` | ✅ (compose) | Mật khẩu root của container MySQL |
 | `DB_HOST` / `DB_PORT` / `DB_NAME` | — | Mặc định `localhost` / `33069` / `social_analytics`. `DB_PORT` là port MySQL mở ra máy host; app chạy trong Docker luôn dùng `mysql:3306` |
 | `APP_PORT` | — | Port app mở ra máy host khi chạy bằng Docker (mặc định `8080`) |
+| `SPRING_PROFILES_ACTIVE` | — | Profile của container `app` (mặc định `dev`). Đặt profile khác (vd `prod`) để chạy cấu hình production-safe, Swagger tắt |
 | `LOG_PATH` | — | Thư mục log file (mặc định `logs`; trong Docker là `/app/logs`) |
 | `ARTEMIS_USER` / `ARTEMIS_PASSWORD` | ✅ | Tài khoản broker Artemis |
+| `API_USER_NAME` / `API_USER_PASSWORD` | ✅ (mật khẩu) | **Tạm thời tới giai đoạn 3:** tài khoản HTTP Basic để gọi `/api/**`. Tên mặc định `dev@social-analytics.local`; thiếu mật khẩu thì app không khởi động |
 | `ARTEMIS_HOST` / `ARTEMIS_PORT` | — | Mặc định `localhost` / `61616` |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | Từ giai đoạn 3 | OAuth2 credentials từ Facebook Developers |
 | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | Từ giai đoạn 3 | OAuth2 credentials từ X Developer Portal |
@@ -166,9 +177,50 @@ Dùng **Flyway**, tự chạy khi ứng dụng khởi động. File đặt tại
 
 Quy ước: tên bảng số nhiều, snake_case (`users`, `posts`, `social_metrics`...); `ddl-auto=validate` nên schema chỉ thay đổi qua migration. **Không sửa migration đã commit** — muốn đổi schema thì thêm file version mới.
 
+Schema hiện tại (`V1__init_schema.sql` + `V2__posts_unique_per_user.sql`):
+
+| Bảng | Mô tả | Ràng buộc / index chính |
+|---|---|---|
+| `users` | Người dùng (email có thể NULL vì X không trả email), `role` USER/ADMIN | `uk_users_email` |
+| `posts` | Bài viết FB/X, `user_id` là chủ sở hữu (phân quyền theo owner) | `uk_posts_user_provider_external_id (user_id, provider, external_id)` — nhiều user theo dõi được cùng 1 bài, FK `users` |
+| `social_metrics` | Snapshot likes/shares/comments/followers theo `collected_at` — mỗi lần crawl thêm 1 dòng | `idx_social_metrics_post_collected (post_id, collected_at)`, FK `posts` `ON DELETE CASCADE` |
+
+## REST API
+
+Tạm thời (tới giai đoạn 3) `/api/**` xác thực bằng **HTTP Basic** (`API_USER_NAME` / `API_USER_PASSWORD`); gọi ẩn danh trả 401. Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
+
+**CSRF:** mọi response đều đặt cookie `XSRF-TOKEN`; request POST/PUT/DELETE phải gửi lại cookie đó **và** giá trị của nó trong header `X-XSRF-TOKEN`, thiếu thì trả 403. Swagger UI tự làm việc này. Với Postman, sau 1 request GET, thêm header `X-XSRF-TOKEN: {{xsrf}}` với `xsrf` lấy từ cookie.
+
+| Method | Endpoint | Mô tả |
+|---|---|---|
+| GET | `/api/posts?page=0&size=20&sort=createdAt,desc` | Danh sách bài viết (size tối đa 100; sort: `createdAt`, `updatedAt`, `publishedAt`, `provider`) |
+| GET | `/api/posts/{id}` | Chi tiết bài viết |
+| POST | `/api/posts` | Tạo bài viết — `url` phải là https thuộc domain của provider (`facebook.com`; `x.com`/`twitter.com`) |
+| PUT | `/api/posts/{id}` | Cập nhật (thay thế toàn bộ) |
+| DELETE | `/api/posts/{id}` | Xoá bài viết kèm toàn bộ snapshot metric |
+| GET | `/api/metrics?postId=1&from=2026-01-01T00:00:00&to=...` | Snapshot của 1 bài viết (phân trang; sort: `collectedAt`, `likes`, `shares`, `comments`, `followers`) |
+| GET | `/api/metrics/latest?postId=1` | Snapshot mới nhất |
+| GET | `/api/metrics/{id}` | Chi tiết snapshot |
+| POST | `/api/metrics` | Ghi nhận snapshot thủ công (snapshot bất biến — không có PUT) |
+| DELETE | `/api/metrics/{id}` | Xoá snapshot |
+
+Ví dụ:
+
+```bash
+# 1. Request GET bất kỳ để nhận cookie XSRF-TOKEN
+curl -s -o /dev/null -c cookies.txt -u "$API_USER_NAME:$API_USER_PASSWORD" http://localhost:8080/api/posts
+XSRF=$(awk '$6 == "XSRF-TOKEN" {print $7}' cookies.txt)
+
+# 2. Gửi lại cookie + header X-XSRF-TOKEN
+curl -b cookies.txt -u "$API_USER_NAME:$API_USER_PASSWORD" -X POST http://localhost:8080/api/posts \
+  -H "X-XSRF-TOKEN: $XSRF" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"FACEBOOK","externalId":"123","url":"https://www.facebook.com/page/posts/123","content":"Hello"}'
+```
+
 ## Xử Lý Lỗi
 
-- REST (`controller/api`): `ApiExceptionHandler` (`@RestControllerAdvice`) trả `ProblemDetail` (RFC 9457).
+- REST (`controller/api`): `ApiExceptionHandler` (`@RestControllerAdvice`) trả `ProblemDetail` (RFC 9457): 400 (validation, kèm `errors[{field, message}]`), 401, 404, 409, 500 (thông điệp chung).
 - Web (`controller/web`): `WebExceptionHandler` (`@ControllerAdvice`) trả view lỗi hoặc flash message.
 - Không trả stack trace / thông tin nội bộ ra client.
 

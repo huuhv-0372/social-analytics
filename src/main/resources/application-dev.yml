@@ -1,5 +1,13 @@
 # Profile dev: ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 # Chỉ tăng mức log để debug; không bật log giá trị bind tham số SQL (có thể chứa dữ liệu nhạy cảm).
+
+# Bật Swagger UI (http://localhost:8080/swagger-ui.html) — chỉ ở dev
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
 logging:
   level:
     com.huuhv.socialanalytics: DEBUG

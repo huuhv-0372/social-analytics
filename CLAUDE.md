@@ -51,9 +51,12 @@ Windows dùng `mvnw.cmd`, Mac/Linux dùng `./mvnw`:
 - Docker (file `docker-compose.yaml` + `Dockerfile` ở root; trước tiên copy `.env.example` → `.env`, điền mật khẩu):
   - Chạy toàn bộ (MySQL + Artemis + app): `docker compose up -d --build`
   - Chỉ hạ tầng, app chạy bằng JDK local: `docker compose up -d mysql artemis` (app tự đọc `.env` qua `spring.config.import`)
-  - Chạy Maven trong container JDK 25, không cần JDK local: `docker compose run --rm maven test` (thay `test` bằng goal bất kỳ)
+  - Chạy Maven trong container JDK 25, không cần JDK local: `docker compose run --rm maven package -DskipTests` (thay bằng goal bất kỳ). Service `maven` **không** có Docker socket nên test Testcontainers không chạy được ở đó.
+  - Toàn bộ test trong container: `docker compose run --rm maven-testcontainers test` — mount Docker socket của host (quyền tương đương root cho mọi code trong build); không thêm socket vào service `maven`.
   - Trong mạng Docker, app/maven kết nối `mysql:3306`, `artemis:61616`; `DB_PORT` trong `.env` chỉ là port mở ra máy host.
 - Swagger UI: `http://localhost:8080/swagger-ui.html` — chỉ dùng trên trình duyệt, **không** hardcode trong code/template.
+  - Chỉ bật ở profile `dev` (`springdoc.*.enabled` tắt trong `application.yml`, bật trong `application-dev.yml`); container `app` mặc định `SPRING_PROFILES_ACTIVE=dev`.
+  - Title/version + security scheme `basicAuth` khai báo ở `config/OpenApiConfig`. Controller mới thêm `@Tag` + `@Operation(summary = ...)`, tham số `Pageable` dùng `@ParameterObject`.
 
 ## 4. Kiến Trúc Mã Nguồn
 Kiến trúc 3 lớp, package gốc **`com.huuhv.socialanalytics`**:
@@ -70,7 +73,7 @@ com.huuhv.socialanalytics
 ├── entity/          # User, SocialAccount, Post, SocialMetric, ImportHistory ...
 ├── enums/           # Provider (FACEBOOK, TWITTER), ImportStatus, Role ...
 ├── repository/
-├── service/         # Toàn bộ business logic (interface + impl)
+├── service/         # Toàn bộ business logic — class @Service trực tiếp, không tách interface + impl
 ├── client/
 │   ├── social/      # SocialPlatformClient + FacebookMockClient, TwitterMockClient
 │   └── soap/        # Spring-WS client (WebServiceGatewaySupport)
@@ -84,6 +87,8 @@ com.huuhv.socialanalytics
 
 Luồng chuẩn: `Controller → Service → Repository`. Scheduler, JMS listener, WebSocket publisher cũng chỉ gọi **Service**, không gọi thẳng Repository.
 
+Service viết thẳng thành class (Spring proxy `@Transactional` bằng CGLIB, Mockito/`@MockitoBean` mock được class) — chỉ tạo interface khi thực sự có nhiều implementation (vd `SocialPlatformClient`). Không khai báo class/method `@Transactional` là `final` (CGLIB không override được). Service cần logic của service khác (vd kiểm tra quyền sở hữu) thì inject service đó, không lặp lại query.
+
 ## 5. Quy Chuẩn Code (BẮT BUỘC)
 
 ### 5.1. Dependency Injection
@@ -94,9 +99,12 @@ Luồng chuẩn: `Controller → Service → Repository`. Scheduler, JMS listene
 - Tên bảng số nhiều, snake_case (`users`, `social_accounts`, `posts`, `social_metrics`).
 - `@Entity` + `@Table(name = "...")`; Lombok `@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder`. **Không** dùng `@Data` trên Entity.
 - Mọi quan hệ để `FetchType.LAZY` (kể cả `@ManyToOne`, vì mặc định của nó là EAGER).
+- Quan hệ chỉ map một chiều `@ManyToOne` (`Post → User`, `SocialMetric → Post`); không thêm `@OneToMany` ngược — lấy danh sách con qua repository. Không override `equals`/`hashCode` trên Entity.
+- Entity có `created_at`/`updated_at` kế thừa `entity/AuditableEntity` (`@CreationTimestamp`/`@UpdateTimestamp` của Hibernate, không dùng JPA Auditing). Thời gian dùng `LocalDateTime` ↔ `DATETIME(6)`; enum lưu `@Enumerated(EnumType.STRING)` ↔ `VARCHAR`.
+- Xoá `Post` sẽ xoá snapshot `social_metrics` (FK `ON DELETE CASCADE`); `users → posts` không cascade.
 - Schema chỉ thay đổi qua Flyway migration (`V{n}__mo_ta.sql`), `spring.jpa.hibernate.ddl-auto=validate`. Không sửa migration đã commit — tạo version mới.
 - `SocialMetric` lưu dạng **snapshot theo thời gian** (mỗi lần crawl là 1 bản ghi có `collected_at`) để vẽ biểu đồ xu hướng; truy vấn "metric mới nhất" viết query riêng.
-- Thêm index cho các cột lọc/tra cứu thường xuyên (`posts.external_id` + `provider` unique, `social_metrics(post_id, collected_at)`).
+- Thêm index cho các cột lọc/tra cứu thường xuyên (`posts(user_id, provider, external_id)` unique — trùng bài chỉ tính trong phạm vi 1 user để không lộ dữ liệu user khác; `social_metrics(post_id, collected_at)`).
 
 ### 5.3. Logic & Tối ưu
 - Thin Controller: validate (`@Valid`), gọi Service, trả DTO/View. Không đặt loop/tính toán trong Controller.
@@ -104,11 +112,16 @@ Luồng chuẩn: `Controller → Service → Repository`. Scheduler, JMS listene
 - Dùng `@Query` với `LEFT JOIN FETCH` khi cần dữ liệu quan hệ để tránh N+1; dữ liệu tổng hợp cho chart dùng projection/DTO query (`SELECT new ...`), không load entity rồi cộng trong Java.
 - Tìm 1 bản ghi trả `Optional<T>`.
 - `@Transactional` đặt ở Service; method chỉ đọc dùng `@Transactional(readOnly = true)`.
+- Owner lấy qua `CurrentUserService.getCurrentUser()` (không nhận `userId` từ client). Thao tác theo id dùng repository method kèm điều kiện owner (`findByIdAndUserId`, `findByIdAndPostUserId`); không thuộc user → `ResourceNotFoundException` (404).
+- API danh sách nhận `Pageable` (size bị chặn bởi `app.pagination.*` qua `config/WebConfig`), Service lọc sort bằng `PageableUtils.withAllowedSort` (whitelist) và trả `PageResponse<T>` — không trả `Page`/`PageImpl` trực tiếp.
+- URL bài viết kiểm tra bằng `SocialUrlPolicy` (https + domain whitelist khai báo trong enum `Provider`).
+- Mapping Entity → DTO bằng static factory `XxxResponse.from(entity)`.
 
 ### 5.4. Xử Lý Lỗi
 - REST (`controller/api`): `ApiExceptionHandler` (`@RestControllerAdvice`) trả `ProblemDetail` (RFC 9457).
 - Web (`controller/web`): `WebExceptionHandler` (`@ControllerAdvice`) hoặc `RedirectAttributes` với flash message thân thiện.
 - Khi thêm exception nghiệp vụ mới, sửa đúng handler theo package của controller.
+- Exception nghiệp vụ hiện có: `ResourceNotFoundException` (404), `BadRequestException` (400), `DuplicateResourceException` (409), `AuthenticationRequiredException` (401). Lỗi `@Valid` trả 400 kèm `errors[{field, message}]`; exception không lường trước → 500 thông điệp chung + log.
 - Không trả stack trace / thông báo lỗi nội bộ ra client.
 
 ### 5.5. Logging
@@ -181,6 +194,8 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 ## 6. Hướng Dẫn Theo Từng Mảng
 
 ### 6.1. Security, CSRF & OAuth2 Login
+> **Trạng thái tạm thời (Task 1.4 → Task 3.1):** `config/SecurityConfig` đang `permitAll` cho `/api/**` và public Swagger (khi bật profile dev) để thử API; danh tính gửi bằng HTTP Basic (`spring.security.user.*` ← env `API_USER_NAME`/`API_USER_PASSWORD`, thiếu mật khẩu thì app không khởi động), `CurrentUserService` map username → `User.email`. User được tạo mới nếu chưa có bởi interceptor `/api/**` trong `config/WebConfig` (`provisionCurrentUserIfMissing()`, chạy **trước** transaction của Service để mỗi request chỉ giữ 1 connection); `getCurrentUser()` chỉ đọc, không tìm thấy user thì trả 401. Request ẩn danh bị Service từ chối 401. CSRF **vẫn bật** cho `/api/**` theo kiểu SPA (`csrf.spa()`): cookie `XSRF-TOKEN` → header `X-XSRF-TOKEN`. Task 3.1 phải gỡ bỏ các ngoại lệ này theo các quy tắc bên dưới.
+
 - **Giữ CSRF bật** cho cả web lẫn API (app dùng session sau OAuth2 login). Không `csrf.disable()` để "cho nhanh".
 - Form Thymeleaf dùng `th:action="@{...}"` để tự chèn hidden `_csrf`. JS `fetch`/upload đọc token từ `<meta name="_csrf">` + `<meta name="_csrf_header">` trong layout và gửi kèm header.
 - Swagger UI gọi API POST/PUT/DELETE cần bật `springdoc.swagger-ui.csrf.enabled=true`.
@@ -236,8 +251,8 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 ## 7. Testing
 - Cấu trúc test mirror package của `src/main`; tên class `XxxTest` (unit) / `XxxIT` (integration).
 - Service: JUnit 5 + Mockito (`@ExtendWith(MockitoExtension.class)`), không khởi động Spring context.
-- Controller: `@WebMvcTest` + `MockMvc` + `@MockitoBean` cho Service; test có POST phải kèm `.with(csrf())` và user giả lập (`@WithMockUser` hoặc `oauth2Login()`).
-- Repository: `@DataJpaTest` cho query custom (`@Query`, projection).
+- Controller: `@WebMvcTest` + `MockMvc` + `@MockitoBean` cho Service; test có POST phải kèm `.with(csrf())` và user giả lập (`@WithMockUser` hoặc `oauth2Login()`). Slice Boot 4 không tự nạp config của app → thêm `@Import({SecurityConfig.class, WebConfig.class})`.
+- Repository: `@DataJpaTest` cho query custom (`@Query`, projection), kèm `@AutoConfigureTestDatabase(replace = NONE)` + `@Import(TestcontainersConfiguration.class)` để chạy trên MySQL Testcontainers — không bao giờ chạy test ghi dữ liệu vào DB dev.
 - Excel: test importer/exporter với workbook tạo trong bộ nhớ (round-trip export → import).
 - Integration test cuối: `@SpringBootTest` chạy luồng import → JMS → cập nhật thống kê → WebSocket event. Ưu tiên Testcontainers (MySQL) nếu có Docker, vì migration viết cho MySQL.
 - Test bảo mật bắt buộc cho mỗi endpoint mới: chưa đăng nhập → 401/redirect login; thiếu CSRF → 403; truy cập tài nguyên của user khác → 403/404 (IDOR); input không hợp lệ → 400. Với Excel: file sai định dạng, quá dung lượng, chứa công thức (`=...`).
@@ -256,7 +271,7 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 
 ## 10. Lộ Trình & Trạng Thái
 Cập nhật checkbox khi hoàn thành từng giai đoạn để AI biết phạm vi hiện tại:
-- [ ] **1. Khởi tạo project**: cấu trúc nền, config, logging, JPA + MySQL + Flyway, entity `User`/`Post`/`SocialMetric`, CRUD `/api/posts`, `/api/metrics`, Swagger.
+- [x] **1. Khởi tạo project**: cấu trúc nền, config, logging, JPA + MySQL + Flyway, entity `User`/`Post`/`SocialMetric`, CRUD `/api/posts`, `/api/metrics`, Swagger.
 - [ ] **2. Unit Test + Excel**: test `PostService`, `MetricService`, controller; `/api/import-posts`, `/api/export-report`; Reflection mapping.
 - [ ] **3. Security + CSRF + Social Login**: Facebook & Twitter login → `/dashboard`, lưu token & user.
 - [ ] **4. Background Job & Multithread**: `updateSocialMetricsJob` mỗi giờ, mock API, màn hình "Last updated time".
