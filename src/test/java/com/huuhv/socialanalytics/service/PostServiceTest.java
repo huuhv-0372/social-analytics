@@ -64,7 +64,7 @@ class PostServiceTest {
 
         ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
         verify(postRepository).findByUserId(eq(OWNER_ID), captor.capture());
-        assertThat(captor.getValue().getSort()).isEqualTo(Sort.by(Sort.Direction.DESC, "createdAt"));
+        assertThat(captor.getValue().getSort()).containsExactly(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
         assertThat(result.content()).extracting(PostResponse::id).containsExactly(10L);
     }
 

@@ -6,6 +6,7 @@ import com.huuhv.socialanalytics.dto.response.PageResponse;
 import com.huuhv.socialanalytics.dto.response.PostResponse;
 import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.enums.Provider;
+import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.exception.DuplicateResourceException;
 import com.huuhv.socialanalytics.repository.PostRepository;
 import com.huuhv.socialanalytics.repository.UserRepository;
@@ -35,7 +36,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Chạy Service với transaction thật trên MySQL (không bọc test trong transaction): unit test dùng mock
- * không phát hiện được lỗi INSERT trong transaction READ ONLY hay vi phạm unique khi tạo user song song.
+ * không phát hiện được vi phạm unique khi tạo user song song hay lỗi khi Service đọc user chưa được tạo.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -64,8 +65,9 @@ class CurrentUserServiceTransactionTest {
     }
 
     @Test
-    void firstReadOnlyRequestOfNewUserProvisionsUser() {
+    void provisionedUserCanUseReadOnlyService() {
         authenticateAs("first@example.com");
+        currentUserService.provisionCurrentUserIfMissing();
 
         PageResponse<PostResponse> page = postService.findAll(PageRequest.of(0, 20));
 
@@ -80,6 +82,7 @@ class CurrentUserServiceTransactionTest {
             authenticateAs("race@example.com");
             try {
                 start.await();
+                currentUserService.provisionCurrentUserIfMissing();
                 return currentUserService.getCurrentUser().getId();
             } finally {
                 SecurityContextHolder.clearContext();
@@ -98,11 +101,22 @@ class CurrentUserServiceTransactionTest {
     }
 
     @Test
+    void notProvisionedUserIsRejected() {
+        authenticateAs("ghost@example.com");
+
+        assertThatThrownBy(() -> postService.findAll(PageRequest.of(0, 20)))
+                .isInstanceOf(AuthenticationRequiredException.class);
+        assertThat(userRepository.findByEmail("ghost@example.com")).isEmpty();
+    }
+
+    @Test
     void sameExternalIdIsDuplicateOnlyWithinOneUser() {
         authenticateAs("a@example.com");
+        currentUserService.provisionCurrentUserIfMissing();
         postService.create(request());
 
         authenticateAs("b@example.com");
+        currentUserService.provisionCurrentUserIfMissing();
         postService.create(request());
         assertThatThrownBy(() -> postService.create(request()))
                 .isInstanceOf(DuplicateResourceException.class);

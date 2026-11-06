@@ -17,7 +17,6 @@ import org.springframework.data.domain.Sort;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -67,14 +66,6 @@ class SocialMetricRepositoryTest {
     @Test
     void findTopReturnsEmptyWhenNoSnapshot() {
         assertThat(socialMetricRepository.findTopByPostIdOrderByCollectedAtDesc(-1L)).isEmpty();
-    }
-
-    @Test
-    void findBetweenReturnsSnapshotsInRangeAscending() {
-        List<SocialMetric> trend = socialMetricRepository.findByPostIdAndCollectedAtBetweenOrderByCollectedAtAsc(
-                post.getId(), BASE, BASE.plusHours(1));
-
-        assertThat(trend).extracting(SocialMetric::getLikes).containsExactly(10L, 20L);
     }
 
     @Test

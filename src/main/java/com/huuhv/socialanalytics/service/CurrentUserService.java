@@ -10,12 +10,16 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import java.util.Optional;
 
 /**
  * Xác định user đang đăng nhập từ SecurityContext. Không bao giờ tin userId do client gửi lên (OWASP A01).
  * <p>
- * TẠM THỜI (tới Epic 3): map principal của HTTP Basic sang {@link User} theo email = username,
- * chưa có thì tạo mới (just-in-time). Task 3.4 thay bằng mapping từ OAuth2 principal + SocialAccount.
+ * TẠM THỜI (tới Epic 3): map principal của HTTP Basic sang {@link User} theo email = username.
+ * User được tạo just-in-time bởi {@link #provisionCurrentUserIfMissing()} (gọi từ interceptor của {@code /api/**},
+ * trước mọi transaction); {@link #getCurrentUser()} chỉ đọc. Task 3.4 thay bằng mapping từ OAuth2 principal + SocialAccount.
  */
 @Service
 @RequiredArgsConstructor
@@ -25,29 +29,47 @@ public class CurrentUserService {
     private final UserProvisioningService userProvisioningService;
 
     /**
-     * Entity trả về có thể không thuộc persistence context hiện tại (khi vừa được tạo) — chỉ dùng id hoặc làm tham chiếu.
-     *
-     * @throws AuthenticationRequiredException khi request chưa đăng nhập
+     * @throws AuthenticationRequiredException khi request chưa đăng nhập hoặc user chưa được tạo (fail closed)
      */
     @Transactional(readOnly = true)
     public User getCurrentUser() {
+        String username = currentUsername().orElseThrow(AuthenticationRequiredException::new);
+        return userRepository.findByEmail(username).orElseThrow(AuthenticationRequiredException::new);
+    }
+
+    /**
+     * Tạo user cho principal hiện tại nếu chưa có; request ẩn danh thì bỏ qua (Service sẽ trả 401).
+     * <p>
+     * Phải gọi <b>ngoài</b> transaction: {@link UserProvisioningService} dùng {@code REQUIRES_NEW}, nếu chạy lồng trong
+     * transaction khác thì mỗi request giữ 2 connection cùng lúc và pool có thể deadlock khi tải cao.
+     */
+    public void provisionCurrentUserIfMissing() {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("User provisioning must run outside of a transaction");
+        }
+        currentUsername()
+                .filter(username -> userProvisioningService.findByEmail(username).isEmpty())
+                .ifPresent(this::provision);
+    }
+
+    private void provision(String username) {
+        try {
+            userProvisioningService.provision(username);
+        } catch (DataIntegrityViolationException e) {
+            // Request song song vừa tạo user cùng email (uk_users_email) → bản ghi đã tồn tại, coi như thành công
+            if (userProvisioningService.findByEmail(username).isEmpty()) {
+                throw e;
+            }
+        }
+    }
+
+    private static Optional<String> currentUsername() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null
                 || !authentication.isAuthenticated()
                 || authentication instanceof AnonymousAuthenticationToken) {
-            throw new AuthenticationRequiredException();
+            return Optional.empty();
         }
-        String username = authentication.getName();
-        return userRepository.findByEmail(username)
-                .orElseGet(() -> provision(username));
-    }
-
-    private User provision(String username) {
-        try {
-            return userProvisioningService.provision(username);
-        } catch (DataIntegrityViolationException e) {
-            // Request song song vừa tạo user cùng email (uk_users_email) → đọc lại bản ghi đã commit
-            return userProvisioningService.findByEmail(username).orElseThrow(() -> e);
-        }
+        return Optional.of(authentication.getName());
     }
 }

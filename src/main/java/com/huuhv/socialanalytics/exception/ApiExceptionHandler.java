@@ -10,10 +10,16 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.core.MethodParameter;
+import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import java.util.List;
@@ -86,6 +92,47 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 .toList();
         body.setProperty("errors", errors);
         return handleExceptionInternal(ex, body, headers, status, request);
+    }
+
+    /**
+     * Ràng buộc trên tham số method (vd {@code @RequestParam @Positive Long postId}) — trả cùng định dạng
+     * {@code errors[{field, message}]} như lỗi body. Lỗi validate giá trị trả về (5xx) giữ xử lý mặc định.
+     */
+    @Override
+    protected ResponseEntity<Object> handleHandlerMethodValidationException(HandlerMethodValidationException ex,
+                                                                            HttpHeaders headers,
+                                                                            HttpStatusCode status,
+                                                                            WebRequest request) {
+        if (!status.is4xxClientError()) {
+            return super.handleHandlerMethodValidationException(ex, headers, status, request);
+        }
+        ProblemDetail body = problem(HttpStatus.BAD_REQUEST, "Validation failed");
+        List<Map<String, String>> errors = ex.getParameterValidationResults().stream()
+                .flatMap(result -> result.getResolvableErrors().stream()
+                        .map(error -> Map.of(
+                                "field", error instanceof FieldError fieldError
+                                        ? fieldError.getField()
+                                        : parameterName(result.getMethodParameter()),
+                                "message", String.valueOf(error.getDefaultMessage()))))
+                .toList();
+        body.setProperty("errors", errors);
+        return handleExceptionInternal(ex, body, headers, status, request);
+    }
+
+    /** Tên client thấy: ưu tiên tên khai báo trong {@code @RequestParam}/{@code @PathVariable}/{@code @RequestHeader}. */
+    private static String parameterName(MethodParameter parameter) {
+        String declared = "";
+        RequestParam requestParam = parameter.getParameterAnnotation(RequestParam.class);
+        PathVariable pathVariable = parameter.getParameterAnnotation(PathVariable.class);
+        RequestHeader requestHeader = parameter.getParameterAnnotation(RequestHeader.class);
+        if (requestParam != null) {
+            declared = requestParam.name();
+        } else if (pathVariable != null) {
+            declared = pathVariable.name();
+        } else if (requestHeader != null) {
+            declared = requestHeader.name();
+        }
+        return declared.isEmpty() ? String.valueOf(parameter.getParameterName()) : declared;
     }
 
     @Override

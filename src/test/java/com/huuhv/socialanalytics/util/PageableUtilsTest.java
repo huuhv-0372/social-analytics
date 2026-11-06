@@ -22,14 +22,27 @@ class PageableUtilsTest {
 
         assertThat(result.getPageNumber()).isEqualTo(2);
         assertThat(result.getPageSize()).isEqualTo(10);
-        assertThat(result.getSort()).isEqualTo(DEFAULT_SORT);
+        assertThat(result.getSort()).isEqualTo(DEFAULT_SORT.and(Sort.by(Sort.Direction.DESC, "id")));
     }
 
     @Test
-    void keepsAllowedSort() {
-        Pageable pageable = PageRequest.of(0, 10, Sort.by("provider").ascending());
+    void keepsAllowedSortAndAppendsIdTieBreaker() {
+        Pageable pageable = PageRequest.of(3, 10, Sort.by("provider").ascending());
 
-        assertThat(PageableUtils.withAllowedSort(pageable, ALLOWED, DEFAULT_SORT)).isSameAs(pageable);
+        Pageable result = PageableUtils.withAllowedSort(pageable, ALLOWED, DEFAULT_SORT);
+
+        assertThat(result.getPageNumber()).isEqualTo(3);
+        assertThat(result.getPageSize()).isEqualTo(10);
+        assertThat(result.getSort()).containsExactly(Sort.Order.asc("provider"), Sort.Order.desc("id"));
+    }
+
+    @Test
+    void doesNotDuplicateIdWhenAlreadySorted() {
+        Set<String> allowedWithId = Set.of("provider", "id");
+        Pageable pageable = PageRequest.of(0, 10, Sort.by(Sort.Order.asc("id"), Sort.Order.asc("provider")));
+
+        assertThat(PageableUtils.withAllowedSort(pageable, allowedWithId, DEFAULT_SORT).getSort())
+                .containsExactly(Sort.Order.asc("id"), Sort.Order.asc("provider"));
     }
 
     @Test

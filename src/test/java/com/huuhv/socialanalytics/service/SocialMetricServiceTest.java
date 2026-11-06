@@ -80,7 +80,7 @@ class SocialMetricServiceTest {
         verify(postService).checkOwnedPost(10L);
         ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
         verify(socialMetricRepository).search(eq(10L), eq(null), eq(NOW), captor.capture());
-        assertThat(captor.getValue().getSort()).isEqualTo(Sort.by(Sort.Direction.DESC, "collectedAt"));
+        assertThat(captor.getValue().getSort()).containsExactly(Sort.Order.desc("collectedAt"), Sort.Order.desc("id"));
         assertThat(result.content()).extracting(SocialMetricResponse::id).containsExactly(5L);
     }
 

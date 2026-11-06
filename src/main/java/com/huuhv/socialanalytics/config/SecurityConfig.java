@@ -13,7 +13,6 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
@@ -21,6 +20,7 @@ import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.regex.Pattern;
 
 import static org.springframework.security.config.Customizer.withDefaults;
 
@@ -40,6 +40,8 @@ import static org.springframework.security.config.Customizer.withDefaults;
 // Đăng ký tường minh: test slice (@WebMvcTest) của Boot 4 không tự tạo bean SecurityProperties
 @EnableConfigurationProperties(SecurityProperties.class)
 public class SecurityConfig {
+
+    private static final Pattern ENCODED_PASSWORD = Pattern.compile("^\\{.+}.*$");
 
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -81,9 +83,12 @@ public class SecurityConfig {
         if (user.isPasswordGenerated()) {
             throw new IllegalStateException("API_USER_PASSWORD must be set (spring.security.user.password)");
         }
-        PasswordEncoder encoder = PasswordEncoderFactories.createDelegatingPasswordEncoder();
+        // Giá trị đã hash sẵn có tiền tố {id} (vd {bcrypt}$2a$...) dùng nguyên như Boot mặc định, không encode lần 2
+        String password = ENCODED_PASSWORD.matcher(user.getPassword()).matches()
+                ? user.getPassword()
+                : PasswordEncoderFactories.createDelegatingPasswordEncoder().encode(user.getPassword());
         return new InMemoryUserDetailsManager(User.withUsername(user.getName())
-                .password(encoder.encode(user.getPassword()))
+                .password(password)
                 .roles(user.getRoles().toArray(String[]::new))
                 .build());
     }

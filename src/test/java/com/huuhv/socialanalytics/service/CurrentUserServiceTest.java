@@ -15,10 +15,12 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -56,7 +58,7 @@ class CurrentUserServiceTest {
 
         assertThatThrownBy(() -> currentUserService.getCurrentUser())
                 .isInstanceOf(AuthenticationRequiredException.class);
-        verifyNoInteractions(userProvisioningService);
+        verifyNoInteractions(userRepository);
     }
 
     @Test
@@ -70,37 +72,76 @@ class CurrentUserServiceTest {
     }
 
     @Test
-    void provisionsUserOnFirstAccess() {
-        User created = User.builder().id(2L).email("new@example.com").displayName("new@example.com").build();
-        authenticateAs("new@example.com");
-        when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
-        when(userProvisioningService.provision("new@example.com")).thenReturn(created);
+    void getCurrentUserNeverProvisionsAndFailsClosedWhenUserMissing() {
+        authenticateAs("missing@example.com");
+        when(userRepository.findByEmail("missing@example.com")).thenReturn(Optional.empty());
 
-        assertThat(currentUserService.getCurrentUser()).isSameAs(created);
-        verify(userRepository, never()).save(any());
+        assertThatThrownBy(() -> currentUserService.getCurrentUser())
+                .isInstanceOf(AuthenticationRequiredException.class);
+        verifyNoInteractions(userProvisioningService);
     }
 
     @Test
-    void concurrentFirstAccessReadsUserCreatedByOtherRequest() {
-        User createdByOther = User.builder().id(3L).email("race@example.com").displayName("race").build();
+    void provisionSkipsAnonymousRequest() {
+        currentUserService.provisionCurrentUserIfMissing();
+
+        verifyNoInteractions(userProvisioningService);
+    }
+
+    @Test
+    void provisionSkipsExistingUser() {
+        authenticateAs("dev@example.com");
+        when(userProvisioningService.findByEmail("dev@example.com"))
+                .thenReturn(Optional.of(User.builder().id(1L).build()));
+
+        currentUserService.provisionCurrentUserIfMissing();
+
+        verify(userProvisioningService, never()).provision(any());
+    }
+
+    @Test
+    void provisionsUserOnFirstAccess() {
+        authenticateAs("new@example.com");
+        when(userProvisioningService.findByEmail("new@example.com")).thenReturn(Optional.empty());
+
+        currentUserService.provisionCurrentUserIfMissing();
+
+        verify(userProvisioningService).provision("new@example.com");
+    }
+
+    @Test
+    void concurrentFirstAccessToleratesUserCreatedByOtherRequest() {
         authenticateAs("race@example.com");
-        when(userRepository.findByEmail("race@example.com")).thenReturn(Optional.empty());
+        when(userProvisioningService.findByEmail("race@example.com"))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(User.builder().id(3L).build()));
         when(userProvisioningService.provision("race@example.com"))
                 .thenThrow(new DataIntegrityViolationException("uk_users_email"));
-        when(userProvisioningService.findByEmail("race@example.com")).thenReturn(Optional.of(createdByOther));
 
-        assertThat(currentUserService.getCurrentUser()).isSameAs(createdByOther);
+        assertThatCode(() -> currentUserService.provisionCurrentUserIfMissing()).doesNotThrowAnyException();
     }
 
     @Test
     void rethrowsWhenProvisioningFailsForOtherReason() {
         authenticateAs("bad@example.com");
-        when(userRepository.findByEmail("bad@example.com")).thenReturn(Optional.empty());
+        when(userProvisioningService.findByEmail("bad@example.com")).thenReturn(Optional.empty());
         DataIntegrityViolationException failure = new DataIntegrityViolationException("other constraint");
         when(userProvisioningService.provision("bad@example.com")).thenThrow(failure);
-        when(userProvisioningService.findByEmail("bad@example.com")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> currentUserService.getCurrentUser()).isSameAs(failure);
+        assertThatThrownBy(() -> currentUserService.provisionCurrentUserIfMissing()).isSameAs(failure);
+    }
+
+    @Test
+    void provisionRefusesToRunInsideTransaction() {
+        authenticateAs("dev@example.com");
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            assertThatThrownBy(() -> currentUserService.provisionCurrentUserIfMissing())
+                    .isInstanceOf(IllegalStateException.class);
+        } finally {
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+        verifyNoInteractions(userProvisioningService);
     }
 
     private static void authenticateAs(String username) {
