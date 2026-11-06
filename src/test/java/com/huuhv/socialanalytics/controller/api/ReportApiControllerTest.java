@@ -7,6 +7,7 @@ import com.huuhv.socialanalytics.excel.GenericExcelExporter;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.TooManyRequestsException;
 import com.huuhv.socialanalytics.service.CurrentUserService;
+import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.PostReportService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,7 +38,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // Không có tham số id → không có bề mặt IDOR; dữ liệu lọc theo owner trong query (PostRepositoryTest).
 // GET không đổi trạng thái → không cần CSRF; method ghi tới endpoint này không được hỗ trợ.
 @WebMvcTest(ReportApiController.class)
-@Import({SecurityConfig.class, WebConfig.class})
+@Import({SecurityConfig.class, WebConfig.class, CustomOAuth2UserService.class})
 @ActiveProfiles("test")
 class ReportApiControllerTest {
 

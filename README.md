@@ -58,6 +58,11 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
    2. *Facebook Login → Settings → Valid OAuth Redirect URIs*: thêm `http://localhost:8080/login/oauth2/code/facebook` (phải khớp chính xác, kể cả port).
    3. *App settings → Basic*: copy **App ID** → `FACEBOOK_CLIENT_ID`, **App Secret** → `FACEBOOK_CLIENT_SECRET` trong `.env`.
 
+   **Đăng nhập X (Twitter)** (bắt buộc — thiếu `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` thì app không khởi động):
+   1. Tạo Project + App tại [X Developer Portal](https://developer.x.com/en/portal/dashboard).
+   2. *User authentication settings*: App permissions **Read**, Type of App **Web App, Automated App or Bot** (confidential client), Callback URI `http://localhost:8080/login/oauth2/code/twitter`, Website URL bất kỳ.
+   3. *Keys and tokens → OAuth 2.0 Client ID and Client Secret*: copy vào `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` (không phải API Key / Secret của OAuth 1.0a).
+
 2. **Chạy** — chọn 1 trong 2 cách:
 
    **Cách A — Toàn bộ trong Docker (không cần JDK):**
@@ -81,7 +86,7 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
    Flyway tự tạo bảng khi app khởi động.
 
 3. Truy cập:
-   - Ứng dụng: http://localhost:8080 — bấm **Login with Facebook**, đăng nhập xong được chuyển về `/dashboard`
+   - Ứng dụng: http://localhost:8080 — bấm **Login with Facebook** hoặc **Login with X**, đăng nhập xong được chuyển về `/dashboard`
    - Swagger UI (chỉ profile `dev`, phải đăng nhập): http://localhost:8080/swagger-ui.html — trình duyệt hỏi tài khoản, nhập `API_USER_NAME` / `API_USER_PASSWORD` (tạm thời tới Task 3.4)
    - Artemis console: http://localhost:8161 (tài khoản `ARTEMIS_USER` / `ARTEMIS_PASSWORD`)
    - MySQL từ máy host (DBeaver, Workbench...): `localhost:33069` (theo `DB_PORT` trong `.env`)
@@ -173,7 +178,7 @@ src/main/resources/
 | `SESSION_COOKIE_SECURE` | — | Cookie session chỉ gửi qua HTTPS. Mặc định `true` (production); profile `dev`/`test` mặc định `false` vì chạy HTTP localhost |
 | `ARTEMIS_HOST` / `ARTEMIS_PORT` | — | Mặc định `localhost` / `61616` |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | ✅ | OAuth2 credentials (App ID / App Secret) từ Facebook Developers — xem Quick Start. Test dùng giá trị giả trong `application-test.yml` |
-| `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | Từ giai đoạn 3 | OAuth2 credentials từ X Developer Portal |
+| `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | ✅ | OAuth 2.0 Client ID / Secret từ X Developer Portal — xem Quick Start. Test dùng giá trị giả |
 
 > Không commit bất kỳ secret nào. Nếu lỡ commit, **thu hồi/đổi secret ngay** — xem [SECURITY.md](.github/SECURITY.md).
 
@@ -193,7 +198,7 @@ Schema hiện tại (`V1__init_schema.sql` + `V2__posts_unique_per_user.sql`):
 
 ## REST API
 
-Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); chỉ `/login`, `/oauth2/**` và static resource là public. Gọi `/api/**` khi chưa đăng nhập trả 401 `ProblemDetail`; trang web chưa đăng nhập được redirect về `/login`. Trang web đăng nhập bằng Facebook. Tạm thời (tới Task 3.4) API chỉ gọi được bằng **HTTP Basic** (`API_USER_NAME` / `API_USER_PASSWORD`) — user đăng nhập Facebook gọi `/api/**` nhận 401 cho tới khi tài khoản mạng xã hội được lưu vào DB. Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
+Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); chỉ `/login`, `/oauth2/**` và static resource là public. Gọi `/api/**` khi chưa đăng nhập trả 401 `ProblemDetail`; trang web chưa đăng nhập được redirect về `/login`. Trang web đăng nhập bằng Facebook hoặc X. Tạm thời (tới Task 3.4) API chỉ gọi được bằng **HTTP Basic** (`API_USER_NAME` / `API_USER_PASSWORD`) — user đăng nhập Facebook/X gọi `/api/**` nhận 401 cho tới khi tài khoản mạng xã hội được lưu vào DB. Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
 
 Đăng xuất: `POST /logout` (kèm CSRF) → redirect `/login?logout`, session bị huỷ. `GET /logout` không đăng xuất.
 

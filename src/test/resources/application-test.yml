@@ -12,6 +12,9 @@ spring:
           facebook:
             client-id: test-facebook-client-id
             client-secret: test-facebook-client-secret
+          twitter:
+            client-id: test-twitter-client-id
+            client-secret: test-twitter-client-secret
 
 server:
   servlet:

@@ -67,6 +67,8 @@ services:
       # biến đó cho mọi service, kể cả khi chỉ chạy test bằng service maven (test dùng giá trị giả trong application-test.yml)
       FACEBOOK_CLIENT_ID: ${FACEBOOK_CLIENT_ID:-}
       FACEBOOK_CLIENT_SECRET: ${FACEBOOK_CLIENT_SECRET:-}
+      TWITTER_CLIENT_ID: ${TWITTER_CLIENT_ID:-}
+      TWITTER_CLIENT_SECRET: ${TWITTER_CLIENT_SECRET:-}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     depends_on:

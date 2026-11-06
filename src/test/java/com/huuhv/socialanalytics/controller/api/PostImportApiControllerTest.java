@@ -5,6 +5,7 @@ import com.huuhv.socialanalytics.config.WebConfig;
 import com.huuhv.socialanalytics.dto.response.ImportResultResponse;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.service.CurrentUserService;
+import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.PostImportService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,7 +37,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 // Không có tham số id → không có bề mặt IDOR; owner luôn lấy từ principal trong PostImportService
 @WebMvcTest(PostImportApiController.class)
-@Import({SecurityConfig.class, WebConfig.class})
+@Import({SecurityConfig.class, WebConfig.class, CustomOAuth2UserService.class})
 @ActiveProfiles("test")
 class PostImportApiControllerTest {
 

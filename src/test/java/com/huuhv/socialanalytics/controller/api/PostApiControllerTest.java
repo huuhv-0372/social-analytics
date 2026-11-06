@@ -10,6 +10,7 @@ import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.DuplicateResourceException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
 import com.huuhv.socialanalytics.service.CurrentUserService;
+import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.PostService;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
@@ -57,7 +58,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(PostApiController.class)
-@Import({SecurityConfig.class, WebConfig.class})
+@Import({SecurityConfig.class, WebConfig.class, CustomOAuth2UserService.class})
 @ActiveProfiles("test")
 class PostApiControllerTest {
 

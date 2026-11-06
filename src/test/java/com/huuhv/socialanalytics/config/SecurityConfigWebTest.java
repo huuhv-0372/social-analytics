@@ -2,6 +2,7 @@ package com.huuhv.socialanalytics.config;
 
 import com.huuhv.socialanalytics.controller.web.LoginController;
 import com.huuhv.socialanalytics.service.CurrentUserService;
+import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,7 +39,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Cấu hình filter chain ở {@link SecurityConfig}: deny-by-default, entry point theo loại request, CSRF, logout, header.
  */
 @WebMvcTest(LoginController.class)
-@Import({SecurityConfig.class, WebConfig.class})
+@Import({SecurityConfig.class, WebConfig.class, CustomOAuth2UserService.class})
 @ActiveProfiles("test")
 class SecurityConfigWebTest {
 
@@ -81,9 +82,10 @@ class SecurityConfigWebTest {
     }
 
     @Test
-    void loginPageOffersFacebookLogin() throws Exception {
+    void loginPageOffersFacebookAndXLogin() throws Exception {
         mockMvc.perform(get("/login"))
-                .andExpect(content().string(containsString("href=\"/oauth2/authorization/facebook\"")));
+                .andExpect(content().string(containsString("href=\"/oauth2/authorization/facebook\"")))
+                .andExpect(content().string(containsString("href=\"/oauth2/authorization/twitter\"")));
     }
 
     @Test
@@ -106,8 +108,30 @@ class SecurityConfigWebTest {
                 .contains("scope=public_profile%20email")
                 .contains("state=")
                 .contains("redirect_uri=http://localhost/login/oauth2/code/facebook")
+                // PKCE mặc định cho cả confidential client (Spring Security 7)
+                .contains("code_challenge=")
+                .contains("code_challenge_method=S256")
                 // Client secret không bao giờ nằm trong URL trình duyệt
                 .doesNotContain("test-facebook-client-secret");
+    }
+
+    @Test
+    void xAuthorizationRequestUsesCustomProviderWithPkce() throws Exception {
+        String location = mockMvc.perform(get("/oauth2/authorization/twitter"))
+                .andExpect(status().isFound())
+                .andReturn().getResponse().getRedirectedUrl();
+
+        assertThat(location)
+                .startsWith("https://x.com/i/oauth2/authorize?")
+                .contains("response_type=code")
+                .contains("client_id=test-twitter-client-id")
+                .contains("scope=users.read%20tweet.read")
+                .contains("state=")
+                .contains("redirect_uri=http://localhost/login/oauth2/code/twitter")
+                // X bắt buộc PKCE; chỉ chấp nhận S256 thay vì plain
+                .contains("code_challenge=")
+                .contains("code_challenge_method=S256")
+                .doesNotContain("test-twitter-client-secret");
     }
 
     @Test

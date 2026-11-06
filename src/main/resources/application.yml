@@ -42,6 +42,26 @@ spring:
             client-secret: ${FACEBOOK_CLIENT_SECRET}
             # Quyền tối thiểu để đăng nhập (OWASP A01 — least privilege)
             scope: public_profile,email
+          # X (Twitter) không có trong CommonOAuth2Provider → khai báo thủ công (OAuth 2.0 Authorization Code + PKCE).
+          # Redirect URI: {baseUrl}/login/oauth2/code/twitter — khai báo y hệt ở X Developer Portal (Callback URI).
+          # App trên X phải là loại confidential ("Web App, Automated App or Bot") → client secret gửi qua HTTP Basic.
+          twitter:
+            provider: twitter
+            client-name: X
+            client-id: ${TWITTER_CLIENT_ID}
+            client-secret: ${TWITTER_CLIENT_SECRET}
+            client-authentication-method: client_secret_basic
+            authorization-grant-type: authorization_code
+            redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+            # GET /2/users/me cần cả users.read và tweet.read
+            scope: users.read,tweet.read
+        provider:
+          twitter:
+            authorization-uri: https://x.com/i/oauth2/authorize
+            token-uri: https://api.x.com/2/oauth2/token
+            user-info-uri: https://api.x.com/2/users/me
+            # Response {"data": {"id", "name", "username"}} — CustomOAuth2UserService bóc "data" trước khi đọc "id"
+            user-name-attribute: id
     # TẠM THỜI tới Task 3.4: user HTTP Basic để đăng nhập (chưa có OAuth2). Username dùng làm email của User (owner).
     # API_USER_PASSWORD bắt buộc: để trống thì app dừng khởi động (SecurityConfig), không sinh mật khẩu in ra log.
     user:
