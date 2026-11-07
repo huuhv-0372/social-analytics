@@ -16,6 +16,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.time.LocalDateTime;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -76,6 +78,41 @@ class SocialAccountRepositoryTest {
 
         assertThatThrownBy(() -> socialAccountRepository.saveAndFlush(account(other, Provider.FACEBOOK, "1234567890")))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void findAllIdsReturnsEveryAccountInIdOrder() {
+        User other = userRepository.save(User.builder().displayName("Other").build());
+        SocialAccount second = socialAccountRepository.saveAndFlush(account(other, Provider.TWITTER, "2244994945"));
+        Long first = socialAccountRepository
+                .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "1234567890").orElseThrow().getId();
+
+        assertThat(socialAccountRepository.findAllIds()).contains(first, second.getId()).isSorted();
+    }
+
+    @Test
+    void updateLastUpdatedAtChangesOnlyThatColumnOfThatAccount() {
+        User other = userRepository.save(User.builder().displayName("Other").build());
+        SocialAccount untouched = socialAccountRepository.saveAndFlush(account(other, Provider.TWITTER, "2244994945"));
+        SocialAccount target = socialAccountRepository
+                .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "1234567890").orElseThrow();
+        LocalDateTime updatedAtBefore = target.getUpdatedAt();
+        LocalDateTime at = LocalDateTime.of(2026, 11, 7, 3, 0, 0, 123_456_000);
+        entityManager.clear();
+
+        assertThat(socialAccountRepository.updateLastUpdatedAt(target.getId(), at)).isEqualTo(1);
+        entityManager.clear();
+
+        SocialAccount reloaded = socialAccountRepository.findById(target.getId()).orElseThrow();
+        assertThat(reloaded.getLastUpdatedAt()).isEqualTo(at);
+        assertThat(reloaded.getAccessToken()).isEqualTo("token-1234567890");
+        assertThat(reloaded.getUpdatedAt()).isEqualTo(updatedAtBefore);
+        assertThat(socialAccountRepository.findById(untouched.getId()).orElseThrow().getLastUpdatedAt()).isNull();
+    }
+
+    @Test
+    void updateLastUpdatedAtOfMissingAccountUpdatesNothing() {
+        assertThat(socialAccountRepository.updateLastUpdatedAt(-1L, LocalDateTime.now())).isZero();
     }
 
     private static SocialAccount account(User user, Provider provider, String providerUserId) {

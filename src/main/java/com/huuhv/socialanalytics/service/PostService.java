@@ -2,10 +2,12 @@ package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.dto.request.PostRequest;
 import com.huuhv.socialanalytics.dto.response.PageResponse;
+import com.huuhv.socialanalytics.dto.response.PostRef;
 import com.huuhv.socialanalytics.dto.response.PostReportRow;
 import com.huuhv.socialanalytics.dto.response.PostResponse;
 import com.huuhv.socialanalytics.entity.Post;
 import com.huuhv.socialanalytics.entity.User;
+import com.huuhv.socialanalytics.enums.Provider;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.DuplicateResourceException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
@@ -117,6 +119,23 @@ public class PostService {
     @Transactional(readOnly = true)
     public List<PostReportRow> findReportRows(Long ownerId, int limit) {
         return postRepository.findReportRows(ownerId, Limit.of(limit));
+    }
+
+    /**
+     * Bài của 1 user trên 1 provider cho job crawl metrics. Job chạy nền không có user đăng nhập: {@code userId} lấy
+     * từ tài khoản mạng xã hội đang crawl, không bao giờ từ client.
+     */
+    @Transactional(readOnly = true)
+    public List<PostRef> findPostRefs(Long userId, Provider provider) {
+        return postRepository.findRefsByUserIdAndProvider(userId, provider);
+    }
+
+    /**
+     * Reference tới bài viết theo id (không query) để gán khoá ngoại snapshot. Gọi trong transaction của caller; id
+     * phải đến từ dữ liệu nội bộ đã kiểm tra quyền (vd {@link #findPostRefs}), không từ client.
+     */
+    Post getReference(Long id) {
+        return postRepository.getReferenceById(id);
     }
 
     private static void validateUrl(PostRequest request) {

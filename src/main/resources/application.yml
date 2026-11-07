@@ -139,3 +139,12 @@ app:
       queue-capacity: 100
       # Tắt app: chờ task đang chạy tối đa khoảng này
       await-termination: 30s
+  jobs:
+    update-metrics:
+      # Crawl metrics mọi tài khoản (UpdateSocialMetricsJob). Cron Spring 6 trường: giây phút giờ ngày tháng thứ.
+      # Mặc định đầu mỗi giờ; "-" = tắt job
+      cron: "0 0 * * * *"
+      # Số bài mỗi lần gọi API mạng xã hội (tối đa 100)
+      batch-size: 100
+      # Chờ mọi tài khoản xong tối đa khoảng này (nhỏ hơn chu kỳ cron)
+      timeout: 50m

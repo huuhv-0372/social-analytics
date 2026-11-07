@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -35,6 +36,7 @@ public class SocialMetricService {
     private final SocialMetricRepository socialMetricRepository;
     private final PostService postService;
     private final CurrentUserService currentUserService;
+    private final SocialAccountService socialAccountService;
 
     @Transactional(readOnly = true)
     public PageResponse<SocialMetricResponse> findByPost(Long postId, LocalDateTime from, LocalDateTime to,
@@ -73,6 +75,31 @@ public class SocialMetricService {
                 .collectedAt(request.collectedAt())
                 .build());
         return SocialMetricResponse.from(saved);
+    }
+
+    /**
+     * Lưu kết quả crawl của 1 tài khoản: snapshot mới cho từng bài + {@code last_updated_at} của tài khoản trong
+     * <b>cùng 1 transaction</b> — lỗi giữa chừng thì không lưu gì, lần chạy sau làm lại (không có trạng thái nửa vời).
+     * Bài bị xoá trong lúc crawl làm vi phạm khoá ngoại → cả lô rollback, lần sau bài đó không còn trong danh sách.
+     *
+     * @param metrics      số liệu đã được validate (bài thuộc tài khoản, giá trị không âm)
+     * @param collectedAt  thời điểm lấy số liệu, múi giờ server (như snapshot nhập qua API)
+     * @param updatedAtUtc thời điểm ghi vào {@code social_accounts.last_updated_at}, giờ UTC
+     */
+    @Transactional
+    public void recordSnapshots(Long accountId, List<CrawledMetric> metrics, LocalDateTime collectedAt,
+                                LocalDateTime updatedAtUtc) {
+        socialMetricRepository.saveAll(metrics.stream()
+                .map(metric -> SocialMetric.builder()
+                        .post(postService.getReference(metric.postId()))
+                        .likes(metric.likes())
+                        .shares(metric.shares())
+                        .comments(metric.comments())
+                        .followers(metric.followers())
+                        .collectedAt(collectedAt)
+                        .build())
+                .toList());
+        socialAccountService.markMetricsUpdated(accountId, updatedAtUtc);
     }
 
     @Transactional

@@ -152,6 +152,32 @@ class AppPropertiesTest {
     }
 
     @Test
+    void bindsUpdateMetricsJobSettings() {
+        contextRunner.run(context -> assertThat(context.getBean(AppProperties.class).jobs().updateMetrics())
+                .isEqualTo(new AppProperties.UpdateMetrics(100, Duration.ofMinutes(50))));
+        contextRunner
+                .withPropertyValues("app.jobs.update-metrics.batch-size=20", "app.jobs.update-metrics.timeout=5m",
+                        // Cron đọc bằng placeholder trong @Scheduled — key lạ trong nhóm không làm hỏng binding
+                        "app.jobs.update-metrics.cron=0 */5 * * * *")
+                .run(context -> assertThat(context.getBean(AppProperties.class).jobs().updateMetrics())
+                        .isEqualTo(new AppProperties.UpdateMetrics(20, Duration.ofMinutes(5))));
+    }
+
+    @Test
+    void failsStartupWhenUpdateMetricsSettingsAreInvalid() {
+        // Client mạng xã hội nhận tối đa 100 id mỗi lần
+        contextRunner
+                .withPropertyValues("app.jobs.update-metrics.batch-size=101")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.jobs.update-metrics.batch-size=0")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.jobs.update-metrics.timeout=0s")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
     void bindsTokenEncryptionKey() {
         contextRunner.run(context -> assertThat(context.getBean(AppProperties.class).tokenEncryption().keyBytes())
                 .hasSize(32)

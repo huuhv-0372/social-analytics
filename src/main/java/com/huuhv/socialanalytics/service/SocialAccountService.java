@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
@@ -83,6 +84,32 @@ public class SocialAccountService {
             log.info("Created user {} for new {} account", account.getUser().getId(), provider);
         }
         return account.getUser();
+    }
+
+    /** Id mọi tài khoản — danh sách việc của job crawl metrics. */
+    @Transactional(readOnly = true)
+    public List<Long> findAllAccountIds() {
+        return socialAccountRepository.findAllIds();
+    }
+
+    /**
+     * Thông tin tài khoản cho job crawl (kèm access token đã giải mã — chỉ dùng nội bộ, không trả ra ngoài).
+     *
+     * @return rỗng khi tài khoản đã bị xoá kể từ lúc job lấy danh sách id
+     */
+    @Transactional(readOnly = true)
+    public Optional<CrawlAccount> findCrawlAccount(Long accountId) {
+        return socialAccountRepository.findById(accountId).map(CrawlAccount::from);
+    }
+
+    /**
+     * Ghi thời điểm crawl metrics thành công. Tham gia transaction của caller để cùng commit với snapshot.
+     *
+     * @param updatedAtUtc thời điểm, giờ UTC (cùng quy ước với {@code token_expires_at})
+     */
+    @Transactional
+    public void markMetricsUpdated(Long accountId, LocalDateTime updatedAtUtc) {
+        socialAccountRepository.updateLastUpdatedAt(accountId, updatedAtUtc);
     }
 
     /**

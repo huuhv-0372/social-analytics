@@ -175,6 +175,34 @@ class SocialAccountServiceTest {
         verifyNoInteractions(socialAccountRepository, userRepository);
     }
 
+    @Test
+    void findCrawlAccountMapsAccountWithDecryptedToken() {
+        User owner = User.builder().id(3L).displayName("Owner").build();
+        LocalDateTime expiresAt = LocalDateTime.of(2026, 12, 1, 0, 0);
+        when(socialAccountRepository.findById(7L)).thenReturn(Optional.of(SocialAccount.builder()
+                .id(7L).user(owner).provider(Provider.TWITTER).providerUserId("2244994945")
+                .accessToken("x-access-token").tokenExpiresAt(expiresAt).build()));
+
+        assertThat(service.findCrawlAccount(7L))
+                .contains(new CrawlAccount(7L, 3L, Provider.TWITTER, "x-access-token", expiresAt));
+    }
+
+    @Test
+    void findCrawlAccountOfDeletedAccountIsEmpty() {
+        when(socialAccountRepository.findById(7L)).thenReturn(Optional.empty());
+
+        assertThat(service.findCrawlAccount(7L)).isEmpty();
+    }
+
+    @Test
+    void markMetricsUpdatedWritesLastUpdatedAt() {
+        LocalDateTime at = LocalDateTime.of(2026, 11, 7, 3, 0);
+
+        service.markMetricsUpdated(7L, at);
+
+        verify(socialAccountRepository).updateLastUpdatedAt(7L, at);
+    }
+
     private void stubSaves() {
         when(userRepository.saveAndFlush(any(User.class))).thenAnswer(inv -> {
             User user = inv.getArgument(0);

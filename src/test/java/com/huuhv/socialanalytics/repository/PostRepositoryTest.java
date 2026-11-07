@@ -1,6 +1,7 @@
 package com.huuhv.socialanalytics.repository;
 
 import com.huuhv.socialanalytics.TestcontainersConfiguration;
+import com.huuhv.socialanalytics.dto.response.PostRef;
 import com.huuhv.socialanalytics.dto.response.PostReportRow;
 import com.huuhv.socialanalytics.entity.Post;
 import com.huuhv.socialanalytics.entity.SocialMetric;
@@ -178,6 +179,20 @@ class PostRepositoryTest {
                 owner.getId(), Provider.FACEBOOK, List.of("fb-1", "fb-3", "missing"));
 
         assertThat(found).extracting(Post::getExternalId).containsExactly("fb-1");
+    }
+
+    @Test
+    void postRefsContainOnlyPostsOfUserOnProvider() {
+        User owner = saveUser("owner@example.com");
+        User other = saveUser("other@example.com");
+        Post first = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));
+        Post second = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-2"));
+        postRepository.save(newPost(owner, Provider.TWITTER, "tw-1"));
+        postRepository.save(newPost(other, Provider.FACEBOOK, "fb-3"));
+
+        assertThat(postRepository.findRefsByUserIdAndProvider(owner.getId(), Provider.FACEBOOK))
+                .containsExactly(new PostRef(first.getId(), "fb-1"), new PostRef(second.getId(), "fb-2"));
+        assertThat(postRepository.findRefsByUserIdAndProvider(other.getId(), Provider.TWITTER)).isEmpty();
     }
 
     private void saveMetric(Post post, long likes, LocalDateTime collectedAt) {

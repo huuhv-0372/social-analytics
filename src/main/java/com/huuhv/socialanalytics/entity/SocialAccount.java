@@ -57,4 +57,8 @@ public class SocialAccount extends AuditableEntity {
 
     @Column(name = "token_expires_at")
     private LocalDateTime tokenExpiresAt;
+
+    // Lần crawl metrics thành công gần nhất (giờ UTC) — chỉ job ghi, qua SocialAccountService.markMetricsUpdated
+    @Column(name = "last_updated_at")
+    private LocalDateTime lastUpdatedAt;
 }

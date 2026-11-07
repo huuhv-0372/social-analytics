@@ -28,7 +28,8 @@ public record AppProperties(
         @Valid @DefaultValue @Name("import") ImportSettings importSettings,
         @Valid @DefaultValue @Name("export") ExportSettings exportSettings,
         @Valid @DefaultValue TokenEncryption tokenEncryption,
-        @Valid @DefaultValue AsyncSettings async) {
+        @Valid @DefaultValue AsyncSettings async,
+        @Valid @DefaultValue Jobs jobs) {
 
     /**
      * Key AES-256 mã hoá access token lưu DB (OWASP A04): Base64 của đúng 32 byte, lấy từ biến môi trường
@@ -136,6 +137,30 @@ public record AppProperties(
         @AssertTrue(message = "app.async.social-crawler.await-termination must not be negative")
         public boolean isAwaitTerminationNotNegative() {
             return awaitTermination == null || !awaitTermination.isNegative();
+        }
+    }
+
+    /**
+     * Background job ({@code app.jobs.*}). Lịch chạy (cron) đọc trực tiếp bằng placeholder trong {@code @Scheduled}
+     * nên không nằm trong record này.
+     */
+    public record Jobs(@Valid @DefaultValue UpdateMetrics updateMetrics) {
+    }
+
+    /**
+     * Job {@code updateSocialMetricsJob}.
+     *
+     * @param batchSize số bài mỗi lần gọi API mạng xã hội (không vượt giới hạn 100 id/lần của client)
+     * @param timeout   thời gian tối đa chờ mọi tài khoản crawl xong; quá hạn thì kết thúc lần chạy, tài khoản chưa
+     *                  xong tính là lỗi
+     */
+    public record UpdateMetrics(
+            @Positive @Max(100) @DefaultValue("100") int batchSize,
+            @NotNull @DefaultValue("50m") Duration timeout) {
+
+        @AssertTrue(message = "app.jobs.update-metrics.timeout must be positive")
+        public boolean isTimeoutPositive() {
+            return timeout == null || (!timeout.isNegative() && !timeout.isZero());
         }
     }
 }

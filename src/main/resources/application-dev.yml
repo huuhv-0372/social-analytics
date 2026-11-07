@@ -15,6 +15,12 @@ springdoc:
   swagger-ui:
     enabled: true
 
+# Dev: chạy job crawl metrics mỗi 5 phút để thấy dữ liệu nhanh (production: đầu mỗi giờ)
+app:
+  jobs:
+    update-metrics:
+      cron: "0 */5 * * * *"
+
 logging:
   level:
     com.huuhv.socialanalytics: DEBUG
