@@ -18,6 +18,10 @@ import java.util.function.Supplier;
  * </ul>
  * Khác {@code csrf.spa()} mặc định (header luôn so khớp raw nên token từ meta bị từ chối). Không tự viết thuật toán:
  * thử giải mask bằng {@link XorCsrfTokenRequestAttributeHandler}, không giải được (độ dài không khớp) thì so khớp raw.
+ * <p>
+ * Fail closed (OWASP A10): token đúng độ dài nhưng bị sửa có thể giải mask ra byte không phải UTF-8 — Spring Security
+ * ném {@link IllegalArgumentException} thay vì trả {@code null}. Bắt lại và coi như "không phải token đã mask" → so
+ * khớp raw thất bại → {@code CsrfFilter} trả 403 (được {@code LoggingAccessDeniedHandler} log), không thành lỗi 500.
  */
 final class CsrfHeaderOrFormTokenRequestHandler implements CsrfTokenRequestHandler {
 
@@ -32,7 +36,16 @@ final class CsrfHeaderOrFormTokenRequestHandler implements CsrfTokenRequestHandl
 
     @Override
     public String resolveCsrfTokenValue(HttpServletRequest request, CsrfToken csrfToken) {
-        String unmasked = xor.resolveCsrfTokenValue(request, csrfToken);
+        String unmasked = unmask(request, csrfToken);
         return unmasked != null ? unmasked : plain.resolveCsrfTokenValue(request, csrfToken);
+    }
+
+    private String unmask(HttpServletRequest request, CsrfToken csrfToken) {
+        try {
+            return xor.resolveCsrfTokenValue(request, csrfToken);
+        } catch (IllegalArgumentException e) {
+            // Utf8.decode thất bại với token bị sửa — không log giá trị token (CLAUDE.md 5.5)
+            return null;
+        }
     }
 }

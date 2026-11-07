@@ -6,6 +6,9 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.security.web.csrf.DefaultCsrfToken;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -51,10 +54,21 @@ class CsrfHeaderOrFormTokenRequestHandlerTest {
 
     @Test
     void tamperedMaskedTokenDoesNotResolveToRawToken() {
-        String masked = maskedToken();
-        String tampered = (masked.charAt(0) == 'A' ? 'B' : 'A') + masked.substring(1);
+        // Sửa 1 byte ở nửa "xored": giải mask ra ký tự ASCII khác → vẫn là UTF-8 hợp lệ nhưng sai token
+        byte[] bytes = Base64.getUrlDecoder().decode(maskedToken());
+        bytes[bytes.length - 1] ^= 0x01;
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/posts");
-        request.addHeader(HEADER, tampered);
+        request.addHeader(HEADER, Base64.getUrlEncoder().encodeToString(bytes));
+
+        assertThat(handler.resolveCsrfTokenValue(request, token)).isNotEqualTo(token.getToken());
+    }
+
+    @Test
+    void maskedTokenDecodingToInvalidUtf8IsRejectedInsteadOfThrowing() {
+        // Đúng độ dài token đã mask nhưng giải mask ra byte 0xFF (không phải UTF-8) — trước đây ném
+        // IllegalArgumentException ra khỏi CsrfFilter (500) thay vì từ chối (403)
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/posts");
+        request.addHeader(HEADER, invalidUtf8MaskedToken(token.getToken()));
 
         assertThat(handler.resolveCsrfTokenValue(request, token)).isNotEqualTo(token.getToken());
     }
@@ -93,6 +107,17 @@ class CsrfHeaderOrFormTokenRequestHandlerTest {
 
     private String maskedToken() {
         return maskedToken(token);
+    }
+
+    /**
+     * Token dạng đã mask ({@code Base64Url(random ‖ xored)}, mỗi nửa dài bằng token raw) với random = 0x00 và
+     * xored = 0xFF → giải mask ra toàn byte 0xFF, không phải UTF-8 hợp lệ.
+     */
+    static String invalidUtf8MaskedToken(String rawToken) {
+        int size = rawToken.getBytes(StandardCharsets.UTF_8).length;
+        byte[] bytes = new byte[size * 2];
+        Arrays.fill(bytes, size, bytes.length, (byte) 0xFF);
+        return Base64.getUrlEncoder().encodeToString(bytes);
     }
 
     /** Giá trị mà template nhận được (request attribute do {@code handle} đặt). */

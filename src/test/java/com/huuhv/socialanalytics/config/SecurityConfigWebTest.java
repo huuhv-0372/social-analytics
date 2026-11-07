@@ -252,5 +252,15 @@ class SecurityConfigWebTest {
                 .andExpect(status().isForbidden())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(403));
+
+        // Token dạng đã mask nhưng giải ra byte không phải UTF-8 → vẫn 403 (fail closed), không phải 500
+        mockMvc.perform(post("/api/posts").with(oauth2Login())
+                        .cookie(csrfCookie)
+                        .header("X-XSRF-TOKEN",
+                                CsrfHeaderOrFormTokenRequestHandlerTest.invalidUtf8MaskedToken(csrfCookie.getValue()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(403));
     }
 }
