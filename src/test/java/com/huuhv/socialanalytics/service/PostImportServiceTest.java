@@ -73,8 +73,8 @@ class PostImportServiceTest {
                 new AppProperties.Pagination(20, 100),
                 new AppProperties.ImportSettings(maxRows, DataSize.ofMegabytes(20)),
                 new AppProperties.ExportSettings(10000, Duration.ZERO),
-                // Service không dùng key mã hoá token
-                null);
+                // Service không dùng key mã hoá token, thread pool
+                null, null);
         return new PostImportService(new GenericExcelImporter(), new PostUpsertService(postRepository),
                 currentUserService, validator, properties);
     }

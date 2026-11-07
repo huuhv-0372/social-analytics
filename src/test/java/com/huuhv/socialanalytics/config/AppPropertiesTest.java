@@ -122,6 +122,36 @@ class AppPropertiesTest {
     }
 
     @Test
+    void bindsSocialCrawlerExecutorSettings() {
+        contextRunner.run(context -> assertThat(context.getBean(AppProperties.class).async().socialCrawler())
+                .isEqualTo(new AppProperties.SocialCrawler(4, 8, 100, Duration.ofSeconds(30))));
+        contextRunner
+                .withPropertyValues("app.async.social-crawler.core-pool-size=1",
+                        "app.async.social-crawler.max-pool-size=2",
+                        "app.async.social-crawler.queue-capacity=0",
+                        "app.async.social-crawler.await-termination=5s")
+                .run(context -> assertThat(context.getBean(AppProperties.class).async().socialCrawler())
+                        .isEqualTo(new AppProperties.SocialCrawler(1, 2, 0, Duration.ofSeconds(5))));
+    }
+
+    @Test
+    void failsStartupWhenSocialCrawlerSettingsAreInvalid() {
+        contextRunner
+                .withPropertyValues("app.async.social-crawler.core-pool-size=0")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.async.social-crawler.core-pool-size=9",
+                        "app.async.social-crawler.max-pool-size=8")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.async.social-crawler.queue-capacity=-1")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.async.social-crawler.await-termination=-1s")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
     void bindsTokenEncryptionKey() {
         contextRunner.run(context -> assertThat(context.getBean(AppProperties.class).tokenEncryption().keyBytes())
                 .hasSize(32)

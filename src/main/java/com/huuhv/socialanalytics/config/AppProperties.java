@@ -7,6 +7,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.boot.context.properties.bind.Name;
@@ -26,7 +27,8 @@ public record AppProperties(
         // "import" là từ khoá Java → đặt tên khác cho component, bind theo key app.import.*
         @Valid @DefaultValue @Name("import") ImportSettings importSettings,
         @Valid @DefaultValue @Name("export") ExportSettings exportSettings,
-        @Valid @DefaultValue TokenEncryption tokenEncryption) {
+        @Valid @DefaultValue TokenEncryption tokenEncryption,
+        @Valid @DefaultValue AsyncSettings async) {
 
     /**
      * Key AES-256 mã hoá access token lưu DB (OWASP A04): Base64 của đúng 32 byte, lấy từ biến môi trường
@@ -105,6 +107,35 @@ public record AppProperties(
         @AssertTrue(message = "app.export.min-interval must not be negative")
         public boolean isMinIntervalNotNegative() {
             return minInterval == null || !minInterval.isNegative();
+        }
+    }
+
+    /**
+     * Thread pool cho tác vụ chạy nền ({@code app.async.*}).
+     */
+    public record AsyncSettings(@Valid @DefaultValue SocialCrawler socialCrawler) {
+    }
+
+    /**
+     * Executor {@code socialCrawlerExecutor} crawl metrics song song theo tài khoản. Số thread và hàng đợi luôn có
+     * giới hạn (OWASP A06 — giới hạn tài nguyên).
+     *
+     * @param awaitTermination thời gian tối đa chờ task đang chạy hoàn tất khi tắt app
+     */
+    public record SocialCrawler(
+            @Positive @Max(64) @DefaultValue("4") int corePoolSize,
+            @Positive @Max(64) @DefaultValue("8") int maxPoolSize,
+            @PositiveOrZero @Max(10000) @DefaultValue("100") int queueCapacity,
+            @NotNull @DefaultValue("30s") Duration awaitTermination) {
+
+        @AssertTrue(message = "app.async.social-crawler.core-pool-size must not exceed max-pool-size")
+        public boolean isCorePoolSizeWithinMax() {
+            return corePoolSize <= maxPoolSize;
+        }
+
+        @AssertTrue(message = "app.async.social-crawler.await-termination must not be negative")
+        public boolean isAwaitTerminationNotNegative() {
+            return awaitTermination == null || !awaitTermination.isNegative();
         }
     }
 }

@@ -63,6 +63,14 @@ spring:
             # Response {"data": {"id", "name", "username"}} — CustomOAuth2UserService bóc "data" trước khi đọc "id"
             user-name-attribute: id
 
+  task:
+    execution:
+      # Khai báo socialCrawlerExecutor (AsyncConfig) làm Boot bỏ applicationTaskExecutor mặc định → "force" để giữ nó
+      # cho @Async không ghi tên executor và các tác vụ async khác của Spring
+      mode: force
+    scheduling:
+      thread-name-prefix: scheduler-
+
   artemis:
     broker-url: tcp://${ARTEMIS_HOST:localhost}:${ARTEMIS_PORT:61616}
     user: ${ARTEMIS_USER}
@@ -122,3 +130,12 @@ app:
     # Key AES-256 (Base64 của 32 byte) mã hoá access token lưu DB — bắt buộc, sinh bằng: openssl rand -base64 32
     # Thiếu/sai định dạng → app dừng khởi động. Đổi key → token cũ không giải mã được, user phải đăng nhập lại.
     key: ${TOKEN_ENCRYPTION_KEY:}
+  async:
+    # Thread pool socialCrawlerExecutor (AsyncConfig) crawl metrics song song theo tài khoản.
+    # Đủ max-pool-size thread và queue đầy → task chạy ngay trên thread gửi (CallerRunsPolicy), không bị bỏ.
+    social-crawler:
+      core-pool-size: 4
+      max-pool-size: 8
+      queue-capacity: 100
+      # Tắt app: chờ task đang chạy tối đa khoảng này
+      await-termination: 30s
