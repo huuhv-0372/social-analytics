@@ -9,6 +9,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Import;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.web.csrf.DefaultCsrfToken;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
@@ -248,6 +249,16 @@ class SecurityConfigWebTest {
         // Header không khớp cookie → 403; REST nhận ProblemDetail
         mockMvc.perform(post("/api/posts").with(oauth2Login())
                         .cookie(csrfCookie).header("X-XSRF-TOKEN", csrfCookie.getValue() + "x")
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(403));
+
+        // Token "đã mask" giả mạo, giải ra byte không phải UTF-8 → vẫn 403 (fail closed), không phải 500
+        String forged = CsrfHeaderOrFormTokenRequestHandlerTest.maskedTokenDecodingToInvalidUtf8(
+                new DefaultCsrfToken("X-XSRF-TOKEN", "_csrf", csrfCookie.getValue()));
+        mockMvc.perform(post("/api/posts").with(oauth2Login())
+                        .cookie(csrfCookie).header("X-XSRF-TOKEN", forged)
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isForbidden())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))

@@ -6,6 +6,9 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.security.web.csrf.DefaultCsrfToken;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -59,6 +62,17 @@ class CsrfHeaderOrFormTokenRequestHandlerTest {
         assertThat(handler.resolveCsrfTokenValue(request, token)).isNotEqualTo(token.getToken());
     }
 
+    // Trước đây XorCsrfTokenRequestAttributeHandler ném IllegalArgumentException ("Decoding failed") → 500
+    @Test
+    void maskedTokenDecodingToInvalidUtf8IsRejectedWithoutException() {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/posts");
+        request.addHeader(HEADER, maskedTokenDecodingToInvalidUtf8(token));
+
+        assertThat(handler.resolveCsrfTokenValue(request, token))
+                .isNotNull()
+                .isNotEqualTo(token.getToken());
+    }
+
     @Test
     void wrongRawTokenDoesNotResolveToRawToken() {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/posts");
@@ -93,6 +107,17 @@ class CsrfHeaderOrFormTokenRequestHandlerTest {
 
     private String maskedToken() {
         return maskedToken(token);
+    }
+
+    /**
+     * Giá trị có đúng định dạng token đã mask (Base64 URL của {@code random ‖ random XOR token}, mỗi phần dài bằng
+     * token) nhưng XOR ra toàn byte {@code 0xFF} — không phải UTF-8 hợp lệ. Dùng chung với {@code SecurityConfigWebTest}.
+     */
+    static String maskedTokenDecodingToInvalidUtf8(CsrfToken source) {
+        int size = source.getToken().getBytes(StandardCharsets.UTF_8).length;
+        byte[] bytes = new byte[size * 2];
+        Arrays.fill(bytes, size, bytes.length, (byte) 0xFF);
+        return Base64.getUrlEncoder().encodeToString(bytes);
     }
 
     /** Giá trị mà template nhận được (request attribute do {@code handle} đặt). */
