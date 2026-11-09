@@ -20,7 +20,9 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.time.LocalDateTime;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 
@@ -46,7 +48,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 class SocialMetricApiControllerTest {
 
-    private static final LocalDateTime COLLECTED_AT = LocalDateTime.of(2026, 1, 1, 12, 0);
+    private static final Instant COLLECTED_AT = Instant.parse("2026-01-01T12:00:00Z");
 
     @Autowired
     private MockMvc mockMvc;
@@ -60,11 +62,11 @@ class SocialMetricApiControllerTest {
 
     @Test
     void listParsesIsoDateRange() throws Exception {
-        LocalDateTime from = LocalDateTime.of(2026, 1, 1, 0, 0);
+        Instant from = Instant.parse("2026-01-01T00:00:00Z");
         when(socialMetricService.findByPost(eq(10L), eq(from), eq(null), any(Pageable.class)))
                 .thenReturn(new PageResponse<>(List.of(response(5L)), 0, 20, 1, 1));
 
-        mockMvc.perform(get("/api/metrics").param("postId", "10").param("from", "2026-01-01T00:00:00")
+        mockMvc.perform(get("/api/metrics").param("postId", "10").param("from", "2026-01-01T00:00:00Z")
                         .with(oauth2Login()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].id").value(5))
@@ -99,12 +101,20 @@ class SocialMetricApiControllerTest {
     }
 
     @Test
+    void listWithDateWithoutTimeZoneReturns400() throws Exception {
+        mockMvc.perform(get("/api/metrics").param("postId", "10").param("from", "2026-01-01T00:00:00")
+                        .with(oauth2Login()))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(socialMetricService);
+    }
+
+    @Test
     void listWithInvertedRangeReturns400() throws Exception {
         when(socialMetricService.findByPost(eq(10L), any(), any(), any(Pageable.class)))
                 .thenThrow(new BadRequestException("from must not be after to"));
 
         mockMvc.perform(get("/api/metrics").param("postId", "10")
-                        .param("from", "2026-02-01T00:00:00").param("to", "2026-01-01T00:00:00")
+                        .param("from", "2026-02-01T00:00:00Z").param("to", "2026-01-01T00:00:00Z")
                         .with(oauth2Login()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail").value("from must not be after to"));
@@ -137,7 +147,7 @@ class SocialMetricApiControllerTest {
         mockMvc.perform(get("/api/metrics/latest").param("postId", "10").with(oauth2Login()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(7))
-                .andExpect(jsonPath("$.collectedAt").value("2026-01-01T12:00:00"));
+                .andExpect(jsonPath("$.collectedAt").value("2026-01-01T12:00:00Z"));
     }
 
     @Test
@@ -171,7 +181,7 @@ class SocialMetricApiControllerTest {
     void createReturns201WithLocation() throws Exception {
         when(socialMetricService.create(any(SocialMetricRequest.class))).thenReturn(response(5L));
         String body = """
-                {"postId":10,"likes":100,"shares":10,"comments":20,"followers":1000,"collectedAt":"2026-01-01T12:00:00"}
+                {"postId":10,"likes":100,"shares":10,"comments":20,"followers":1000,"collectedAt":"2026-01-01T12:00:00Z"}
                 """;
 
         mockMvc.perform(post("/api/metrics").with(oauth2Login()).with(csrf())
@@ -183,7 +193,7 @@ class SocialMetricApiControllerTest {
     @Test
     void createWithNegativeCountReturns400() throws Exception {
         String body = """
-                {"postId":10,"likes":-1,"shares":10,"comments":20,"followers":1000,"collectedAt":"2026-01-01T12:00:00"}
+                {"postId":10,"likes":-1,"shares":10,"comments":20,"followers":1000,"collectedAt":"2026-01-01T12:00:00Z"}
                 """;
 
         mockMvc.perform(post("/api/metrics").with(oauth2Login()).with(csrf())
@@ -195,21 +205,17 @@ class SocialMetricApiControllerTest {
 
     @Test
     void createWithFutureCollectedAtReturns400() throws Exception {
-        String body = """
-                {"postId":10,"likes":1,"shares":1,"comments":1,"followers":1,"collectedAt":"2999-01-01T00:00:00"}
-                """;
-
         mockMvc.perform(post("/api/metrics").with(oauth2Login()).with(csrf())
-                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                        .contentType(MediaType.APPLICATION_JSON).content(metricBody("2999-01-01T00:00:00Z")))
                 .andExpect(status().isBadRequest());
         verifyNoInteractions(socialMetricService);
     }
 
     @Test
-    void createAcceptsCurrentLocalTimeOfClientAheadOfServer() throws Exception {
+    void createAcceptsCurrentTimeWithOffset() throws Exception {
         when(socialMetricService.create(any(SocialMetricRequest.class))).thenReturn(response(5L));
-        // "Bây giờ" của client ở múi giờ đi trước xa nhất — hợp lệ dù server chạy múi giờ nào
-        LocalDateTime clientNow = LocalDateTime.now(ZoneOffset.ofHours(14)).withNano(0);
+        // "Bây giờ" của client ở +07:00 — cùng thời điểm với server dù server chạy múi giờ nào
+        String clientNow = OffsetDateTime.now(ZoneOffset.ofHours(7)).minusSeconds(1).withNano(0).toString();
 
         mockMvc.perform(post("/api/metrics").with(oauth2Login()).with(csrf())
                         .contentType(MediaType.APPLICATION_JSON).content(metricBody(clientNow)))
@@ -217,8 +223,9 @@ class SocialMetricApiControllerTest {
     }
 
     @Test
-    void createBeyondEveryTimeZoneReturns400() throws Exception {
-        LocalDateTime future = LocalDateTime.now(ZoneOffset.ofHours(14)).plusHours(2).withNano(0);
+    void createAnHourInTheFutureReturns400() throws Exception {
+        // Trước đây sai số 14 tiếng (LocalDateTime) cho qua giá trị này và nó thành snapshot "mới nhất"
+        String future = Instant.now().plus(Duration.ofHours(1)).toString();
 
         mockMvc.perform(post("/api/metrics").with(oauth2Login()).with(csrf())
                         .contentType(MediaType.APPLICATION_JSON).content(metricBody(future)))
@@ -227,7 +234,16 @@ class SocialMetricApiControllerTest {
         verifyNoInteractions(socialMetricService);
     }
 
-    private static String metricBody(LocalDateTime collectedAt) {
+    @Test
+    void createWithoutTimeZoneReturns400() throws Exception {
+        // Client quên đổi sang UTC → 400 ngay, không lưu sai giờ
+        mockMvc.perform(post("/api/metrics").with(oauth2Login()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(metricBody("2026-01-01T12:00:00")))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(socialMetricService);
+    }
+
+    private static String metricBody(String collectedAt) {
         return """
                 {"postId":10,"likes":1,"shares":1,"comments":1,"followers":1,"collectedAt":"%s"}
                 """.formatted(collectedAt);
@@ -258,7 +274,7 @@ class SocialMetricApiControllerTest {
     @Test
     void writeWithoutCsrfTokenReturns403() throws Exception {
         String body = """
-                {"postId":10,"likes":1,"shares":1,"comments":1,"followers":1,"collectedAt":"2026-01-01T12:00:00"}
+                {"postId":10,"likes":1,"shares":1,"comments":1,"followers":1,"collectedAt":"2026-01-01T12:00:00Z"}
                 """;
 
         mockMvc.perform(post("/api/metrics").with(oauth2Login())

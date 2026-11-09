@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import java.time.Duration;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -67,6 +68,19 @@ class ReportApiControllerTest {
                 .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION,
                         "attachment; filename=\"posts-report-20260101-090000.xlsx\""))
                 .andExpect(content().bytes(content));
+    }
+
+    @Test
+    void exportUsesConfiguredAsyncTimeoutInsteadOfContainerDefault() throws Exception {
+        when(postReportService.exportReport())
+                .thenReturn(new ExportFile("posts-report-20260101-090000.xlsx", out -> out.write(1)));
+
+        MvcResult started = mockMvc.perform(get("/api/export-report").with(oauth2Login()))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+
+        // spring.mvc.async.request-timeout (60s) áp vào request async của StreamingResponseBody, không phải 30s của Tomcat
+        assertThat(started.getRequest().getAsyncContext().getTimeout()).isEqualTo(Duration.ofSeconds(60).toMillis());
     }
 
     // Không stub Service: chứng minh request ẩn danh bị filter chain chặn trước khi tới Service

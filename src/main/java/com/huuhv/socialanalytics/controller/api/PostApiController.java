@@ -31,7 +31,7 @@ public class PostApiController {
 
     private final PostService postService;
 
-    @Operation(summary = "Danh sách bài viết (phân trang, size tối đa theo app.pagination.max-size)")
+    @Operation(summary = "Danh sách bài viết (phân trang, size mặc định 20, tối đa 100)")
     @GetMapping
     public PageResponse<PostResponse> list(@ParameterObject Pageable pageable) {
         return postService.findAll(pageable);

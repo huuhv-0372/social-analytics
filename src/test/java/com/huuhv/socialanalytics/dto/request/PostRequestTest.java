@@ -3,7 +3,7 @@ package com.huuhv.socialanalytics.dto.request;
 import com.huuhv.socialanalytics.enums.Provider;
 import org.junit.jupiter.api.Test;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -12,9 +12,9 @@ class PostRequestTest {
     @Test
     void truncatesPublishedAtToSecondsSoExcelRoundTripKeepsValue() {
         PostRequest request = new PostRequest(Provider.FACEBOOK, "fb-1", "https://facebook.com/posts/1", null,
-                LocalDateTime.of(2026, 1, 1, 10, 0, 0, 123_456_000));
+                Instant.parse("2026-01-01T10:00:00.123456Z"));
 
-        assertThat(request.publishedAt()).isEqualTo(LocalDateTime.of(2026, 1, 1, 10, 0, 0));
+        assertThat(request.publishedAt()).isEqualTo(Instant.parse("2026-01-01T10:00:00Z"));
     }
 
     @Test

@@ -33,7 +33,6 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,7 +52,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class OwnershipIsolationTest {
 
-    private static final LocalDateTime COLLECTED_AT = LocalDateTime.of(2026, 1, 1, 0, 0);
+    private static final Instant COLLECTED_AT = Instant.parse("2026-01-01T00:00:00Z");
 
     @Autowired
     private SocialAccountService socialAccountService;

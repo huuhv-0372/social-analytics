@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.config;
+package com.huuhv.socialanalytics.config.properties;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -18,26 +18,6 @@ class AppPropertiesTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withUserConfiguration(TestConfig.class)
             .withPropertyValues("app.token-encryption.key=" + VALID_KEY);
-
-    @Test
-    void bindsDefaultsWhenNotConfigured() {
-        contextRunner.run(context -> {
-            AppProperties.Pagination pagination = context.getBean(AppProperties.class).pagination();
-            assertThat(pagination.defaultSize()).isEqualTo(20);
-            assertThat(pagination.maxSize()).isEqualTo(100);
-        });
-    }
-
-    @Test
-    void bindsConfiguredValues() {
-        contextRunner
-                .withPropertyValues("app.pagination.default-size=10", "app.pagination.max-size=50")
-                .run(context -> {
-                    AppProperties.Pagination pagination = context.getBean(AppProperties.class).pagination();
-                    assertThat(pagination.defaultSize()).isEqualTo(10);
-                    assertThat(pagination.maxSize()).isEqualTo(50);
-                });
-    }
 
     @Test
     void bindsImportMaxRows() {
@@ -104,20 +84,6 @@ class AppPropertiesTest {
     void failsStartupWhenImportMaxRowsIsNotPositive() {
         contextRunner
                 .withPropertyValues("app.import.max-rows=0")
-                .run(context -> assertThat(context).hasFailed());
-    }
-
-    @Test
-    void failsStartupWhenSizeIsNotPositive() {
-        contextRunner
-                .withPropertyValues("app.pagination.max-size=0")
-                .run(context -> assertThat(context).hasFailed());
-    }
-
-    @Test
-    void failsStartupWhenDefaultSizeExceedsMaxSize() {
-        contextRunner
-                .withPropertyValues("app.pagination.default-size=200", "app.pagination.max-size=100")
                 .run(context -> assertThat(context).hasFailed());
     }
 

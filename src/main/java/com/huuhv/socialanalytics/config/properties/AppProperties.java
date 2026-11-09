@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.config;
+package com.huuhv.socialanalytics.config.properties;
 
 import com.huuhv.socialanalytics.util.AesGcmCipher;
 import jakarta.validation.Valid;
@@ -18,11 +18,11 @@ import java.util.Base64;
 
 /**
  * Cấu hình riêng của ứng dụng, prefix {@code app.*}. Sai giá trị → app không khởi động (fail fast).
+ * Giới hạn phân trang dùng {@code spring.data.web.pageable.*} của Boot, không khai ở đây.
  */
 @Validated
 @ConfigurationProperties(prefix = "app")
 public record AppProperties(
-        @Valid @DefaultValue Pagination pagination,
         // "import" là từ khoá Java → đặt tên khác cho component, bind theo key app.import.*
         @Valid @DefaultValue @Name("import") ImportSettings importSettings,
         @Valid @DefaultValue @Name("export") ExportSettings exportSettings,
@@ -62,19 +62,6 @@ public record AppProperties(
         @Override
         public String toString() {
             return "TokenEncryption[key=******]";
-        }
-    }
-
-    /**
-     * Giới hạn phân trang cho API danh sách (OWASP A06 — giới hạn tài nguyên).
-     */
-    public record Pagination(
-            @Positive @DefaultValue("20") int defaultSize,
-            @Positive @Max(1000) @DefaultValue("100") int maxSize) {
-
-        @AssertTrue(message = "app.pagination.default-size must not exceed app.pagination.max-size")
-        public boolean isDefaultSizeWithinMax() {
-            return defaultSize <= maxSize;
         }
     }
 

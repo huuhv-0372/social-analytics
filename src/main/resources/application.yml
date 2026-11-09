@@ -30,6 +30,18 @@ spring:
       # Parse multipart khi controller đọc tham số → lỗi quá dung lượng do ApiExceptionHandler xử lý (ProblemDetail)
       resolve-lazily: true
 
+  mvc:
+    async:
+      # Request async (StreamingResponseBody của /api/export-report): tính cả lúc dựng file lẫn lúc client tải về.
+      # Mặc định 30s của Tomcat cắt ngang khi tải báo cáo lớn (gần app.export.max-rows) qua mạng chậm → file .xlsx hỏng.
+      # Không đặt quá dài: mỗi lượt tải chậm giữ 1 thread của executor async trong suốt thời gian này.
+      # Cơ sở chọn 60s (đo 10.000 dòng = app.export.max-rows; SXSSF dựng xong file rồi mới ghi → thời gian = dựng + tải):
+      #   - Dữ liệu thực tế (content ~200 ký tự): file ~0,5 MB, dựng ~6s, tải ~4s ở 1 Mbps → dư nhiều.
+      #   - Xấu nhất (mọi cột chạm giới hạn validate, content 5000 ký tự): ~45 MB, dựng ~29s → cần mạng > ~10 Mbps.
+      #     Chấp nhận không phủ trường hợp này (lớn hơn dữ liệu thực tế ~80 lần); nếu cần thì giảm app.export.max-rows
+      #     thay vì kéo timeout lên vài phút.
+      request-timeout: 60s
+
   security:
     oauth2:
       client:
@@ -68,7 +80,19 @@ spring:
     user: ${ARTEMIS_USER}
     password: ${ARTEMIS_PASSWORD}
 
+  data:
+    web:
+      pageable:
+        # Giới hạn size của tham số Pageable — vượt thì bị hạ xuống giá trị này (OWASP A06). Size mặc định 20 của Boot.
+        max-page-size: 100
+
 server:
+  # Chạy sau reverse proxy / load balancer kết thúc HTTPS: đặt FORWARD_HEADERS_STRATEGY=native để scheme/host
+  # (link Location, cờ Secure của cookie) lấy từ X-Forwarded-*. Để trống khi không có proxy tin cậy đứng trước —
+  # nếu bật, client có thể giả header này. Trống = Boot tự nhận diện nền tảng (vd Kubernetes → native).
+  # Tomcat chỉ tin X-Forwarded-* từ proxy có IP nội bộ (10/8, 172.16/12, 192.168/16, 127/8...); proxy IP khác thì
+  # khai thêm server.tomcat.remoteip.internal-proxies.
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:}
   servlet:
     session:
       timeout: 30m
@@ -103,11 +127,9 @@ logging:
     root: INFO
     com.huuhv.socialanalytics: INFO
 
-# Cấu hình riêng của ứng dụng — bind vào com.huuhv.socialanalytics.config.AppProperties
+# Cấu hình riêng của ứng dụng — bind vào com.huuhv.socialanalytics.config.properties.AppProperties
+# (giới hạn phân trang dùng spring.data.web.pageable.* của Boot ở trên, không khai trong app.*)
 app:
-  pagination:
-    default-size: 20
-    max-size: 100
   import:
     # Số dòng dữ liệu tối đa mỗi file import Excel
     max-rows: 1000
