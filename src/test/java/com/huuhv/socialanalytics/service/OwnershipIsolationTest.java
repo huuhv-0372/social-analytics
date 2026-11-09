@@ -49,7 +49,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Import({TestcontainersConfiguration.class, ClockConfig.class, CryptoConfig.class, SocialAccountService.class,
-        CurrentUserService.class, PostService.class, SocialMetricService.class})
+        CurrentUserService.class, PostService.class, SocialMetricService.class, DashboardService.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class OwnershipIsolationTest {
 
@@ -63,6 +63,9 @@ class OwnershipIsolationTest {
 
     @Autowired
     private SocialMetricService socialMetricService;
+
+    @Autowired
+    private DashboardService dashboardService;
 
     @Autowired
     private SocialMetricRepository socialMetricRepository;
@@ -139,6 +142,18 @@ class OwnershipIsolationTest {
         assertNotFound(() -> socialMetricService.delete(ownersMetric.id()));
 
         assertThat(socialMetricRepository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void otherUserDoesNotSeeLastUpdatedTimeOfOwner() {
+        Long ownersAccountId = socialAccountRepository
+                .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "111").orElseThrow().getId();
+        socialAccountService.markMetricsUpdated(ownersAccountId, LocalDateTime.of(2026, 11, 7, 3, 0));
+
+        assertThat(dashboardService.findLastUpdatedAt()).isEmpty();
+
+        authenticate(owner);
+        assertThat(dashboardService.findLastUpdatedAt()).isPresent();
     }
 
     @Test

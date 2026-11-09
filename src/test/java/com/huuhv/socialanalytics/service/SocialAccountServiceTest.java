@@ -203,6 +203,14 @@ class SocialAccountServiceTest {
         verify(socialAccountRepository).updateLastUpdatedAt(7L, at);
     }
 
+    @Test
+    void findLastMetricsUpdatedAtQueriesByUser() {
+        LocalDateTime at = LocalDateTime.of(2026, 11, 7, 3, 0);
+        when(socialAccountRepository.findMaxLastUpdatedAtByUserId(7L)).thenReturn(Optional.of(at));
+
+        assertThat(service.findLastMetricsUpdatedAt(7L)).contains(at);
+    }
+
     private void stubSaves() {
         when(userRepository.saveAndFlush(any(User.class))).thenAnswer(inv -> {
             User user = inv.getArgument(0);

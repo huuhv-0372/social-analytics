@@ -33,4 +33,12 @@ public interface SocialAccountRepository extends JpaRepository<SocialAccount, Lo
     @Modifying
     @Query("UPDATE SocialAccount sa SET sa.lastUpdatedAt = :updatedAt WHERE sa.id = :id")
     int updateLastUpdatedAt(@Param("id") Long id, @Param("updatedAt") LocalDateTime updatedAt);
+
+    /**
+     * Lần crawl metrics thành công gần nhất trong các tài khoản <b>của 1 user</b> (giờ UTC).
+     *
+     * @return rỗng khi user chưa có tài khoản nào được crawl ({@code MAX} trên toàn {@code NULL})
+     */
+    @Query("SELECT MAX(sa.lastUpdatedAt) FROM SocialAccount sa WHERE sa.user.id = :userId")
+    Optional<LocalDateTime> findMaxLastUpdatedAtByUserId(@Param("userId") Long userId);
 }

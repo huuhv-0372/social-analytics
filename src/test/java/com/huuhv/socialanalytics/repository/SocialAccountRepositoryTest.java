@@ -111,6 +111,30 @@ class SocialAccountRepositoryTest {
     }
 
     @Test
+    void maxLastUpdatedAtIsTakenOnlyFromAccountsOfThatUser() {
+        SocialAccount ownerFacebook = socialAccountRepository
+                .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "1234567890").orElseThrow();
+        SocialAccount ownerTwitter = socialAccountRepository.saveAndFlush(account(owner, Provider.TWITTER, "111"));
+        User other = userRepository.save(User.builder().displayName("Other").build());
+        SocialAccount otherAccount = socialAccountRepository.saveAndFlush(account(other, Provider.TWITTER, "222"));
+        LocalDateTime older = LocalDateTime.of(2026, 11, 7, 1, 0);
+        LocalDateTime newer = LocalDateTime.of(2026, 11, 7, 2, 0);
+        socialAccountRepository.updateLastUpdatedAt(ownerFacebook.getId(), older);
+        socialAccountRepository.updateLastUpdatedAt(ownerTwitter.getId(), newer);
+        // Tài khoản của user khác mới hơn nhưng không được tính
+        socialAccountRepository.updateLastUpdatedAt(otherAccount.getId(), newer.plusHours(1));
+
+        assertThat(socialAccountRepository.findMaxLastUpdatedAtByUserId(owner.getId())).contains(newer);
+    }
+
+    @Test
+    void maxLastUpdatedAtIsEmptyWhenNeverUpdatedOrNoAccount() {
+        assertThat(socialAccountRepository.findMaxLastUpdatedAtByUserId(owner.getId())).isEmpty();
+        User withoutAccount = userRepository.save(User.builder().displayName("No account").build());
+        assertThat(socialAccountRepository.findMaxLastUpdatedAtByUserId(withoutAccount.getId())).isEmpty();
+    }
+
+    @Test
     void updateLastUpdatedAtOfMissingAccountUpdatesNothing() {
         assertThat(socialAccountRepository.updateLastUpdatedAt(-1L, LocalDateTime.now())).isZero();
     }

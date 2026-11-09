@@ -113,6 +113,15 @@ public class SocialAccountService {
     }
 
     /**
+     * Lần cập nhật metrics gần nhất trong các tài khoản của user (giờ UTC). {@code userId} phải lấy từ
+     * {@link CurrentUserService}, không nhận từ client.
+     */
+    @Transactional(readOnly = true)
+    public Optional<LocalDateTime> findLastMetricsUpdatedAt(Long userId) {
+        return socialAccountRepository.findMaxLastUpdatedAtByUserId(userId);
+    }
+
+    /**
      * {@code token_expires_at} là thời điểm tuyệt đối → luôn lưu giờ <b>UTC</b>, không theo múi giờ JVM/Clock: cùng 1 DB
      * có thể được app chạy ở các múi giờ khác nhau dùng chung (container UTC, máy dev +07). So sánh hết hạn cũng quy về
      * UTC: {@code LocalDateTime.now(clock.withZone(ZoneOffset.UTC))}.
