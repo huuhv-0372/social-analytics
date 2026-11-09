@@ -28,7 +28,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -160,7 +160,39 @@ class PostApiControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isCreated())
                 .andExpect(header().string(HttpHeaders.LOCATION, "http://localhost/api/posts/10"))
-                .andExpect(jsonPath("$.id").value(10));
+                .andExpect(jsonPath("$.id").value(10))
+                // Mốc thời gian trả dạng ISO-8601 UTC
+                .andExpect(jsonPath("$.createdAt").value("2026-01-01T00:00:00Z"));
+    }
+
+    @Test
+    void createConvertsPublishedAtWithOffsetToInstant() throws Exception {
+        when(postService.create(any(PostRequest.class))).thenReturn(response(10L));
+        String body = """
+                {"provider":"FACEBOOK","externalId":"fb-1","url":"https://facebook.com/posts/1",
+                 "publishedAt":"2026-01-01T08:00:00+07:00"}
+                """;
+
+        mockMvc.perform(post("/api/posts").with(user("dev@example.com")).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated());
+
+        ArgumentCaptor<PostRequest> captor = ArgumentCaptor.forClass(PostRequest.class);
+        verify(postService).create(captor.capture());
+        assertThat(captor.getValue().publishedAt()).isEqualTo(Instant.parse("2026-01-01T01:00:00Z"));
+    }
+
+    @Test
+    void createWithPublishedAtWithoutTimeZoneReturns400() throws Exception {
+        String body = """
+                {"provider":"FACEBOOK","externalId":"fb-1","url":"https://facebook.com/posts/1",
+                 "publishedAt":"2026-01-01T08:00:00"}
+                """;
+
+        mockMvc.perform(post("/api/posts").with(user("dev@example.com")).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(postService);
     }
 
     @Test
@@ -300,7 +332,7 @@ class PostApiControllerTest {
     }
 
     private static PostResponse response(Long id) {
-        LocalDateTime now = LocalDateTime.of(2026, 1, 1, 0, 0);
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
         return new PostResponse(id, Provider.FACEBOOK, "fb-" + id, "https://facebook.com/posts/" + id,
                 "content", null, now, now);
     }

@@ -100,7 +100,7 @@ Service viết thẳng thành class (Spring proxy `@Transactional` bằng CGLIB,
 - `@Entity` + `@Table(name = "...")`; Lombok `@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder`. **Không** dùng `@Data` trên Entity.
 - Mọi quan hệ để `FetchType.LAZY` (kể cả `@ManyToOne`, vì mặc định của nó là EAGER).
 - Quan hệ chỉ map một chiều `@ManyToOne` (`Post → User`, `SocialMetric → Post`); không thêm `@OneToMany` ngược — lấy danh sách con qua repository. Không override `equals`/`hashCode` trên Entity.
-- Entity có `created_at`/`updated_at` kế thừa `entity/AuditableEntity` (`@CreationTimestamp`/`@UpdateTimestamp` của Hibernate, không dùng JPA Auditing). Thời gian dùng `LocalDateTime` ↔ `DATETIME(6)`; enum lưu `@Enumerated(EnumType.STRING)` ↔ `VARCHAR`.
+- Entity có `created_at`/`updated_at` kế thừa `entity/AuditableEntity` (`@PrePersist`/`@PreUpdate` gán giờ UTC, không dùng JPA Auditing; không dùng `@CreationTimestamp` vì Hibernate sinh theo múi giờ JVM). Thời gian: Entity dùng `LocalDateTime` ↔ `DATETIME(6)` lưu giờ **UTC** — đổi qua `util/UtcDateTimes` (`toUtc(Instant)`, `toInstant(LocalDateTime)`, `now()`); DTO request/response và tham số query dùng `Instant` (ISO-8601 có `Z`/offset, thiếu múi giờ → 400), `@PastOrPresent`/`@Past` trên `Instant` không cần sai số múi giờ; enum lưu `@Enumerated(EnumType.STRING)` ↔ `VARCHAR`.
 - Xoá `Post` sẽ xoá snapshot `social_metrics` (FK `ON DELETE CASCADE`); `users → posts` không cascade.
 - Schema chỉ thay đổi qua Flyway migration (`V{n}__mo_ta.sql`), `spring.jpa.hibernate.ddl-auto=validate`. Không sửa migration đã commit — tạo version mới.
 - `SocialMetric` lưu dạng **snapshot theo thời gian** (mỗi lần crawl là 1 bản ghi có `collected_at`) để vẽ biểu đồ xu hướng; truy vấn "metric mới nhất" viết query riêng.
@@ -113,7 +113,7 @@ Service viết thẳng thành class (Spring proxy `@Transactional` bằng CGLIB,
 - Tìm 1 bản ghi trả `Optional<T>`.
 - `@Transactional` đặt ở Service; method chỉ đọc dùng `@Transactional(readOnly = true)`.
 - Owner lấy qua `CurrentUserService.getCurrentUser()` (không nhận `userId` từ client). Thao tác theo id dùng repository method kèm điều kiện owner (`findByIdAndUserId`, `findByIdAndPostUserId`); không thuộc user → `ResourceNotFoundException` (404).
-- API danh sách nhận `Pageable` (size bị chặn bởi `app.pagination.*` qua `config/WebConfig`), Service lọc sort bằng `PageableUtils.withAllowedSort` (whitelist) và trả `PageResponse<T>` — không trả `Page`/`PageImpl` trực tiếp.
+- API danh sách nhận `Pageable` (size mặc định 20, bị chặn bởi `spring.data.web.pageable.max-page-size` trong `application.yml` — không tự viết customizer), Service lọc sort bằng `PageableUtils.withAllowedSort` (whitelist) và trả `PageResponse<T>` — không trả `Page`/`PageImpl` trực tiếp.
 - URL bài viết kiểm tra bằng `SocialUrlPolicy` (https + domain whitelist khai báo trong enum `Provider`).
 - Mapping Entity → DTO bằng static factory `XxxResponse.from(entity)`.
 
@@ -261,7 +261,8 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 ## 8. Cấu Hình & Môi Trường
 - Dùng `application.yml` + `application-dev.yml` / `application-test.yml`. Giá trị nhạy cảm dùng `${ENV_VAR}`.
 - `application.yml` là cấu hình an toàn cho production (không show-sql, không trả stacktrace/message lỗi); `dev` chỉ tăng mức log; test dùng `@ActiveProfiles("test")`.
-- Cấu hình riêng của app gom dưới prefix `app.*` và bind bằng `@ConfigurationProperties` (record), không rải `@Value`. Tất cả nằm trong `config/AppProperties` (nested record theo nhóm, có Bean Validation + `@DefaultValue` để fail fast khi sai cấu hình); thêm nhóm mới thì thêm nested record + giá trị trong `application.yml` + test binding trong `AppPropertiesTest`.
+- Cấu hình riêng của app gom dưới prefix `app.*` và bind bằng `@ConfigurationProperties` (record), không rải `@Value`. Tất cả gom trong 1 record `config/AppProperties` (nested record theo nhóm, có Bean Validation + `@DefaultValue` để fail fast khi sai cấu hình; hiện chưa có nhóm nào nên class chưa tồn tại); thêm nhóm mới thì thêm nested record + giá trị trong `application.yml` + test binding trong `AppPropertiesTest`. Việc Boot đã có property sẵn (vd `spring.data.web.pageable.*`) thì dùng property của Boot, không tạo `app.*` trùng chức năng.
+- Chạy sau reverse proxy kết thúc HTTPS: đặt `FORWARD_HEADERS_STRATEGY=native` (→ `server.forward-headers-strategy`); để trống khi không có proxy tin cậy (bật thì client giả được `X-Forwarded-*`).
 - `.env`, file Excel mẫu chứa dữ liệu thật, thư mục `logs/` phải nằm trong `.gitignore`.
 
 ## 9. Quy Trình Git

@@ -19,7 +19,10 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -37,6 +40,8 @@ import static org.mockito.Mockito.when;
 class SocialMetricServiceTest {
 
     private static final long OWNER_ID = 1L;
+    /** Cùng 1 thời điểm: dạng API ({@link Instant}) và dạng lưu DB (giờ UTC). */
+    private static final Instant NOW_INSTANT = Instant.parse("2026-01-01T12:00:00Z");
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 1, 1, 12, 0);
 
     @Mock
@@ -56,7 +61,8 @@ class SocialMetricServiceTest {
 
     @Test
     void findByPostRejectsInvertedRangeBeforeQuerying() {
-        assertThatThrownBy(() -> socialMetricService.findByPost(10L, NOW, NOW.minusDays(1), PageRequest.of(0, 20)))
+        assertThatThrownBy(() -> socialMetricService.findByPost(10L, NOW_INSTANT, NOW_INSTANT.minus(Duration.ofDays(1)),
+                PageRequest.of(0, 20)))
                 .isInstanceOf(BadRequestException.class);
         verifyNoInteractions(postService, socialMetricRepository);
     }
@@ -75,7 +81,8 @@ class SocialMetricServiceTest {
         when(socialMetricRepository.search(eq(10L), eq(null), eq(NOW), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(metric(5L))));
 
-        var result = socialMetricService.findByPost(10L, null, NOW, PageRequest.of(0, 20));
+        // Mốc Instant được đổi sang giờ UTC trước khi so với cột collected_at
+        var result = socialMetricService.findByPost(10L, null, NOW_INSTANT, PageRequest.of(0, 20));
 
         verify(postService).checkOwnedPost(10L);
         ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
@@ -110,7 +117,7 @@ class SocialMetricServiceTest {
 
         verify(postService).checkOwnedPost(10L);
         assertThat(response.id()).isEqualTo(7L);
-        assertThat(response.collectedAt()).isEqualTo(NOW);
+        assertThat(response.collectedAt()).isEqualTo(NOW_INSTANT);
     }
 
     @Test
@@ -142,19 +149,34 @@ class SocialMetricServiceTest {
             return metric;
         });
 
-        SocialMetricResponse response = socialMetricService.create(new SocialMetricRequest(10L, 100L, 10L, 20L, 1000L, NOW));
+        SocialMetricResponse response = socialMetricService.create(
+                new SocialMetricRequest(10L, 100L, 10L, 20L, 1000L, NOW_INSTANT));
 
         assertThat(response.id()).isEqualTo(5L);
         assertThat(response.postId()).isEqualTo(10L);
         assertThat(response.likes()).isEqualTo(100L);
-        assertThat(response.collectedAt()).isEqualTo(NOW);
+        assertThat(response.collectedAt()).isEqualTo(NOW_INSTANT);
+    }
+
+    @Test
+    void createStoresCollectedAtAsUtc() {
+        when(postService.getOwnedPost(10L)).thenReturn(post);
+        when(socialMetricRepository.save(any(SocialMetric.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        // Client ở +07:00 gửi 19:00 giờ địa phương = 12:00 UTC
+        Instant fromVietnam = OffsetDateTime.parse("2026-01-01T19:00:00+07:00").toInstant();
+
+        socialMetricService.create(new SocialMetricRequest(10L, 1L, 1L, 1L, 1L, fromVietnam));
+
+        ArgumentCaptor<SocialMetric> captor = ArgumentCaptor.forClass(SocialMetric.class);
+        verify(socialMetricRepository).save(captor.capture());
+        assertThat(captor.getValue().getCollectedAt()).isEqualTo(NOW);
     }
 
     @Test
     void createForPostOfOtherUserIsNotFound() {
         when(postService.getOwnedPost(99L)).thenThrow(new ResourceNotFoundException("Post"));
 
-        assertThatThrownBy(() -> socialMetricService.create(new SocialMetricRequest(99L, 1L, 1L, 1L, 1L, NOW)))
+        assertThatThrownBy(() -> socialMetricService.create(new SocialMetricRequest(99L, 1L, 1L, 1L, 1L, NOW_INSTANT)))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(socialMetricRepository, never()).save(any());
     }

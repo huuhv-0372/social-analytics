@@ -11,6 +11,7 @@ import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
 import com.huuhv.socialanalytics.repository.PostRepository;
 import com.huuhv.socialanalytics.util.PageableUtils;
 import com.huuhv.socialanalytics.util.SocialUrlPolicy;
+import com.huuhv.socialanalytics.util.UtcDateTimes;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Pageable;
@@ -71,7 +72,7 @@ public class PostService {
             throw new DuplicateResourceException("Post with this provider and externalId already exists");
         }
         applyRequest(post, request);
-        // flush để updatedAt (@UpdateTimestamp) có giá trị mới trong response
+        // flush để updatedAt (@PreUpdate của AuditableEntity) có giá trị mới trong response
         return PostResponse.from(postRepository.saveAndFlush(post));
     }
 
@@ -118,6 +119,6 @@ public class PostService {
         post.setExternalId(request.externalId());
         post.setUrl(request.url());
         post.setContent(request.content());
-        post.setPublishedAt(request.publishedAt());
+        post.setPublishedAt(UtcDateTimes.toUtc(request.publishedAt()));
     }
 }
