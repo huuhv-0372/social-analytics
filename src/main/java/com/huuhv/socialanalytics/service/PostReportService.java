@@ -59,12 +59,15 @@ public class PostReportService {
             throw new BadRequestException("Report exceeds the maximum of " + maxRows + " rows");
         }
 
+        // DB lưu giờ UTC; ô Excel không có múi giờ → ghi theo múi giờ của server (file import hiểu cùng quy ước)
+        List<PostReportRow> localRows = rows.stream().map(row -> row.inZone(clock.getZone())).toList();
+
         String filename = "posts-report-" + LocalDateTime.now(clock).format(FILENAME_TIMESTAMP) + ".xlsx";
         Long ownerId = owner.getId();
         return new ExportFile(filename, out -> {
-            excelExporter.write(rows, PostReportRow.class, SHEET_NAME, out);
+            excelExporter.write(localRows, PostReportRow.class, SHEET_NAME, out);
             // Audit (OWASP A09): ai export, bao nhiêu dòng — ghi sau khi file đã ghi xong
-            log.info("User {} exported posts report: rows={}", ownerId, rows.size());
+            log.info("User {} exported posts report: rows={}", ownerId, localRows.size());
         });
     }
 }

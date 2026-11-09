@@ -143,12 +143,12 @@ src/main/resources/
 
 | File | Vai trò |
 |---|---|
-| `application.yml` | Cấu hình chung, an toàn cho production: datasource, JPA (`ddl-auto=validate`), Flyway, Artemis, ẩn chi tiết lỗi, tắt Swagger, `app.*` |
+| `application.yml` | Cấu hình chung, an toàn cho production: datasource, JPA (`ddl-auto=validate`), Flyway, Artemis, ẩn chi tiết lỗi, tắt Swagger, giới hạn `size` phân trang (`spring.data.web.pageable.max-page-size`) |
 | `application-dev.yml` | Profile `dev`: bật Swagger UI, log DEBUG cho app, SQL, Security (`-Dspring-boot.run.profiles=dev`) |
 | `config/OpenApiConfig` | Thông tin tài liệu OpenAPI (title, version) + khai báo HTTP Basic cho nút Authorize của Swagger UI |
 | `src/test/resources/application-test.yml` | Profile `test` chỉ dành cho test, không đóng gói vào JAR (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
 | `logback-spring.xml` | Log console + file theo ngày trong `logs/` (giữ 30 ngày), pattern kèm MDC `jobId` / `importId` |
-| `config/AppProperties` | Bind cấu hình `app.*` (record + validation), vd `app.pagination.default-size` / `max-size`, `app.import.max-rows`, `app.export.max-rows` |
+| `config/AppProperties` | Bind cấu hình `app.*` (record + validation): `app.import.max-rows` / `max-uncompressed-size`, `app.export.max-rows` / `min-interval` |
 | `.env` | Giá trị bí mật cho môi trường local — copy từ `.env.example` |
 | `docker-compose.yaml` | MySQL 8.4 + ActiveMQ Artemis + app, và service `maven` (JDK 25) để chạy lệnh Maven |
 | `Dockerfile` | Build multi-stage: JDK 25 build JAR → JRE 25 chạy app bằng user không phải root |
@@ -163,6 +163,7 @@ src/main/resources/
 | `APP_PORT` | — | Port app mở ra máy host khi chạy bằng Docker (mặc định `8080`) |
 | `SPRING_PROFILES_ACTIVE` | — | Profile của container `app` (mặc định `dev`). Đặt profile khác (vd `prod`) để chạy cấu hình production-safe, Swagger tắt |
 | `LOG_PATH` | — | Thư mục log file (mặc định `logs`; trong Docker là `/app/logs`) |
+| `FORWARD_HEADERS_STRATEGY` | — | Đặt `native` khi app chạy sau reverse proxy / load balancer tin cậy (kết thúc HTTPS) để link `Location` và cờ `Secure` của cookie theo `X-Forwarded-*`. Để trống khi truy cập trực tiếp — bật khi không có proxy thì client giả được scheme/host |
 | `ARTEMIS_USER` / `ARTEMIS_PASSWORD` | ✅ | Tài khoản broker Artemis |
 | `API_USER_NAME` / `API_USER_PASSWORD` | ✅ (mật khẩu) | **Tạm thời tới giai đoạn 3:** tài khoản HTTP Basic để gọi `/api/**`. Tên mặc định `dev@social-analytics.local`; thiếu mật khẩu thì app không khởi động |
 | `ARTEMIS_HOST` / `ARTEMIS_PORT` | — | Mặc định `localhost` / `61616` |
@@ -191,6 +192,8 @@ Tạm thời (tới giai đoạn 3) `/api/**` xác thực bằng **HTTP Basic** 
 
 **CSRF:** mọi response đều đặt cookie `XSRF-TOKEN`; request POST/PUT/DELETE phải gửi lại cookie đó **và** giá trị của nó trong header `X-XSRF-TOKEN`, thiếu thì trả 403. Swagger UI tự làm việc này. Với Postman, sau 1 request GET, thêm header `X-XSRF-TOKEN: {{xsrf}}` với `xsrf` lấy từ cookie.
 
+**Thời gian:** mọi mốc thời gian (body, query, response) là ISO-8601 có múi giờ — server trả UTC (`2026-11-07T01:00:00Z`), client gửi `Z` hoặc offset (`2026-11-07T08:00:00+07:00`) và tự đổi sang giờ địa phương khi hiển thị. Giá trị thiếu múi giờ (`2026-11-07T08:00:00`) trả 400. Trên query string nên dùng `Z`; nếu dùng offset dương phải encode dấu `+` thành `%2B` (vd `from=2026-11-07T08:00:00%2B07:00`), vì `+` không encode bị hiểu là dấu cách → 400.
+
 | Method | Endpoint | Mô tả |
 |---|---|---|
 | GET | `/api/posts?page=0&size=20&sort=createdAt,desc` | Danh sách bài viết (size tối đa 100; sort: `createdAt`, `updatedAt`, `publishedAt`, `provider`) |
@@ -198,7 +201,7 @@ Tạm thời (tới giai đoạn 3) `/api/**` xác thực bằng **HTTP Basic** 
 | POST | `/api/posts` | Tạo bài viết — `url` phải là https thuộc domain của provider (`facebook.com`; `x.com`/`twitter.com`) |
 | PUT | `/api/posts/{id}` | Cập nhật (thay thế toàn bộ) |
 | DELETE | `/api/posts/{id}` | Xoá bài viết kèm toàn bộ snapshot metric |
-| GET | `/api/metrics?postId=1&from=2026-01-01T00:00:00&to=...` | Snapshot của 1 bài viết (phân trang; sort: `collectedAt`, `likes`, `shares`, `comments`, `followers`) |
+| GET | `/api/metrics?postId=1&from=2026-01-01T00:00:00Z&to=...` | Snapshot của 1 bài viết (phân trang; sort: `collectedAt`, `likes`, `shares`, `comments`, `followers`) |
 | GET | `/api/metrics/latest?postId=1` | Snapshot mới nhất |
 | GET | `/api/metrics/{id}` | Chi tiết snapshot |
 | POST | `/api/metrics` | Ghi nhận snapshot thủ công (snapshot bất biến — không có PUT) |
@@ -233,6 +236,7 @@ File `.xlsx`, sheet đầu tiên, dòng 1 là header (không phân biệt hoa th
 
 - Giới hạn: tối đa **5MB** (`spring.servlet.multipart.max-file-size`, vượt → 413) và **1000 dòng** (`app.import.max-rows`).
 - Chỉ nhận `.xlsx` thật (kiểm tra cả nội dung); ô chứa công thức bị từ chối.
+- Ô ngày giờ trong Excel không có múi giờ → **Published At hiểu theo múi giờ của server** (biến `TZ` của JVM/container), cùng quy ước với file export; DB lưu giờ UTC.
 - Dòng lỗi trả về kèm số dòng, dòng hợp lệ vẫn được lưu. Bài đã có (cùng provider + External ID, không phân biệt hoa thường) được **cập nhật**.
 
 ```bash
@@ -250,6 +254,7 @@ curl -b cookies.txt -u "$API_USER_NAME:$API_USER_PASSWORD" -X POST http://localh
 
 - Cột metric lấy từ snapshot mới nhất của bài; bài chưa có snapshot để trống.
 - 5 cột đầu đúng định dạng file import → có thể sửa file báo cáo rồi import lại (các cột metric bị bỏ qua khi import).
+- Published At / Metrics Collected At ghi theo **múi giờ của server** (DB lưu UTC, đổi khi xuất file) — import lại trên cùng server giữ nguyên thời điểm.
 - Tối đa **10000 dòng** (`app.export.max-rows`, vượt → 400).
 - Mỗi user export cách nhau tối thiểu **10 giây** (`app.export.min-interval`, gọi sớm hơn → 429 kèm header `Retry-After`).
 - File được stream thẳng vào response (không dựng cả file trong bộ nhớ).

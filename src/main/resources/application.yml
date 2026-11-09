@@ -42,7 +42,19 @@ spring:
     user: ${ARTEMIS_USER}
     password: ${ARTEMIS_PASSWORD}
 
+  data:
+    web:
+      pageable:
+        # Giới hạn size của tham số Pageable — vượt thì bị hạ xuống giá trị này (OWASP A06). Size mặc định 20 của Boot.
+        max-page-size: 100
+
 server:
+  # Chạy sau reverse proxy / load balancer kết thúc HTTPS: đặt FORWARD_HEADERS_STRATEGY=native để scheme/host
+  # (link Location, cờ Secure của cookie) lấy từ X-Forwarded-*. Để trống khi không có proxy tin cậy đứng trước —
+  # nếu bật, client có thể giả header này. Trống = Boot tự nhận diện nền tảng (vd Kubernetes → native).
+  # Tomcat chỉ tin X-Forwarded-* từ proxy có IP nội bộ (10/8, 172.16/12, 192.168/16, 127/8...); proxy IP khác thì
+  # khai thêm server.tomcat.remoteip.internal-proxies.
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:}
   error:
     # Không trả chi tiết lỗi nội bộ ra client (OWASP A02/A10)
     include-stacktrace: never
@@ -69,10 +81,8 @@ logging:
     com.huuhv.socialanalytics: INFO
 
 # Cấu hình riêng của ứng dụng — bind vào com.huuhv.socialanalytics.config.AppProperties
+# (giới hạn phân trang dùng spring.data.web.pageable.* của Boot ở trên, không khai trong app.*)
 app:
-  pagination:
-    default-size: 20
-    max-size: 100
   import:
     # Số dòng dữ liệu tối đa mỗi file import Excel
     max-rows: 1000

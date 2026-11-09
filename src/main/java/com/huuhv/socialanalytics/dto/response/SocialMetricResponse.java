@@ -1,9 +1,13 @@
 package com.huuhv.socialanalytics.dto.response;
 
 import com.huuhv.socialanalytics.entity.SocialMetric;
+import com.huuhv.socialanalytics.util.UtcDateTimes;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
+/**
+ * {@code collectedAt} trả dạng {@link Instant} (ISO-8601 UTC).
+ */
 public record SocialMetricResponse(
         Long id,
         Long postId,
@@ -11,7 +15,7 @@ public record SocialMetricResponse(
         long shares,
         long comments,
         long followers,
-        LocalDateTime collectedAt) {
+        Instant collectedAt) {
 
     public static SocialMetricResponse from(SocialMetric metric) {
         // getPost().getId() không khởi tạo LAZY proxy
@@ -22,6 +26,6 @@ public record SocialMetricResponse(
                 metric.getShares(),
                 metric.getComments(),
                 metric.getFollowers(),
-                metric.getCollectedAt());
+                UtcDateTimes.toInstant(metric.getCollectedAt()));
     }
 }

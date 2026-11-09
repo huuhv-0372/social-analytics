@@ -49,6 +49,7 @@ public class SocialMetric {
     @Column(name = "followers", nullable = false)
     private long followers;
 
+    // Giờ UTC (util/UtcDateTimes)
     @Column(name = "collected_at", nullable = false)
     private LocalDateTime collectedAt;
 }

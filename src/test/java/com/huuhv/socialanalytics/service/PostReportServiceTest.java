@@ -61,7 +61,6 @@ class PostReportServiceTest {
     @BeforeEach
     void setUp() {
         AppProperties properties = new AppProperties(
-                new AppProperties.Pagination(20, 100),
                 new AppProperties.ImportSettings(1000, DataSize.ofMegabytes(20)),
                 new AppProperties.ExportSettings(MAX_ROWS, MIN_INTERVAL));
         postReportService = new PostReportService(postService, currentUserService, userRateLimiter,
@@ -86,6 +85,9 @@ class PostReportServiceTest {
             assertThat(sheet.getLastRowNum()).isEqualTo(2);
             assertThat(sheet.getRow(1).getCell(1).getStringCellValue()).isEqualTo("fb-1");
             assertThat(sheet.getRow(1).getCell(5).getNumericCellValue()).isEqualTo(10);
+            // DB trả giờ UTC (09:00) → ô Excel ghi giờ server UTC+7 (16:00), cả Published At lẫn Metrics Collected At
+            assertThat(sheet.getRow(1).getCell(4).getLocalDateTimeCellValue()).isEqualTo(LocalDateTime.of(2026, 1, 1, 16, 0));
+            assertThat(sheet.getRow(1).getCell(9).getLocalDateTimeCellValue()).isEqualTo(LocalDateTime.of(2026, 1, 2, 16, 0));
             // Bài chưa có snapshot → ô metric trống
             assertThat(sheet.getRow(2).getCell(5)).isNull();
         }

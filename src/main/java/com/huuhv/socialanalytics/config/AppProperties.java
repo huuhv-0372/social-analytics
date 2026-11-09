@@ -15,27 +15,14 @@ import java.time.Duration;
 
 /**
  * Cấu hình riêng của ứng dụng, prefix {@code app.*}. Sai giá trị → app không khởi động (fail fast).
+ * Giới hạn phân trang dùng {@code spring.data.web.pageable.*} của Boot, không khai ở đây.
  */
 @Validated
 @ConfigurationProperties(prefix = "app")
 public record AppProperties(
-        @Valid @DefaultValue Pagination pagination,
         // "import" là từ khoá Java → đặt tên khác cho component, bind theo key app.import.*
         @Valid @DefaultValue @Name("import") ImportSettings importSettings,
         @Valid @DefaultValue @Name("export") ExportSettings exportSettings) {
-
-    /**
-     * Giới hạn phân trang cho API danh sách (OWASP A06 — giới hạn tài nguyên).
-     */
-    public record Pagination(
-            @Positive @DefaultValue("20") int defaultSize,
-            @Positive @Max(1000) @DefaultValue("100") int maxSize) {
-
-        @AssertTrue(message = "app.pagination.default-size must not exceed app.pagination.max-size")
-        public boolean isDefaultSizeWithinMax() {
-            return defaultSize <= maxSize;
-        }
-    }
 
     /**
      * Giới hạn import Excel (OWASP A06). Dung lượng file nén giới hạn riêng qua {@code spring.servlet.multipart.*}.

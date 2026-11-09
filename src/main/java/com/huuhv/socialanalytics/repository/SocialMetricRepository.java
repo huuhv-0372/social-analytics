@@ -18,7 +18,7 @@ public interface SocialMetricRepository extends JpaRepository<SocialMetric, Long
     /** Tìm theo id kèm điều kiện chủ sở hữu của bài viết — chống IDOR. */
     Optional<SocialMetric> findByIdAndPostUserId(Long id, Long userId);
 
-    /** Snapshot của 1 bài viết, lọc khoảng thời gian tuỳ chọn ({@code null} = không giới hạn). */
+    /** Snapshot của 1 bài viết, lọc khoảng thời gian tuỳ chọn (giờ UTC; {@code null} = không giới hạn). */
     @Query(value = """
             SELECT m FROM SocialMetric m
             WHERE m.post.id = :postId

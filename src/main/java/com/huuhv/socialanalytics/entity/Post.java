@@ -54,6 +54,7 @@ public class Post extends AuditableEntity {
     @Column(name = "content", columnDefinition = "TEXT")
     private String content;
 
+    // Giờ UTC (util/UtcDateTimes)
     @Column(name = "published_at")
     private LocalDateTime publishedAt;
 }
