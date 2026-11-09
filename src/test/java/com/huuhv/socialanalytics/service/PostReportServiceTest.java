@@ -1,6 +1,6 @@
 package com.huuhv.socialanalytics.service;
 
-import com.huuhv.socialanalytics.config.AppProperties;
+import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.dto.response.ExportFile;
 import com.huuhv.socialanalytics.dto.response.PostReportRow;
 import com.huuhv.socialanalytics.entity.User;

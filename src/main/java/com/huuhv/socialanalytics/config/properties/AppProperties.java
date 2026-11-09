@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.config;
+package com.huuhv.socialanalytics.config.properties;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;

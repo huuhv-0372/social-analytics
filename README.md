@@ -109,7 +109,8 @@ Kiến trúc 3 lớp (3-Tier), package gốc `com.huuhv.socialanalytics`:
 
 ```
 src/main/java/com/huuhv/socialanalytics/
-├── config/          # SecurityConfig, AsyncConfig, JmsConfig, WebSocketConfig, WebServiceConfig, OpenApiConfig
+├── config/          # SecurityConfig, AsyncConfig, JmsConfig, WebSocketConfig, WebServiceConfig, OpenApiConfig, RateLimitConfig
+│   └── properties/  # AppProperties (cấu hình app.*)
 ├── controller/
 │   ├── web/         # Controller Thymeleaf: /login, /dashboard, /posts ...
 │   └── api/         # REST controller /api/**
@@ -148,7 +149,7 @@ src/main/resources/
 | `config/OpenApiConfig` | Thông tin tài liệu OpenAPI (title, version) + khai báo HTTP Basic cho nút Authorize của Swagger UI |
 | `src/test/resources/application-test.yml` | Profile `test` chỉ dành cho test, không đóng gói vào JAR (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
 | `logback-spring.xml` | Log console + file theo ngày trong `logs/` (giữ 30 ngày), pattern kèm MDC `jobId` / `importId` |
-| `config/AppProperties` | Bind cấu hình `app.*` (record + validation): `app.import.max-rows` / `max-uncompressed-size`, `app.export.max-rows` / `min-interval` |
+| `config/properties/AppProperties` | Bind cấu hình `app.*` (record + validation): `app.import.max-rows` / `max-uncompressed-size`, `app.export.max-rows` / `min-interval` |
 | `.env` | Giá trị bí mật cho môi trường local — copy từ `.env.example` |
 | `docker-compose.yaml` | MySQL 8.4 + ActiveMQ Artemis + app, và service `maven` (JDK 25) để chạy lệnh Maven |
 | `Dockerfile` | Build multi-stage: JDK 25 build JAR → JRE 25 chạy app bằng user không phải root |
@@ -178,13 +179,14 @@ Dùng **Flyway**, tự chạy khi ứng dụng khởi động. File đặt tại
 
 Quy ước: tên bảng số nhiều, snake_case (`users`, `posts`, `social_metrics`...); `ddl-auto=validate` nên schema chỉ thay đổi qua migration. **Không sửa migration đã commit** — muốn đổi schema thì thêm file version mới.
 
-Schema hiện tại (`V1__init_schema.sql` + `V2__posts_unique_per_user.sql`):
+Schema hiện tại (`V1__init_schema.sql` + `V1_1__rate_limit_buckets.sql`):
 
 | Bảng | Mô tả | Ràng buộc / index chính |
 |---|---|---|
 | `users` | Người dùng (email có thể NULL vì X không trả email), `role` USER/ADMIN | `uk_users_email` |
 | `posts` | Bài viết FB/X, `user_id` là chủ sở hữu (phân quyền theo owner) | `uk_posts_user_provider_external_id (user_id, provider, external_id)` — nhiều user theo dõi được cùng 1 bài, FK `users` |
 | `social_metrics` | Snapshot likes/shares/comments/followers theo `collected_at` — mỗi lần crawl thêm 1 dòng | `idx_social_metrics_post_collected (post_id, collected_at)`, FK `posts` `ON DELETE CASCADE` |
+| `rate_limit_buckets` | Trạng thái bucket Bucket4j (giới hạn tần suất export theo user, dùng chung giữa các instance) — do Bucket4j đọc/ghi, không sửa tay | PK `id` (`action:userId:intervalMs`) |
 
 ## REST API
 
@@ -256,7 +258,8 @@ curl -b cookies.txt -u "$API_USER_NAME:$API_USER_PASSWORD" -X POST http://localh
 - 5 cột đầu đúng định dạng file import → có thể sửa file báo cáo rồi import lại (các cột metric bị bỏ qua khi import).
 - Published At / Metrics Collected At ghi theo **múi giờ của server** (DB lưu UTC, đổi khi xuất file) — import lại trên cùng server giữ nguyên thời điểm.
 - Tối đa **10000 dòng** (`app.export.max-rows`, vượt → 400).
-- Mỗi user export cách nhau tối thiểu **10 giây** (`app.export.min-interval`, gọi sớm hơn → 429 kèm header `Retry-After`).
+- Mỗi user export cách nhau tối thiểu **10 giây** (`app.export.min-interval`, gọi sớm hơn → 429 kèm header `Retry-After`). Mốc chặn lưu ở MySQL (Bucket4j) nên vẫn đúng khi chạy nhiều instance hoặc sau restart.
+- Tải file tối đa **60 giây** (`spring.mvc.async.request-timeout`, tính cả lúc dựng file) — quá hạn thì kết nối bị đóng. Đo với 10.000 dòng: dữ liệu thực tế (content ~200 ký tự) ~0,5 MB, dựng ~6s → dư nhiều kể cả mạng 1 Mbps; trường hợp xấu nhất (mọi cột chạm giới hạn, content 5000 ký tự) ~45 MB, dựng ~29s, cần mạng > ~10 Mbps — chấp nhận không phủ, nếu cần thì giảm `app.export.max-rows` thay vì tăng timeout.
 - File được stream thẳng vào response (không dựng cả file trong bộ nhớ).
 - Chống Formula Injection: ô bắt đầu bằng `=`, `+`, `-`, `@`, tab, CR được đánh dấu *quote prefix* (như gõ `'` trong Excel) → Excel hiển thị nguyên văn, không chạy như công thức.
 
