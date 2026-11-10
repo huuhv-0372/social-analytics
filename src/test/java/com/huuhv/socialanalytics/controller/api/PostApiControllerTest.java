@@ -6,6 +6,7 @@ import com.huuhv.socialanalytics.dto.request.PostRequest;
 import com.huuhv.socialanalytics.dto.response.PageResponse;
 import com.huuhv.socialanalytics.dto.response.PostResponse;
 import com.huuhv.socialanalytics.enums.Provider;
+import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.DuplicateResourceException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
@@ -83,6 +84,20 @@ class PostApiControllerTest {
                 .andExpect(jsonPath("$.content[0].id").value(10))
                 .andExpect(jsonPath("$.content[0].externalId").value("fb-10"))
                 .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    @Test
+    void authenticatedRequestWithoutResolvableOwnerReturns401WithoutBasicChallenge() throws Exception {
+        // Đã đăng nhập nhưng user trong session không còn (bị xoá / DB reset) → CurrentUserService ném lỗi này.
+        // Giống 401 ở tầng filter: ProblemDetail, không gửi WWW-Authenticate (trình duyệt sẽ bật hộp thoại Basic)
+        when(postService.findAll(any(Pageable.class))).thenThrow(new AuthenticationRequiredException());
+
+        mockMvc.perform(get("/api/posts").with(oauth2Login()))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE))
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.detail").value("Authentication required"));
     }
 
     @Test

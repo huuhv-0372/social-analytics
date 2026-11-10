@@ -144,3 +144,8 @@ app:
     # Key AES-256 (Base64 của 32 byte) mã hoá access token lưu DB — bắt buộc, sinh bằng: openssl rand -base64 32
     # Thiếu/sai định dạng → app dừng khởi động. Đổi key → token cũ không giải mã được, user phải đăng nhập lại.
     key: ${TOKEN_ENCRYPTION_KEY:}
+  oauth2:
+    # Timeout gọi Facebook / X trong login callback (đổi code lấy token, user info) — provider treo không giữ thread
+    # Tomcat vô thời hạn; hết giờ → /login?error. Phải > 0
+    connect-timeout: 5s
+    read-timeout: 10s

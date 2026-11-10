@@ -15,6 +15,7 @@ import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionException;
 
 /**
  * Bước "user info" của đăng nhập OAuth2 (sau khi đổi authorization code lấy access token):
@@ -48,11 +49,12 @@ public class CustomOAuth2UserService implements OAuth2UserService<OAuth2UserRequ
                         OAuth2ErrorCodes.INVALID_REQUEST, "Unsupported OAuth2 provider", null)));
         OAuth2User oauth2User = delegate.loadUser(userRequest);
         User user = saveLogin(provider, oauth2User, userRequest);
-        // Gắn id nội bộ vào principal (lưu trong session) → CurrentUserService không phải query lại mỗi request
+        // Gắn id nội bộ + tên hiển thị đã chuẩn hoá vào principal (lưu trong session) → CurrentUserService và layout
+        // không phải query lại hay tính lại tên mỗi request
         String nameAttributeKey = userRequest.getClientRegistration().getProviderDetails()
                 .getUserInfoEndpoint().getUserNameAttributeName();
         return new AppOAuth2User(oauth2User.getAuthorities(), oauth2User.getAttributes(), nameAttributeKey,
-                user.getId());
+                user.getId(), user.getDisplayName());
     }
 
     private User saveLogin(Provider provider, OAuth2User oauth2User, OAuth2UserRequest userRequest) {
@@ -69,7 +71,9 @@ public class CustomOAuth2UserService implements OAuth2UserService<OAuth2UserRequ
         } catch (IllegalArgumentException e) {
             throw new OAuth2AuthenticationException(
                     new OAuth2Error(INVALID_USER_INFO_RESPONSE, "Invalid user id in user info response", null));
-        } catch (DataAccessException e) {
+        } catch (DataAccessException | TransactionException e) {
+            // TransactionException: không mở được transaction (DB sập, hết connection) hoặc commit lỗi — không thuộc
+            // DataAccessException nhưng vẫn phải từ chối đăng nhập như lỗi DB (fail closed, có log — OWASP A09/A10)
             log.error("Failed to save {} account on login", provider, e);
             throw new OAuth2AuthenticationException(
                     new OAuth2Error(OAuth2ErrorCodes.SERVER_ERROR, "Failed to save account", null), e);

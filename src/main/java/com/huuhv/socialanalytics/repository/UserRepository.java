@@ -10,8 +10,7 @@ import java.util.Optional;
 
 public interface UserRepository extends JpaRepository<User, Long> {
 
-    Optional<User> findByEmail(String email);
-
+    /** Chỉ dùng để không gán trùng email cho user mới — không tra/gộp tài khoản theo email (OWASP A07). */
     boolean existsByEmail(String email);
 
     /** User sở hữu tài khoản mạng xã hội {@code (provider, providerUserId)} — dùng unique index của social_accounts. */

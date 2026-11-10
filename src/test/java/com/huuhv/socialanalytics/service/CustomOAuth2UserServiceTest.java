@@ -20,6 +20,8 @@ import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionSystemException;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.Instant;
@@ -74,7 +76,11 @@ class CustomOAuth2UserServiceTest {
 
         // CurrentUserService lấy owner theo id này mà không query lại
         assertThat(user).isInstanceOfSatisfying(AppOAuth2User.class,
-                principal -> assertThat(principal.getUserId()).isEqualTo(SAVED_USER.getId()));
+                principal -> {
+                    assertThat(principal.getUserId()).isEqualTo(SAVED_USER.getId());
+                    // Tên hiển thị đã chuẩn hoá lưu ở users.display_name, dùng cho layout
+                    assertThat(principal.getDisplayName()).isEqualTo(SAVED_USER.getDisplayName());
+                });
         assertThat(user.getName()).isEqualTo("1234567890");
         assertThat(user.<String>getAttribute("name")).isEqualTo("Dev User");
     }
@@ -139,6 +145,30 @@ class CustomOAuth2UserServiceTest {
     }
 
     @Test
+    void facebookUserInfoWithoutIdIsRejected() {
+        // Thiếu id → DefaultOAuth2User sẽ ném IllegalArgumentException (500) nếu converter không chặn trước
+        server.expect(requestTo(FACEBOOK_USER_INFO_URI))
+                .andRespond(withSuccess("""
+                        {"name":"Dev User"}""", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> service.loadUser(request("facebook", FACEBOOK_USER_INFO_URI, "fb-access-token")))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, ex -> assertThat(ex.getError().getErrorCode())
+                        .isEqualTo(CustomOAuth2UserService.INVALID_USER_INFO_RESPONSE));
+        verifyNoInteractions(socialAccountService);
+    }
+
+    @Test
+    void facebookUserInfoWithNonStringIdIsRejected() {
+        server.expect(requestTo(FACEBOOK_USER_INFO_URI))
+                .andRespond(withSuccess("""
+                        {"id":{"nested":"1"},"name":"Dev User"}""", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> service.loadUser(request("facebook", FACEBOOK_USER_INFO_URI, "fb-access-token")))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+        verifyNoInteractions(socialAccountService);
+    }
+
+    @Test
     void concurrentLoginIsRetriedOnceAndSucceeds() {
         expectFacebookUserInfo();
         when(socialAccountService.recordLogin(any(), any(), any()))
@@ -177,6 +207,32 @@ class CustomOAuth2UserServiceTest {
                     assertThat(ex.getError().getDescription()).doesNotContain("connection refused");
                 });
         verify(socialAccountService, times(1)).recordLogin(any(), any(), any());
+    }
+
+    @Test
+    void transactionFailureRejectsLoginWithoutRetry() {
+        // DB sập / hết connection lúc mở transaction: không phải DataAccessException nhưng vẫn phải về /login?error
+        expectFacebookUserInfo();
+        when(socialAccountService.recordLogin(any(), any(), any()))
+                .thenThrow(new CannotCreateTransactionException("Could not open JPA EntityManager"));
+
+        assertThatThrownBy(() -> service.loadUser(request("facebook", FACEBOOK_USER_INFO_URI, "fb-access-token")))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, ex -> {
+                    assertThat(ex.getError().getErrorCode()).isEqualTo(OAuth2ErrorCodes.SERVER_ERROR);
+                    assertThat(ex.getError().getDescription()).doesNotContain("EntityManager");
+                });
+        verify(socialAccountService, times(1)).recordLogin(any(), any(), any());
+    }
+
+    @Test
+    void commitFailureRejectsLogin() {
+        expectFacebookUserInfo();
+        when(socialAccountService.recordLogin(any(), any(), any()))
+                .thenThrow(new TransactionSystemException("Could not commit JPA transaction"));
+
+        assertThatThrownBy(() -> service.loadUser(request("facebook", FACEBOOK_USER_INFO_URI, "fb-access-token")))
+                .isInstanceOfSatisfying(OAuth2AuthenticationException.class, ex -> assertThat(ex.getError().getErrorCode())
+                        .isEqualTo(OAuth2ErrorCodes.SERVER_ERROR));
     }
 
     @Test

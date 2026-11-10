@@ -2,6 +2,7 @@ package com.huuhv.socialanalytics.controller.web;
 
 import com.huuhv.socialanalytics.config.SecurityConfig;
 import com.huuhv.socialanalytics.config.WebConfig;
+import com.huuhv.socialanalytics.service.AppOAuth2User;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -78,6 +79,17 @@ class DashboardControllerTest {
         mockMvc.perform(get("/dashboard").with(oauth2Login().oauth2User(principal)))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("Welcome, <span>2244994945</span>")));
+    }
+
+    @Test
+    void appPrincipalShowsDisplayNameStoredAtLogin() throws Exception {
+        // X user không có "name": tên đã chuẩn hoá lúc đăng nhập là @username, không phải id số phía provider
+        AppOAuth2User principal = new AppOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
+                Map.of("id", "2244994945", "username", "devuser"), "id", 7L, "devuser");
+        mockMvc.perform(get("/dashboard").with(oauth2Login().oauth2User(principal)))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Welcome, <span>devuser</span>")))
+                .andExpect(content().string(not(containsString("2244994945"))));
     }
 
     @Test

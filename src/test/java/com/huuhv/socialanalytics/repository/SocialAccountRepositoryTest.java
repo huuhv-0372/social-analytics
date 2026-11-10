@@ -16,6 +16,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.time.LocalDateTime;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -76,6 +78,29 @@ class SocialAccountRepositoryTest {
 
         assertThatThrownBy(() -> socialAccountRepository.saveAndFlush(account(other, Provider.FACEBOOK, "1234567890")))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void accountWithUndecryptableTokenCanStillBeUpdated() {
+        // Token lưu bằng key cũ / dữ liệu hỏng → converter trả null. Cập nhật field khác (vd job Giai đoạn 4) ghi lại
+        // mọi cột, kể cả access_token = NULL: không được vi phạm NOT NULL (V3)
+        entityManager.createNativeQuery("UPDATE social_accounts SET access_token = 'not-a-valid-ciphertext'")
+                .executeUpdate();
+        entityManager.clear();
+        SocialAccount account = socialAccountRepository
+                .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "1234567890")
+                .orElseThrow();
+        assertThat(account.getAccessToken()).isNull();
+
+        account.setTokenExpiresAt(LocalDateTime.of(2030, 1, 1, 0, 0));
+        socialAccountRepository.saveAndFlush(account);
+        entityManager.clear();
+
+        SocialAccount reloaded = socialAccountRepository
+                .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "1234567890")
+                .orElseThrow();
+        assertThat(reloaded.getAccessToken()).isNull();
+        assertThat(reloaded.getTokenExpiresAt()).isEqualTo(LocalDateTime.of(2030, 1, 1, 0, 0));
     }
 
     private static SocialAccount account(User user, Provider provider, String providerUserId) {

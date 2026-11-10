@@ -26,7 +26,27 @@ public record AppProperties(
         // "import" là từ khoá Java → đặt tên khác cho component, bind theo key app.import.*
         @Valid @DefaultValue @Name("import") ImportSettings importSettings,
         @Valid @DefaultValue @Name("export") ExportSettings exportSettings,
-        @Valid @DefaultValue TokenEncryption tokenEncryption) {
+        @Valid @DefaultValue TokenEncryption tokenEncryption,
+        @Valid @DefaultValue OAuth2Client oauth2) {
+
+    /**
+     * Timeout khi gọi provider OAuth2 (đổi code lấy token, user info) trong lúc login callback (OWASP A10): provider
+     * treo không được giữ thread Tomcat vô thời hạn. Hết giờ → {@code /login?error}.
+     */
+    public record OAuth2Client(
+            @NotNull @DefaultValue("5s") Duration connectTimeout,
+            @NotNull @DefaultValue("10s") Duration readTimeout) {
+
+        @AssertTrue(message = "app.oauth2.connect-timeout and app.oauth2.read-timeout must be positive")
+        public boolean isTimeoutsPositive() {
+            return isPositive(connectTimeout) && isPositive(readTimeout);
+        }
+
+        private static boolean isPositive(Duration value) {
+            // null đã báo bởi @NotNull
+            return value == null || (!value.isNegative() && !value.isZero());
+        }
+    }
 
     /**
      * Key AES-256 mã hoá access token lưu DB (OWASP A04): Base64 của đúng 32 byte, lấy từ biến môi trường

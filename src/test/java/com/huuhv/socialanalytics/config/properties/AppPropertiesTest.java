@@ -132,6 +132,33 @@ class AppPropertiesTest {
                         .doesNotContain("c2VjcmV0LWJ1dC10b28tc2hvcnQ="));
     }
 
+    @Test
+    void bindsOAuth2Timeouts() {
+        contextRunner.run(context -> {
+            AppProperties.OAuth2Client oauth2 = context.getBean(AppProperties.class).oauth2();
+            assertThat(oauth2.connectTimeout()).isEqualTo(Duration.ofSeconds(5));
+            assertThat(oauth2.readTimeout()).isEqualTo(Duration.ofSeconds(10));
+        });
+        contextRunner
+                .withPropertyValues("app.oauth2.connect-timeout=2s", "app.oauth2.read-timeout=3s")
+                .run(context -> {
+                    AppProperties.OAuth2Client oauth2 = context.getBean(AppProperties.class).oauth2();
+                    assertThat(oauth2.connectTimeout()).isEqualTo(Duration.ofSeconds(2));
+                    assertThat(oauth2.readTimeout()).isEqualTo(Duration.ofSeconds(3));
+                });
+    }
+
+    @Test
+    void failsStartupWhenOAuth2TimeoutIsNotPositive() {
+        // 0 = không timeout với HttpURLConnection → không cho phép
+        contextRunner
+                .withPropertyValues("app.oauth2.read-timeout=0")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.oauth2.connect-timeout=-1s")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties(AppProperties.class)
     static class TestConfig {
