@@ -6,6 +6,7 @@ import com.huuhv.socialanalytics.dto.response.ExportFile;
 import com.huuhv.socialanalytics.excel.GenericExcelExporter;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.TooManyRequestsException;
+import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.PostReportService;
 import org.junit.jupiter.api.Test;
@@ -51,6 +52,10 @@ class ReportApiControllerTest {
     // SecurityConfig cần bean này (oauth2Login → userInfoEndpoint); bản thật phụ thuộc DB
     @MockitoBean
     private CustomOAuth2UserService customOAuth2UserService;
+
+    // StaleSessionFilter (SecurityConfig) kiểm tra user của session qua service này; mock trả null = user hợp lệ
+    @MockitoBean
+    private CurrentUserService currentUserService;
 
     @Test
     void exportStreamsXlsxAttachment() throws Exception {

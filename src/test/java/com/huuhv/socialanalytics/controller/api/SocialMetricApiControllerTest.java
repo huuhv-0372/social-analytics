@@ -7,6 +7,7 @@ import com.huuhv.socialanalytics.dto.response.PageResponse;
 import com.huuhv.socialanalytics.dto.response.SocialMetricResponse;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
+import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.SocialMetricService;
 import org.junit.jupiter.api.Test;
@@ -59,6 +60,10 @@ class SocialMetricApiControllerTest {
     // SecurityConfig cần bean này (oauth2Login → userInfoEndpoint); bản thật phụ thuộc DB
     @MockitoBean
     private CustomOAuth2UserService customOAuth2UserService;
+
+    // StaleSessionFilter (SecurityConfig) kiểm tra user của session qua service này; mock trả null = user hợp lệ
+    @MockitoBean
+    private CurrentUserService currentUserService;
 
     @Test
     void listParsesIsoDateRange() throws Exception {
