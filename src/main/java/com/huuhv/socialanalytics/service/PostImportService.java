@@ -1,6 +1,6 @@
 package com.huuhv.socialanalytics.service;
 
-import com.huuhv.socialanalytics.config.AppProperties;
+import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.dto.request.PostImportRow;
 import com.huuhv.socialanalytics.dto.request.PostRequest;
 import com.huuhv.socialanalytics.dto.response.ImportResultResponse;
@@ -26,6 +26,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -65,6 +66,7 @@ public class PostImportService {
     private final CurrentUserService currentUserService;
     private final Validator validator;
     private final AppProperties appProperties;
+    private final Clock clock;
 
     /**
      * @throws BadRequestException khi file rỗng, không phải .xlsx (đuôi hoặc nội dung), vượt dung lượng giải nén,
@@ -133,7 +135,8 @@ public class PostImportService {
         Map<String, Integer> firstRowByKey = new HashMap<>();
         List<PostRequest> valid = new ArrayList<>();
         for (ExcelRow<PostImportRow> row : rows) {
-            PostRequest request = row.value().toPostRequest();
+            // Ô ngày giờ Excel không có múi giờ → hiểu theo múi giờ của server (như file export)
+            PostRequest request = row.value().toPostRequest(clock.getZone());
             List<ExcelRowError> rowErrors = new ArrayList<>(row.errors());
             // Cột đã lỗi chuyển kiểu có field = null → bỏ vi phạm @NotNull/@NotBlank trùng lặp của cột đó
             Set<String> unreadableColumns = row.errors().stream().map(ExcelRowError::column).collect(Collectors.toSet());

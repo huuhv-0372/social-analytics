@@ -1,6 +1,6 @@
 package com.huuhv.socialanalytics.service;
 
-import com.huuhv.socialanalytics.config.AppProperties;
+import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.dto.request.PostImportRow;
 import com.huuhv.socialanalytics.dto.request.PostRequest;
 import com.huuhv.socialanalytics.dto.response.ImportResultResponse;
@@ -27,8 +27,11 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.util.unit.DataSize;
 
 import java.lang.reflect.RecordComponent;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -51,6 +54,8 @@ class PostImportServiceTest {
     private static final long OWNER_ID = 1L;
     private static final Object[] HEADER = {"Provider", "External ID", "URL", "Content", "Published At"};
     private static final ValidatorFactory VALIDATOR_FACTORY = Validation.buildDefaultValidatorFactory();
+    // Server chạy UTC+7: ô ngày giờ Excel hiểu theo múi giờ này, DB lưu giờ UTC
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-03-15T01:30:05Z"), ZoneOffset.ofHours(7));
 
     @Mock
     private PostRepository postRepository;
@@ -70,13 +75,12 @@ class PostImportServiceTest {
     private PostImportService service(int maxRows) {
         Validator validator = VALIDATOR_FACTORY.getValidator();
         AppProperties properties = new AppProperties(
-                new AppProperties.Pagination(20, 100),
                 new AppProperties.ImportSettings(maxRows, DataSize.ofMegabytes(20)),
                 new AppProperties.ExportSettings(10000, Duration.ZERO),
-                // Service không dùng key mã hoá token, thread pool, job
-                null, null, null);
+                // Service không dùng key mã hoá token / timeout OAuth2, thread pool, job
+                null, null, null, null);
         return new PostImportService(new GenericExcelImporter(), new PostUpsertService(postRepository),
-                currentUserService, validator, properties);
+                currentUserService, validator, properties, CLOCK);
     }
 
     @AfterAll
@@ -107,7 +111,8 @@ class PostImportServiceTest {
         assertThat(saved).filteredOn(post -> post.getExternalId().equals("fb-1")).singleElement()
                 .satisfies(post -> {
                     assertThat(post.getContent()).isEqualTo("Hello");
-                    assertThat(post.getPublishedAt()).isEqualTo(LocalDateTime.of(2026, 1, 1, 9, 0));
+                    // 09:00 trong file (giờ server UTC+7) = 02:00 UTC trong DB
+                    assertThat(post.getPublishedAt()).isEqualTo(LocalDateTime.of(2026, 1, 1, 2, 0));
                 });
     }
 

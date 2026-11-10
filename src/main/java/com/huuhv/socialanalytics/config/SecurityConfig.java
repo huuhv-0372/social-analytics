@@ -1,6 +1,8 @@
 package com.huuhv.socialanalytics.config;
 
+import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -10,6 +12,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.authentication.logout.LogoutSuccessHandler;
 import org.springframework.security.web.authentication.logout.SimpleUrlLogoutSuccessHandler;
@@ -24,12 +27,14 @@ import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.List;
 
 /**
  * Cấu hình Spring Security (OWASP A01/A02):
  * <ul>
  *     <li><b>Deny-by-default</b>: chỉ {@code /login}, {@code /oauth2/**}, {@code /error} và static resource là public;
- *     mọi đường dẫn khác (kể cả {@code /api/**}, Swagger) phải đăng nhập.</li>
+ *     mọi đường dẫn khác (kể cả {@code /api/**}, Swagger) phải đăng nhập. Dispatch {@code ERROR} (trang lỗi) luôn được
+ *     cho qua để giữ đúng mã lỗi gốc.</li>
  *     <li>Chưa đăng nhập: REST ({@code /api/**}, {@code /v3/api-docs/**}) nhận 401 {@code ProblemDetail};
  *     trang web (kể cả Swagger UI) được redirect về {@code /login}. Bị từ chối (403, gồm lỗi CSRF): REST nhận
  *     {@code ProblemDetail}, trang web nhận trang lỗi 403.</li>
@@ -39,6 +44,8 @@ import java.io.IOException;
  *     <li>Đăng nhập OAuth2 (Facebook, X): {@code /oauth2/authorization/{registrationId}} → callback
  *     {@code /login/oauth2/code/{registrationId}} → luôn redirect {@code /dashboard}; lỗi → {@code /login?error}.</li>
  *     <li>Logout chỉ nhận POST (có CSRF), redirect cố định về {@code /login?logout} (không open redirect).</li>
+ *     <li>Session đã đăng nhập nhưng user không còn trong DB bị huỷ ({@link StaleSessionFilter}) → xử lý như ẩn
+ *     danh.</li>
  *     <li>Security header: CSP, {@code X-Content-Type-Options}, {@code Referrer-Policy}, {@code frame-ancestors 'none'}
  *     + {@code X-Frame-Options: DENY}; HSTS mặc định của Spring (chỉ gửi qua HTTPS).</li>
  * </ul>
@@ -70,16 +77,23 @@ public class SecurityConfig {
     static final String LOGIN_SUCCESS_URL = "/dashboard";
     static final String LOGIN_FAILURE_URL = LOGIN_PAGE + "?error";
 
+    static final List<String> STATIC_RESOURCE_PATTERNS = List.of("/css/**", "/js/**", "/images/**", "/favicon.ico");
+
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http, CustomOAuth2UserService oauth2UserService)
-            throws Exception {
+    SecurityFilterChain securityFilterChain(HttpSecurity http, CustomOAuth2UserService oauth2UserService,
+                                            CurrentUserService currentUserService) throws Exception {
         ApiAuthenticationEntryPoint apiEntryPoint = new ApiAuthenticationEntryPoint();
         RequestMatcher restRequestMatcher = restRequestMatcher();
         OAuth2LoginResultHandler loginResultHandler = new OAuth2LoginResultHandler(LOGIN_SUCCESS_URL, LOGIN_FAILURE_URL);
         http
                 .authorizeHttpRequests(auth -> auth
+                        // Lỗi gửi bằng sendError (vd 403 CSRF, 404) được Tomcat dispatch lại sang trang lỗi và chain
+                        // chạy lại cho lượt đó: cho qua mọi dispatch ERROR (không phụ thuộc server.error.path) để giữ
+                        // mã lỗi gốc, không bị anyRequest().authenticated() đè thành 401 / redirect login.
+                        // Request gốc đã qua kiểm tra quyền ở dispatch REQUEST nên không mở thêm quyền truy cập nào.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers(LOGIN_PAGE, "/oauth2/**", "/error").permitAll()
-                        .requestMatchers("/css/**", "/js/**", "/images/**", "/favicon.ico").permitAll()
+                        .requestMatchers(STATIC_RESOURCE_PATTERNS.toArray(String[]::new)).permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         // Thứ tự quan trọng: REST khớp trước, còn lại (trang web) redirect về trang login
@@ -93,6 +107,8 @@ public class SecurityConfig {
                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                         .csrfTokenRequestHandler(new CsrfHeaderOrFormTokenRequestHandler()))
                 .addFilterAfter(new CsrfCookieFilter(), CsrfFilter.class)
+                // Session đã đăng nhập nhưng user không còn trong DB → logout rồi xử lý như request ẩn danh
+                .addFilterBefore(new StaleSessionFilter(currentUserService), AnonymousAuthenticationFilter.class)
                 .logout(logout -> logout
                         .logoutUrl("/logout")
                         // Handler tường minh: luôn redirect URL nội bộ cố định (không theo tham số → không open redirect),

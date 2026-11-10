@@ -6,9 +6,11 @@ import com.huuhv.socialanalytics.dto.request.PostRequest;
 import com.huuhv.socialanalytics.dto.response.PageResponse;
 import com.huuhv.socialanalytics.dto.response.PostResponse;
 import com.huuhv.socialanalytics.enums.Provider;
+import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.DuplicateResourceException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
+import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.PostService;
 import jakarta.servlet.http.Cookie;
@@ -26,7 +28,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -73,6 +75,10 @@ class PostApiControllerTest {
     @MockitoBean
     private CustomOAuth2UserService customOAuth2UserService;
 
+    // StaleSessionFilter (SecurityConfig) kiểm tra user của session qua service này; mock trả null = user hợp lệ
+    @MockitoBean
+    private CurrentUserService currentUserService;
+
     @Test
     void listReturnsPage() throws Exception {
         when(postService.findAll(any(Pageable.class)))
@@ -83,6 +89,20 @@ class PostApiControllerTest {
                 .andExpect(jsonPath("$.content[0].id").value(10))
                 .andExpect(jsonPath("$.content[0].externalId").value("fb-10"))
                 .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    @Test
+    void authenticatedRequestWithoutResolvableOwnerReturns401WithoutBasicChallenge() throws Exception {
+        // Đã đăng nhập nhưng user trong session không còn (bị xoá / DB reset) → CurrentUserService ném lỗi này.
+        // Giống 401 ở tầng filter: ProblemDetail, không gửi WWW-Authenticate (trình duyệt sẽ bật hộp thoại Basic)
+        when(postService.findAll(any(Pageable.class))).thenThrow(new AuthenticationRequiredException());
+
+        mockMvc.perform(get("/api/posts").with(oauth2Login()))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE))
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.detail").value("Authentication required"));
     }
 
     @Test
@@ -149,7 +169,39 @@ class PostApiControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isCreated())
                 .andExpect(header().string(HttpHeaders.LOCATION, "http://localhost/api/posts/10"))
-                .andExpect(jsonPath("$.id").value(10));
+                .andExpect(jsonPath("$.id").value(10))
+                // Mốc thời gian trả dạng ISO-8601 UTC
+                .andExpect(jsonPath("$.createdAt").value("2026-01-01T00:00:00Z"));
+    }
+
+    @Test
+    void createConvertsPublishedAtWithOffsetToInstant() throws Exception {
+        when(postService.create(any(PostRequest.class))).thenReturn(response(10L));
+        String body = """
+                {"provider":"FACEBOOK","externalId":"fb-1","url":"https://facebook.com/posts/1",
+                 "publishedAt":"2026-01-01T08:00:00+07:00"}
+                """;
+
+        mockMvc.perform(post("/api/posts").with(oauth2Login()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated());
+
+        ArgumentCaptor<PostRequest> captor = ArgumentCaptor.forClass(PostRequest.class);
+        verify(postService).create(captor.capture());
+        assertThat(captor.getValue().publishedAt()).isEqualTo(Instant.parse("2026-01-01T01:00:00Z"));
+    }
+
+    @Test
+    void createWithPublishedAtWithoutTimeZoneReturns400() throws Exception {
+        String body = """
+                {"provider":"FACEBOOK","externalId":"fb-1","url":"https://facebook.com/posts/1",
+                 "publishedAt":"2026-01-01T08:00:00"}
+                """;
+
+        mockMvc.perform(post("/api/posts").with(oauth2Login()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(postService);
     }
 
     @Test
@@ -289,7 +341,7 @@ class PostApiControllerTest {
     }
 
     private static PostResponse response(Long id) {
-        LocalDateTime now = LocalDateTime.of(2026, 1, 1, 0, 0);
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
         return new PostResponse(id, Provider.FACEBOOK, "fb-" + id, "https://facebook.com/posts/" + id,
                 "content", null, now, now);
     }

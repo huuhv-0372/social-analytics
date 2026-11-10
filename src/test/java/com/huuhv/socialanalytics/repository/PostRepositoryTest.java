@@ -19,7 +19,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -95,9 +97,23 @@ class PostRepositoryTest {
         Post saved = postRepository.saveAndFlush(newPost(owner, Provider.FACEBOOK, "fb-1"));
 
         assertThat(saved.getId()).isNotNull();
-        assertThat(saved.getCreatedAt()).isNotNull();
-        assertThat(saved.getUpdatedAt()).isNotNull();
+        // created_at / updated_at lưu giờ UTC, không theo múi giờ JVM
+        assertThat(Duration.between(saved.getCreatedAt(), LocalDateTime.now(ZoneOffset.UTC)).abs())
+                .isLessThan(Duration.ofMinutes(1));
+        assertThat(saved.getUpdatedAt()).isEqualTo(saved.getCreatedAt());
         assertThat(owner.getRole()).isEqualTo(Role.USER);
+    }
+
+    @Test
+    void updateRefreshesUpdatedAtButKeepsCreatedAt() {
+        Post saved = postRepository.saveAndFlush(newPost(saveUser("owner@example.com"), Provider.FACEBOOK, "fb-1"));
+        LocalDateTime createdAt = saved.getCreatedAt();
+
+        saved.setContent("changed");
+        Post updated = postRepository.saveAndFlush(saved);
+
+        assertThat(updated.getCreatedAt()).isEqualTo(createdAt);
+        assertThat(updated.getUpdatedAt()).isAfterOrEqualTo(createdAt);
     }
 
     @Test

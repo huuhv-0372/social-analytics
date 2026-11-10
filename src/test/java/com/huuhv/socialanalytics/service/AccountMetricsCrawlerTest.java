@@ -5,7 +5,7 @@ import com.huuhv.socialanalytics.client.social.PostMetrics;
 import com.huuhv.socialanalytics.client.social.SocialPlatformClient;
 import com.huuhv.socialanalytics.client.social.SocialPlatformClients;
 import com.huuhv.socialanalytics.client.social.SocialPlatformException;
-import com.huuhv.socialanalytics.config.AppProperties;
+import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.dto.response.PostRef;
 import com.huuhv.socialanalytics.enums.Provider;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,9 +41,8 @@ class AccountMetricsCrawlerTest {
     private static final long ACCOUNT_ID = 7L;
     private static final long USER_ID = 3L;
     private static final String TOKEN = "plain-access-token";
-    // Server chạy ở +07: collectedAt theo giờ server, last_updated_at và hạn token theo UTC
+    // Server chạy ở +07: collectedAt, last_updated_at và hạn token đều lưu theo UTC, không theo giờ server
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-11-07T03:00:00Z"), ZoneId.of("Asia/Ho_Chi_Minh"));
-    private static final LocalDateTime NOW_LOCAL = LocalDateTime.of(2026, 11, 7, 10, 0);
     private static final LocalDateTime NOW_UTC = LocalDateTime.of(2026, 11, 7, 3, 0);
 
     @Mock
@@ -85,7 +84,7 @@ class AccountMetricsCrawlerTest {
         verify(socialMetricService).recordSnapshots(ACCOUNT_ID, List.of(
                 new CrawledMetric(1L, 10, 1, 2, 100),
                 new CrawledMetric(2L, 20, 1, 2, 100),
-                new CrawledMetric(3L, 30, 1, 2, 100)), NOW_LOCAL, NOW_UTC);
+                new CrawledMetric(3L, 30, 1, 2, 100)), NOW_UTC, NOW_UTC);
     }
 
     @Test
@@ -105,7 +104,7 @@ class AccountMetricsCrawlerTest {
 
         assertThat(crawler.crawlNow(ACCOUNT_ID)).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, 0));
         verifyNoInteractions(client);
-        verify(socialMetricService).recordSnapshots(ACCOUNT_ID, List.of(), NOW_LOCAL, NOW_UTC);
+        verify(socialMetricService).recordSnapshots(ACCOUNT_ID, List.of(), NOW_UTC, NOW_UTC);
     }
 
     @Test

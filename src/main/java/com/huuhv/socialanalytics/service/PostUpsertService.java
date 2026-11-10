@@ -5,6 +5,7 @@ import com.huuhv.socialanalytics.entity.Post;
 import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.enums.Provider;
 import com.huuhv.socialanalytics.repository.PostRepository;
+import com.huuhv.socialanalytics.util.UtcDateTimes;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -60,7 +61,7 @@ public class PostUpsertService {
                     post.setContent(request.content());
                 }
                 if (request.publishedAt() != null) {
-                    post.setPublishedAt(request.publishedAt());
+                    post.setPublishedAt(UtcDateTimes.toUtc(request.publishedAt()));
                 }
                 toSave.add(post);
             }

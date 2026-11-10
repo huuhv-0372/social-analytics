@@ -23,6 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -162,10 +163,12 @@ class GenericExcelExporterTest {
                 new ByteArrayInputStream(export(report, PostReportRow.class)), PostImportRow.class, 100, MAX_BYTES);
 
         assertThat(result.errors()).isEmpty();
-        assertThat(result.rows()).extracting(row -> row.value().toPostRequest())
+        // Cùng 1 múi giờ cho export và import → round-trip giữ nguyên thời điểm
+        assertThat(result.rows()).extracting(row -> row.value().toPostRequest(ZoneOffset.UTC))
                 .extracting("provider", "externalId", "url", "content", "publishedAt")
                 .containsExactly(
-                        tuple(Provider.FACEBOOK, "-fb-1", "https://facebook.com/posts/1", "=cmd|' /C calc'!A0", AT),
+                        tuple(Provider.FACEBOOK, "-fb-1", "https://facebook.com/posts/1", "=cmd|' /C calc'!A0",
+                                AT.toInstant(ZoneOffset.UTC)),
                         tuple(Provider.TWITTER, "tw-1", "https://x.com/a/status/1", null, null));
     }
 

@@ -2,6 +2,7 @@ package com.huuhv.socialanalytics.controller.api;
 
 import com.huuhv.socialanalytics.config.SecurityConfig;
 import com.huuhv.socialanalytics.config.WebConfig;
+import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.PostImportService;
 import com.huuhv.socialanalytics.service.PostReportService;
@@ -72,6 +73,10 @@ class ApiSecurityMatrixTest {
 
     @MockitoBean
     private CustomOAuth2UserService customOAuth2UserService;
+
+    // StaleSessionFilter (SecurityConfig) kiểm tra user của session qua service này; mock trả null = user hợp lệ
+    @MockitoBean
+    private CurrentUserService currentUserService;
 
     @AfterEach
     void serviceIsNeverReached() {

@@ -50,9 +50,11 @@ public class SocialAccount extends AuditableEntity {
     @Column(name = "provider_user_id", nullable = false, length = 100)
     private String providerUserId;
 
-    // Bản rõ chỉ tồn tại trong bộ nhớ; cột DB chứa ciphertext AES-GCM
+    // Bản rõ chỉ tồn tại trong bộ nhớ; cột DB chứa ciphertext AES-GCM.
+    // null = không có token dùng được (AccessTokenConverter không giải mã được) → phải kiểm tra trước khi gọi API
+    // mạng xã hội; đăng nhập lại sẽ ghi token mới (V3 bỏ NOT NULL để cập nhật field khác không bị lỗi).
     @Convert(converter = AccessTokenConverter.class)
-    @Column(name = "access_token", nullable = false, columnDefinition = "TEXT")
+    @Column(name = "access_token", columnDefinition = "TEXT")
     private String accessToken;
 
     @Column(name = "token_expires_at")

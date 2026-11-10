@@ -17,11 +17,8 @@ import java.util.function.Supplier;
  *     <li><b>raw</b> — giá trị cookie {@code XSRF-TOKEN} mà Swagger UI / Postman gửi lại qua header {@code X-XSRF-TOKEN}.</li>
  * </ul>
  * Khác {@code csrf.spa()} mặc định (header luôn so khớp raw nên token từ meta bị từ chối). Không tự viết thuật toán:
- * thử giải mask bằng {@link XorCsrfTokenRequestAttributeHandler}, không giải được (độ dài không khớp) thì so khớp raw.
- * <p>
- * Fail closed (OWASP A10): token đúng độ dài nhưng bị sửa có thể giải mask ra byte không phải UTF-8 — Spring Security
- * ném {@link IllegalArgumentException} thay vì trả {@code null}. Bắt lại và coi như "không phải token đã mask" → so
- * khớp raw thất bại → {@code CsrfFilter} trả 403 (được {@code LoggingAccessDeniedHandler} log), không thành lỗi 500.
+ * thử giải mask bằng {@link XorCsrfTokenRequestAttributeHandler}, không giải được (độ dài không khớp, không phải UTF-8
+ * hợp lệ) thì so khớp raw.
  */
 final class CsrfHeaderOrFormTokenRequestHandler implements CsrfTokenRequestHandler {
 
@@ -40,11 +37,16 @@ final class CsrfHeaderOrFormTokenRequestHandler implements CsrfTokenRequestHandl
         return unmasked != null ? unmasked : plain.resolveCsrfTokenValue(request, csrfToken);
     }
 
+    /**
+     * Giải mask token do client gửi; {@code null} nếu giá trị không phải token đã mask hợp lệ.
+     * {@link XorCsrfTokenRequestAttributeHandler} ném {@link IllegalArgumentException} khi kết quả XOR không phải UTF-8
+     * hợp lệ (token bị sửa / giả mạo) — coi như không giải được để request đi tiếp nhánh so khớp raw và bị
+     * {@code CsrfFilter} từ chối 403, thay vì để exception thoát ra thành 500 (OWASP A10, fail closed).
+     */
     private String unmask(HttpServletRequest request, CsrfToken csrfToken) {
         try {
             return xor.resolveCsrfTokenValue(request, csrfToken);
         } catch (IllegalArgumentException e) {
-            // Utf8.decode thất bại với token bị sửa — không log giá trị token (CLAUDE.md 5.5)
             return null;
         }
     }

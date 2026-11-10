@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.config;
+package com.huuhv.socialanalytics.config.properties;
 
 import com.huuhv.socialanalytics.util.AesGcmCipher;
 import jakarta.validation.Valid;
@@ -19,17 +19,37 @@ import java.util.Base64;
 
 /**
  * Cấu hình riêng của ứng dụng, prefix {@code app.*}. Sai giá trị → app không khởi động (fail fast).
+ * Giới hạn phân trang dùng {@code spring.data.web.pageable.*} của Boot, không khai ở đây.
  */
 @Validated
 @ConfigurationProperties(prefix = "app")
 public record AppProperties(
-        @Valid @DefaultValue Pagination pagination,
         // "import" là từ khoá Java → đặt tên khác cho component, bind theo key app.import.*
         @Valid @DefaultValue @Name("import") ImportSettings importSettings,
         @Valid @DefaultValue @Name("export") ExportSettings exportSettings,
         @Valid @DefaultValue TokenEncryption tokenEncryption,
+        @Valid @DefaultValue OAuth2Client oauth2,
         @Valid @DefaultValue AsyncSettings async,
         @Valid @DefaultValue Jobs jobs) {
+
+    /**
+     * Timeout khi gọi provider OAuth2 (đổi code lấy token, user info) trong lúc login callback (OWASP A10): provider
+     * treo không được giữ thread Tomcat vô thời hạn. Hết giờ → {@code /login?error}.
+     */
+    public record OAuth2Client(
+            @NotNull @DefaultValue("5s") Duration connectTimeout,
+            @NotNull @DefaultValue("10s") Duration readTimeout) {
+
+        @AssertTrue(message = "app.oauth2.connect-timeout and app.oauth2.read-timeout must be positive")
+        public boolean isTimeoutsPositive() {
+            return isPositive(connectTimeout) && isPositive(readTimeout);
+        }
+
+        private static boolean isPositive(Duration value) {
+            // null đã báo bởi @NotNull
+            return value == null || (!value.isNegative() && !value.isZero());
+        }
+    }
 
     /**
      * Key AES-256 mã hoá access token lưu DB (OWASP A04): Base64 của đúng 32 byte, lấy từ biến môi trường
@@ -65,19 +85,6 @@ public record AppProperties(
         @Override
         public String toString() {
             return "TokenEncryption[key=******]";
-        }
-    }
-
-    /**
-     * Giới hạn phân trang cho API danh sách (OWASP A06 — giới hạn tài nguyên).
-     */
-    public record Pagination(
-            @Positive @DefaultValue("20") int defaultSize,
-            @Positive @Max(1000) @DefaultValue("100") int maxSize) {
-
-        @AssertTrue(message = "app.pagination.default-size must not exceed app.pagination.max-size")
-        public boolean isDefaultSizeWithinMax() {
-            return defaultSize <= maxSize;
         }
     }
 

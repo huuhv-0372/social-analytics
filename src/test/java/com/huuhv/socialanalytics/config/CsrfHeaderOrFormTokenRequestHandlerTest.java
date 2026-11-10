@@ -54,23 +54,23 @@ class CsrfHeaderOrFormTokenRequestHandlerTest {
 
     @Test
     void tamperedMaskedTokenDoesNotResolveToRawToken() {
-        // Sửa 1 byte ở nửa "xored": giải mask ra ký tự ASCII khác → vẫn là UTF-8 hợp lệ nhưng sai token
-        byte[] bytes = Base64.getUrlDecoder().decode(maskedToken());
-        bytes[bytes.length - 1] ^= 0x01;
+        String masked = maskedToken();
+        String tampered = (masked.charAt(0) == 'A' ? 'B' : 'A') + masked.substring(1);
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/posts");
-        request.addHeader(HEADER, Base64.getUrlEncoder().encodeToString(bytes));
+        request.addHeader(HEADER, tampered);
 
         assertThat(handler.resolveCsrfTokenValue(request, token)).isNotEqualTo(token.getToken());
     }
 
+    // Trước đây XorCsrfTokenRequestAttributeHandler ném IllegalArgumentException ("Decoding failed") → 500
     @Test
-    void maskedTokenDecodingToInvalidUtf8IsRejectedInsteadOfThrowing() {
-        // Đúng độ dài token đã mask nhưng giải mask ra byte 0xFF (không phải UTF-8) — trước đây ném
-        // IllegalArgumentException ra khỏi CsrfFilter (500) thay vì từ chối (403)
+    void maskedTokenDecodingToInvalidUtf8IsRejectedWithoutException() {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/posts");
-        request.addHeader(HEADER, invalidUtf8MaskedToken(token.getToken()));
+        request.addHeader(HEADER, maskedTokenDecodingToInvalidUtf8(token));
 
-        assertThat(handler.resolveCsrfTokenValue(request, token)).isNotEqualTo(token.getToken());
+        assertThat(handler.resolveCsrfTokenValue(request, token))
+                .isNotNull()
+                .isNotEqualTo(token.getToken());
     }
 
     @Test
@@ -110,11 +110,11 @@ class CsrfHeaderOrFormTokenRequestHandlerTest {
     }
 
     /**
-     * Token dạng đã mask ({@code Base64Url(random ‖ xored)}, mỗi nửa dài bằng token raw) với random = 0x00 và
-     * xored = 0xFF → giải mask ra toàn byte 0xFF, không phải UTF-8 hợp lệ.
+     * Giá trị có đúng định dạng token đã mask (Base64 URL của {@code random ‖ random XOR token}, mỗi phần dài bằng
+     * token) nhưng XOR ra toàn byte {@code 0xFF} — không phải UTF-8 hợp lệ. Dùng chung với {@code SecurityConfigWebTest}.
      */
-    static String invalidUtf8MaskedToken(String rawToken) {
-        int size = rawToken.getBytes(StandardCharsets.UTF_8).length;
+    static String maskedTokenDecodingToInvalidUtf8(CsrfToken source) {
+        int size = source.getToken().getBytes(StandardCharsets.UTF_8).length;
         byte[] bytes = new byte[size * 2];
         Arrays.fill(bytes, size, bytes.length, (byte) 0xFF);
         return Base64.getUrlEncoder().encodeToString(bytes);

@@ -65,8 +65,9 @@ class CurrentUserServiceTest {
     void appPrincipalResolvesOwnerByStoredIdWithoutQueryingSocialAccounts() {
         User reference = User.builder().id(7L).build();
         AppOAuth2User principal = new AppOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
-                Map.of("id", "1234567890", "name", "Dev"), "id", 7L);
+                Map.of("id", "1234567890", "name", "Dev"), "id", 7L, "Dev");
         authenticate(new OAuth2AuthenticationToken(principal, principal.getAuthorities(), "facebook"));
+        when(userRepository.existsById(7L)).thenReturn(true);
         when(userRepository.getReferenceById(7L)).thenReturn(reference);
 
         assertThat(currentUserService.getCurrentUser()).isSameAs(reference);
@@ -74,9 +75,22 @@ class CurrentUserServiceTest {
     }
 
     @Test
+    void appPrincipalOfDeletedUserIsRejected() {
+        // User bị xoá / DB bị reset khi session còn sống: không trả reference tới id không còn (hoặc đã cấp cho user khác)
+        AppOAuth2User principal = new AppOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
+                Map.of("id", "1234567890"), "id", 7L, "Dev");
+        authenticate(new OAuth2AuthenticationToken(principal, principal.getAuthorities(), "facebook"));
+        when(userRepository.existsById(7L)).thenReturn(false);
+
+        assertThatThrownBy(() -> currentUserService.getCurrentUser())
+                .isInstanceOf(AuthenticationRequiredException.class);
+        verify(userRepository, never()).getReferenceById(any());
+    }
+
+    @Test
     void appPrincipalStillRequiresAuthenticatedOAuth2Token() {
         AppOAuth2User principal = new AppOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
-                Map.of("id", "1234567890"), "id", 7L);
+                Map.of("id", "1234567890"), "id", 7L, "Dev");
         OAuth2AuthenticationToken token =
                 new OAuth2AuthenticationToken(principal, principal.getAuthorities(), "facebook");
         token.setAuthenticated(false);

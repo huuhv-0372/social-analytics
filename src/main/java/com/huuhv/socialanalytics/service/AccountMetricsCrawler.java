@@ -5,7 +5,7 @@ import com.huuhv.socialanalytics.client.social.PostMetrics;
 import com.huuhv.socialanalytics.client.social.SocialPlatformClient;
 import com.huuhv.socialanalytics.client.social.SocialPlatformClients;
 import com.huuhv.socialanalytics.client.social.SocialPlatformException;
-import com.huuhv.socialanalytics.config.AppProperties;
+import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.config.AsyncConfig;
 import com.huuhv.socialanalytics.dto.response.PostRef;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -98,9 +99,10 @@ public class AccountMetricsCrawler {
                     account.provider());
         }
 
-        // Tài khoản không có bài vẫn ghi last_updated_at: đã đồng bộ thành công, chỉ là không có gì để cập nhật
-        socialMetricService.recordSnapshots(account.id(), crawled, LocalDateTime.now(clock),
-                LocalDateTime.now(clock.withZone(ZoneOffset.UTC)));
+        // Tài khoản không có bài vẫn ghi last_updated_at: đã đồng bộ thành công, chỉ là không có gì để cập nhật.
+        // Mọi mốc thời gian lưu DB theo giờ UTC (UtcDateTimes) — cắt về micro giây cho khớp DATETIME(6)
+        LocalDateTime nowUtc = LocalDateTime.now(clock.withZone(ZoneOffset.UTC)).truncatedTo(ChronoUnit.MICROS);
+        socialMetricService.recordSnapshots(account.id(), crawled, nowUtc, nowUtc);
         log.info("Account {} ({}): saved {} snapshots for {} posts", account.id(), account.provider(),
                 crawled.size(), posts.size());
         return CrawlResult.succeeded(account.id(), crawled.size());

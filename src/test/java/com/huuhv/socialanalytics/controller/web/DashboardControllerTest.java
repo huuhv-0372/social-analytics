@@ -3,6 +3,8 @@ package com.huuhv.socialanalytics.controller.web;
 import com.huuhv.socialanalytics.config.SecurityConfig;
 import com.huuhv.socialanalytics.config.WebConfig;
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
+import com.huuhv.socialanalytics.service.AppOAuth2User;
+import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.DashboardService;
 import org.junit.jupiter.api.Test;
@@ -47,6 +49,10 @@ class DashboardControllerTest {
     // SecurityConfig cần bean này (oauth2Login → userInfoEndpoint); bản thật phụ thuộc DB
     @MockitoBean
     private CustomOAuth2UserService customOAuth2UserService;
+
+    // StaleSessionFilter (SecurityConfig) kiểm tra user của session qua service này; mock trả null = user hợp lệ
+    @MockitoBean
+    private CurrentUserService currentUserService;
 
     @MockitoBean
     private DashboardService dashboardService;
@@ -133,6 +139,17 @@ class DashboardControllerTest {
         mockMvc.perform(get("/dashboard").with(oauth2Login().oauth2User(principal)))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("Welcome, <span>2244994945</span>")));
+    }
+
+    @Test
+    void appPrincipalShowsDisplayNameStoredAtLogin() throws Exception {
+        // X user không có "name": tên đã chuẩn hoá lúc đăng nhập là @username, không phải id số phía provider
+        AppOAuth2User principal = new AppOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
+                Map.of("id", "2244994945", "username", "devuser"), "id", 7L, "devuser");
+        mockMvc.perform(get("/dashboard").with(oauth2Login().oauth2User(principal)))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Welcome, <span>devuser</span>")))
+                .andExpect(content().string(not(containsString("2244994945"))));
     }
 
     @Test

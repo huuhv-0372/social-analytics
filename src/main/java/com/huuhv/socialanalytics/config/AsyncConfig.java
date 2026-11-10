@@ -1,5 +1,6 @@
 package com.huuhv.socialanalytics.config;
 
+import com.huuhv.socialanalytics.config.properties.AppProperties;
 import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

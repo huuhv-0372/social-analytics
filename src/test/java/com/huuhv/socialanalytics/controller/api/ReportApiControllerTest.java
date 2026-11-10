@@ -6,6 +6,7 @@ import com.huuhv.socialanalytics.dto.response.ExportFile;
 import com.huuhv.socialanalytics.excel.GenericExcelExporter;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.TooManyRequestsException;
+import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.PostReportService;
 import org.junit.jupiter.api.Test;
@@ -21,6 +22,7 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import java.time.Duration;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -51,6 +53,10 @@ class ReportApiControllerTest {
     @MockitoBean
     private CustomOAuth2UserService customOAuth2UserService;
 
+    // StaleSessionFilter (SecurityConfig) kiểm tra user của session qua service này; mock trả null = user hợp lệ
+    @MockitoBean
+    private CurrentUserService currentUserService;
+
     @Test
     void exportStreamsXlsxAttachment() throws Exception {
         byte[] content = {'P', 'K', 3, 4};
@@ -67,6 +73,19 @@ class ReportApiControllerTest {
                 .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION,
                         "attachment; filename=\"posts-report-20260101-090000.xlsx\""))
                 .andExpect(content().bytes(content));
+    }
+
+    @Test
+    void exportUsesConfiguredAsyncTimeoutInsteadOfContainerDefault() throws Exception {
+        when(postReportService.exportReport())
+                .thenReturn(new ExportFile("posts-report-20260101-090000.xlsx", out -> out.write(1)));
+
+        MvcResult started = mockMvc.perform(get("/api/export-report").with(oauth2Login()))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+
+        // spring.mvc.async.request-timeout (60s) áp vào request async của StreamingResponseBody, không phải 30s của Tomcat
+        assertThat(started.getRequest().getAsyncContext().getTimeout()).isEqualTo(Duration.ofSeconds(60).toMillis());
     }
 
     // Không stub Service: chứng minh request ẩn danh bị filter chain chặn trước khi tới Service

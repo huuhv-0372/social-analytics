@@ -1,5 +1,6 @@
 package com.huuhv.socialanalytics.config;
 
+import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.util.AesGcmCipher;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;

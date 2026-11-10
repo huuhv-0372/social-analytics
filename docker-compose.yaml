@@ -60,13 +60,16 @@ services:
       <<: *app-env
       # Compose dùng cho môi trường local → mặc định profile dev (bật Swagger, log DEBUG)
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
-      # Bắt buộc cho app (client-id / key rỗng → app dừng khởi động). Không dùng ${...:?} vì compose kiểm
+      # Bắt buộc cho app (client-id / client-secret / key rỗng → app dừng khởi động; secret do
+      # config/OAuth2ClientConfig kiểm tra vì Boot chỉ kiểm client-id). Không dùng ${...:?} vì compose kiểm
       # biến đó cho mọi service, kể cả khi chỉ chạy test bằng service maven (test dùng giá trị giả trong application-test.yml)
       FACEBOOK_CLIENT_ID: ${FACEBOOK_CLIENT_ID:-}
       FACEBOOK_CLIENT_SECRET: ${FACEBOOK_CLIENT_SECRET:-}
       TWITTER_CLIENT_ID: ${TWITTER_CLIENT_ID:-}
       TWITTER_CLIENT_SECRET: ${TWITTER_CLIENT_SECRET:-}
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
+      # Trống khi truy cập trực tiếp; "native" khi đặt sau reverse proxy tin cậy (xem .env.example)
+      FORWARD_HEADERS_STRATEGY: ${FORWARD_HEADERS_STRATEGY:-}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     depends_on:

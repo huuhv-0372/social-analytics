@@ -9,6 +9,7 @@ import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
 import com.huuhv.socialanalytics.repository.SocialMetricRepository;
 import com.huuhv.socialanalytics.util.PageableUtils;
+import com.huuhv.socialanalytics.util.UtcDateTimes;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Pageable;
@@ -16,6 +17,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
@@ -39,14 +41,15 @@ public class SocialMetricService {
     private final SocialAccountService socialAccountService;
 
     @Transactional(readOnly = true)
-    public PageResponse<SocialMetricResponse> findByPost(Long postId, LocalDateTime from, LocalDateTime to,
+    public PageResponse<SocialMetricResponse> findByPost(Long postId, Instant from, Instant to,
                                                          Pageable pageable) {
         if (from != null && to != null && from.isAfter(to)) {
             throw new BadRequestException("from must not be after to");
         }
         postService.checkOwnedPost(postId);
         Pageable safePageable = PageableUtils.withAllowedSort(pageable, SORTABLE_PROPERTIES, DEFAULT_SORT);
-        return PageResponse.from(socialMetricRepository.search(postId, from, to, safePageable)
+        return PageResponse.from(socialMetricRepository
+                .search(postId, UtcDateTimes.toUtc(from), UtcDateTimes.toUtc(to), safePageable)
                 .map(SocialMetricResponse::from));
     }
 
@@ -72,7 +75,7 @@ public class SocialMetricService {
                 .shares(request.shares())
                 .comments(request.comments())
                 .followers(request.followers())
-                .collectedAt(request.collectedAt())
+                .collectedAt(UtcDateTimes.toUtc(request.collectedAt()))
                 .build());
         return SocialMetricResponse.from(saved);
     }
@@ -83,7 +86,7 @@ public class SocialMetricService {
      * Bài bị xoá trong lúc crawl làm vi phạm khoá ngoại → cả lô rollback, lần sau bài đó không còn trong danh sách.
      *
      * @param metrics      số liệu đã được validate (bài thuộc tài khoản, giá trị không âm)
-     * @param collectedAt  thời điểm lấy số liệu, múi giờ server (như snapshot nhập qua API)
+     * @param collectedAt  thời điểm lấy số liệu, giờ UTC (như snapshot nhập qua API — {@link UtcDateTimes})
      * @param updatedAtUtc thời điểm ghi vào {@code social_accounts.last_updated_at}, giờ UTC
      */
     @Transactional

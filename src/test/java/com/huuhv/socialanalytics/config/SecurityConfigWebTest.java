@@ -1,6 +1,8 @@
 package com.huuhv.socialanalytics.config;
 
 import com.huuhv.socialanalytics.controller.web.LoginController;
+import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
+import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
@@ -8,7 +10,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.web.csrf.DefaultCsrfToken;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
@@ -21,6 +26,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -54,6 +63,10 @@ class SecurityConfigWebTest {
     // SecurityConfig cần bean này (oauth2Login → userInfoEndpoint); bản thật phụ thuộc DB
     @MockitoBean
     private CustomOAuth2UserService customOAuth2UserService;
+
+    // StaleSessionFilter (SecurityConfig) kiểm tra user của session qua service này; mock trả null = user hợp lệ
+    @MockitoBean
+    private CurrentUserService currentUserService;
 
     @Test
     void loginPageIsPublicAndExposesCsrfMetaTags() throws Exception {
@@ -148,6 +161,70 @@ class SecurityConfigWebTest {
     @Test
     void staticResourcesArePublic() throws Exception {
         mockMvc.perform(get("/js/csrf.js")).andExpect(status().isOk());
+    }
+
+    // --- StaleSessionFilter: session đã đăng nhập nhưng user không còn trong DB ---
+
+    @Test
+    void staleSessionOnPageIsInvalidatedAndRedirectedToLogin() throws Exception {
+        when(currentUserService.getCurrentUser()).thenThrow(new AuthenticationRequiredException());
+        MockHttpSession session = new MockHttpSession();
+
+        mockMvc.perform(get("/dashboard").session(session).with(oauth2Login()))
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl("/login"));
+        assertThat(session.isInvalid()).isTrue();
+    }
+
+    @Test
+    void staleSessionCanReachLoginPageInsteadOfBeingBouncedToDashboard() throws Exception {
+        // Trước đây: /login thấy "đã đăng nhập" → /dashboard → user bị kẹt tới khi tự bấm Logout
+        when(currentUserService.getCurrentUser()).thenThrow(new AuthenticationRequiredException());
+
+        mockMvc.perform(get("/login").with(oauth2Login()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("href=\"/oauth2/authorization/facebook\"")));
+    }
+
+    @Test
+    void staleSessionOnApiReturns401ProblemDetail() throws Exception {
+        when(currentUserService.getCurrentUser()).thenThrow(new AuthenticationRequiredException());
+        MockHttpSession session = new MockHttpSession();
+
+        mockMvc.perform(get("/api/posts").session(session).with(oauth2Login()))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE))
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON));
+        assertThat(session.isInvalid()).isTrue();
+    }
+
+    @Test
+    void validSessionIsKept() throws Exception {
+        // Mock mặc định trả null = xác định được user
+        MockHttpSession session = new MockHttpSession();
+
+        mockMvc.perform(get("/login").session(session).with(oauth2Login()))
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl(SecurityConfig.LOGIN_SUCCESS_URL));
+        assertThat(session.isInvalid()).isFalse();
+        verify(currentUserService).getCurrentUser();
+    }
+
+    @Test
+    void sessionCheckFailsClosedOnDatabaseError() {
+        // Không kiểm tra được (DB lỗi) → request thất bại, không cho đi tiếp như đã đăng nhập
+        when(currentUserService.getCurrentUser()).thenThrow(new DataAccessResourceFailureException("db down"));
+
+        assertThatThrownBy(() -> mockMvc.perform(get("/dashboard").with(oauth2Login())))
+                .isInstanceOf(DataAccessResourceFailureException.class);
+    }
+
+    @Test
+    void anonymousAndStaticRequestsDoNotCheckSessionUser() throws Exception {
+        mockMvc.perform(get("/login"));
+        mockMvc.perform(get("/css/app.css").with(oauth2Login()));
+
+        verify(currentUserService, never()).getCurrentUser();
     }
 
     @Test
@@ -253,11 +330,11 @@ class SecurityConfigWebTest {
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(403));
 
-        // Token dạng đã mask nhưng giải ra byte không phải UTF-8 → vẫn 403 (fail closed), không phải 500
+        // Token "đã mask" giả mạo, giải ra byte không phải UTF-8 → vẫn 403 (fail closed), không phải 500
+        String forged = CsrfHeaderOrFormTokenRequestHandlerTest.maskedTokenDecodingToInvalidUtf8(
+                new DefaultCsrfToken("X-XSRF-TOKEN", "_csrf", csrfCookie.getValue()));
         mockMvc.perform(post("/api/posts").with(oauth2Login())
-                        .cookie(csrfCookie)
-                        .header("X-XSRF-TOKEN",
-                                CsrfHeaderOrFormTokenRequestHandlerTest.invalidUtf8MaskedToken(csrfCookie.getValue()))
+                        .cookie(csrfCookie).header("X-XSRF-TOKEN", forged)
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isForbidden())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))

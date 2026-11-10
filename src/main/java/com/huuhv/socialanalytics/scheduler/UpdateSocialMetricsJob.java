@@ -1,6 +1,6 @@
 package com.huuhv.socialanalytics.scheduler;
 
-import com.huuhv.socialanalytics.config.AppProperties;
+import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.service.AccountMetricsCrawler;
 import com.huuhv.socialanalytics.service.CrawlResult;
 import com.huuhv.socialanalytics.service.SocialAccountService;

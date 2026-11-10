@@ -1,33 +1,32 @@
 package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.exception.TooManyRequestsException;
+import io.github.bucket4j.BucketConfiguration;
+import io.github.bucket4j.ConsumptionProbe;
+import io.github.bucket4j.distributed.proxy.ProxyManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 /**
  * Giới hạn tần suất thao tác tốn tài nguyên theo từng user (OWASP A06): mỗi {@code (action, userId)} chỉ được thực hiện
- * 1 lần trong {@code minInterval}. Kiểm tra + ghi nhận nguyên tử ({@link ConcurrentMap#compute}) nên 2 request song song
- * của cùng user không cùng lọt qua.
+ * 1 lần trong {@code minInterval}.
  * <p>
- * Trạng thái giữ trong bộ nhớ của 1 instance — đủ cho triển khai 1 node; chạy nhiều instance thì cần store dùng chung
- * (Redis/Bucket4j). Mục đã hết hạn được dọn khi map vượt {@link #CLEANUP_THRESHOLD} để map không phình vô hạn.
+ * Trạng thái lưu ở MySQL qua Bucket4j ({@code config/RateLimitConfig}) → giới hạn đúng khi chạy nhiều instance sau load
+ * balancer và không mất khi restart. Bucket dung lượng 1 token, nạp lại 1 token sau {@code minInterval}; kiểm tra +
+ * trừ token nguyên tử ({@code SELECT ... FOR UPDATE}) nên request song song của cùng user chỉ 1 request lọt qua.
+ * <p>
+ * Khoá bucket gồm cả {@code minInterval}: đổi cấu hình thì dùng bucket mới, không bị kẹt cấu hình cũ đã lưu trong DB.
+ * Lỗi DB khi kiểm tra → exception lan ra (fail closed, request bị từ chối với 500), không bỏ qua giới hạn.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class UserRateLimiter {
 
-    static final int CLEANUP_THRESHOLD = 10_000;
-
-    private final Clock clock;
-    private final ConcurrentMap<Key, Instant> nextAllowedAt = new ConcurrentHashMap<>();
+    private final ProxyManager<String> rateLimitProxyManager;
 
     /**
      * @throws TooManyRequestsException khi user đã thực hiện {@code action} trong vòng {@code minInterval}
@@ -36,30 +35,23 @@ public class UserRateLimiter {
         if (minInterval.isZero()) {
             return;
         }
-        Instant now = clock.instant();
-        Instant[] blockedUntil = new Instant[1];
-        nextAllowedAt.compute(new Key(action, userId), (key, allowedAt) -> {
-            if (allowedAt != null && now.isBefore(allowedAt)) {
-                blockedUntil[0] = allowedAt;
-                return allowedAt;
-            }
-            return now.plus(minInterval);
-        });
-        if (blockedUntil[0] != null) {
+        ConsumptionProbe probe = rateLimitProxyManager.builder()
+                .build(bucketKey(action, userId, minInterval), () -> configuration(minInterval))
+                .tryConsumeAndReturnRemaining(1);
+        if (!probe.isConsumed()) {
             // Audit (OWASP A09): user bị chặn vì gọi quá tần suất
             log.warn("User {} rate limited for {}", userId, action);
-            throw new TooManyRequestsException(Duration.between(now, blockedUntil[0]));
-        }
-        if (nextAllowedAt.size() > CLEANUP_THRESHOLD) {
-            nextAllowedAt.values().removeIf(allowedAt -> !now.isBefore(allowedAt));
+            throw new TooManyRequestsException(Duration.ofNanos(probe.getNanosToWaitForRefill()));
         }
     }
 
-    /** Số mục đang theo dõi (cho test kiểm tra việc dọn mục hết hạn). */
-    int trackedEntries() {
-        return nextAllowedAt.size();
+    static String bucketKey(String action, long userId, Duration minInterval) {
+        return action + ":" + userId + ":" + minInterval.toMillis();
     }
 
-    private record Key(String action, long userId) {
+    private static BucketConfiguration configuration(Duration minInterval) {
+        return BucketConfiguration.builder()
+                .addLimit(limit -> limit.capacity(1).refillGreedy(1, minInterval))
+                .build();
     }
 }

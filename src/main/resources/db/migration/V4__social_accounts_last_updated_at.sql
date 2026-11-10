@@ -1,4 +1,4 @@
--- V3: thời điểm job updateSocialMetricsJob cập nhật metrics thành công gần nhất cho tài khoản.
+-- V4: thời điểm job updateSocialMetricsJob cập nhật metrics thành công gần nhất cho tài khoản.
 -- Lưu giờ UTC (cùng quy ước với token_expires_at) vì DB có thể dùng chung giữa app chạy ở múi giờ khác nhau;
 -- dashboard đổi sang múi giờ của server khi hiển thị. NULL = chưa cập nhật lần nào.
 
