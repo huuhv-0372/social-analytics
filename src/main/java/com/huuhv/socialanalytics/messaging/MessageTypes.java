@@ -1,0 +1,17 @@
+package com.huuhv.socialanalytics.messaging;
+
+import java.util.Map;
+
+/**
+ * Bảng alias ↔ class của message JMS: alias được ghi vào property {@code _type} của message thay cho tên class, và
+ * chỉ class có trong bảng này mới được deserialize khi nhận (OWASP A08 — không nạp class theo tên do message gửi tới).
+ * Thêm loại message mới thì khai báo alias ở đây; alias là một phần của "hợp đồng" message, đổi alias làm message
+ * đang nằm trong queue không đọc được.
+ */
+public final class MessageTypes {
+
+    public static final Map<String, Class<?>> TYPE_ID_MAPPINGS = Map.of();
+
+    private MessageTypes() {
+    }
+}

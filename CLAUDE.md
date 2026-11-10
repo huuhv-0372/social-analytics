@@ -50,7 +50,7 @@ Windows dùng `mvnw.cmd`, Mac/Linux dùng `./mvnw`:
 - Sinh class JAXB từ XSD/WSDL: `./mvnw generate-sources`
 - Docker (file `docker-compose.yaml` + `Dockerfile` ở root; trước tiên copy `.env.example` → `.env`, điền mật khẩu):
   - Chạy toàn bộ (MySQL + Artemis + app): `docker compose up -d --build`
-  - Chỉ hạ tầng, app chạy bằng JDK local: `docker compose up -d mysql artemis` (app tự đọc `.env` qua `spring.config.import`)
+  - Chỉ hạ tầng, app chạy bằng JDK local: `docker compose up -d mysql artemis` (app tự đọc `.env` qua `spring.config.import`). Profile `dev` mặc định chạy Artemis **embedded** (trong JVM) — muốn dùng broker của compose thì đặt `ARTEMIS_MODE=native` trong `.env`; container `app` luôn đặt `ARTEMIS_MODE=native`.
   - Chạy Maven trong container JDK 25, không cần JDK local: `docker compose run --rm maven package -DskipTests` (thay bằng goal bất kỳ). Service `maven` **không** có Docker socket nên test Testcontainers không chạy được ở đó.
   - Toàn bộ test trong container: `docker compose run --rm maven-testcontainers test` — mount Docker socket của host (quyền tương đương root cho mọi code trong build); không thêm socket vào service `maven`.
   - Trong mạng Docker, app/maven kết nối `mysql:3306`, `artemis:61616`; `DB_PORT` trong `.env` chỉ là port mở ra máy host.
@@ -247,6 +247,8 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 - Lưu `last_updated_at` sau mỗi lần job chạy để hiển thị "Last updated time" trên dashboard.
 
 ### 6.4. JMS & Queue (ActiveMQ Artemis)
+> **Đã có (Task 5.1):** `spring.artemis.mode`: `native` ở `application.yml` (broker riêng; `broker-url` có `connectTimeoutMillis=5000&callTimeout=10000` — OWASP A10), dev `${ARTEMIS_MODE:embedded}`, test `embedded` (`persistent: false`, không cần broker ngoài). Broker embedded cần `artemis-jakarta-server`; `pom.xml` ghi đè `artemis.version` = 2.44.0 vì 2.43.0 của BOM Boot 4.0.7 không khởi động broker trên JDK 24+ (`Subject.getSubject` → `UnsupportedOperationException`) — bỏ khi BOM ≥ 2.44. `config/JmsConfig` khai báo bean `MessageConverter` = `config/AliasOnlyJsonMessageConverter` (Boot gắn vào cả `JmsTemplate` lẫn listener factory mặc định): JSON qua `TextMessage`, kiểu payload ghi bằng alias trong property `_type` theo bảng `messaging/MessageTypes.TYPE_ID_MAPPINGS` — alias lạ / tên class → `MessageConversionException` (trusted packages rỗng, không `Class.forName` theo message — A08), gửi class chưa có alias → lỗi ngay phía gửi. Thêm loại message mới = thêm alias vào `MessageTypes`. Tên queue: `messaging/QueueNames`. Listener: `spring.jms.listener.session.transacted=true` (ném exception → broker giao lại), concurrency 1–3. Test cấu hình: `config/JmsConfigTest` (`ApplicationContextRunner` + broker embedded).
+
 - Tên queue/destination là hằng số tập trung trong `messaging/` (vd `QueueNames.IMPORT_COMPLETED`), không hardcode string rải rác.
 - Message là DTO/record serialize JSON (`MappingJackson2MessageConverter` hoặc converter Jackson 3 tương ứng) — không gửi Entity.
 - Publish `IMPORT_COMPLETED` **sau khi transaction import commit** (`@TransactionalEventListener(phase = AFTER_COMMIT)` → producer), tránh listener đọc dữ liệu chưa commit.

@@ -60,6 +60,8 @@ services:
       <<: *app-env
       # Compose dùng cho môi trường local → mặc định profile dev (bật Swagger, log DEBUG)
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      # Profile dev mặc định chạy Artemis embedded → container app dùng broker riêng của compose
+      ARTEMIS_MODE: native
       # Bắt buộc cho app (client-id / client-secret / key rỗng → app dừng khởi động; secret do
       # config/OAuth2ClientConfig kiểm tra vì Boot chỉ kiểm client-id). Không dùng ${...:?} vì compose kiểm
       # biến đó cho mọi service, kể cả khi chỉ chạy test bằng service maven (test dùng giá trị giả trong application-test.yml)

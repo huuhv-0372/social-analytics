@@ -95,6 +95,8 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 
    Container `app` (cách A) mặc định chạy profile `dev` (`SPRING_PROFILES_ACTIVE` trong `.env`). Không bật `dev` thì Swagger UI bị tắt.
 
+   Profile `dev` chạy broker JMS **Artemis embedded** (trong JVM, không cần container `artemis`). Cách B muốn dùng broker của compose (xem message trên web console) thì đặt `ARTEMIS_MODE=native` trong `.env`; container `app` (cách A) luôn dùng broker của compose.
+
    Flyway tự tạo bảng khi app khởi động.
 
 3. Truy cập:
@@ -167,7 +169,7 @@ src/main/resources/
 | File | Vai trò |
 |---|---|
 | `application.yml` | Cấu hình chung, an toàn cho production: datasource, JPA (`ddl-auto=validate`), Flyway, Artemis, ẩn chi tiết lỗi, tắt Swagger, giới hạn `size` phân trang (`spring.data.web.pageable.max-page-size`) |
-| `application-dev.yml` | Profile `dev`: bật Swagger UI, cookie session không `Secure` (HTTP localhost), log DEBUG cho app, SQL, Security (`-Dspring-boot.run.profiles=dev`) |
+| `application-dev.yml` | Profile `dev`: bật Swagger UI, cookie session không `Secure` (HTTP localhost), Artemis embedded (`ARTEMIS_MODE`), log DEBUG cho app, SQL, Security (`-Dspring-boot.run.profiles=dev`) |
 | `config/OpenApiConfig` | Thông tin tài liệu OpenAPI (title, version); không khai security scheme — Swagger UI dùng session cookie sau khi đăng nhập OAuth2 |
 | `src/test/resources/application-test.yml` | Profile `test` chỉ dành cho test, không đóng gói vào JAR (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
 | `logback-spring.xml` | Log console + file theo ngày trong `logs/` (giữ 30 ngày), pattern kèm MDC `jobId` / `importId` |
@@ -191,6 +193,7 @@ src/main/resources/
 | `TOKEN_ENCRYPTION_KEY` | ✅ | Key AES-256 (Base64 của 32 byte) mã hoá access token Facebook/X lưu DB — xem Quick Start. Thiếu/sai thì app không khởi động; đổi key thì user phải đăng nhập lại. Test dùng key giả |
 | `SESSION_COOKIE_SECURE` | — | Cookie session chỉ gửi qua HTTPS. Mặc định `true` (production); profile `dev`/`test` mặc định `false` vì chạy HTTP localhost |
 | `ARTEMIS_HOST` / `ARTEMIS_PORT` | — | Mặc định `localhost` / `61616` |
+| `ARTEMIS_MODE` | — | Chỉ profile `dev`: `embedded` (mặc định, broker trong JVM) hoặc `native` (broker của compose). Container `app` luôn `native`; production luôn `native` |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | ✅ | OAuth2 credentials (App ID / App Secret) từ Facebook Developers — xem Quick Start. Test dùng giá trị giả trong `application-test.yml` |
 | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | ✅ | OAuth 2.0 Client ID / Secret từ X Developer Portal — xem Quick Start. Test dùng giá trị giả |
 

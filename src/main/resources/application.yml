@@ -84,9 +84,23 @@ spring:
       thread-name-prefix: scheduler-
 
   artemis:
-    broker-url: tcp://${ARTEMIS_HOST:localhost}:${ARTEMIS_PORT:61616}
+    # native = kết nối broker Artemis riêng (production, docker compose). Dev/test dùng embedded (broker trong JVM,
+    # không mở cổng mạng) — xem application-dev.yml / application-test.yml
+    mode: native
+    # Timeout (OWASP A10) để broker chậm/không phản hồi không giữ thread vô thời hạn (vd thread request lúc publish):
+    #   connectTimeoutMillis: mở kết nối TCP; callTimeout: chờ broker xác nhận 1 lệnh (gửi message persistent, commit...)
+    broker-url: tcp://${ARTEMIS_HOST:localhost}:${ARTEMIS_PORT:61616}?connectTimeoutMillis=5000&callTimeout=10000
     user: ${ARTEMIS_USER}
     password: ${ARTEMIS_PASSWORD}
+
+  jms:
+    listener:
+      session:
+        # Listener ném exception → rollback session → broker giao lại message (retry + DLQ cấu hình trên broker)
+        transacted: true
+      # Số consumer song song mỗi @JmsListener (listener phải idempotent — có thể nhận lại message)
+      min-concurrency: 1
+      max-concurrency: 3
 
   data:
     web:

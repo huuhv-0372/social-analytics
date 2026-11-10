@@ -2,6 +2,11 @@
 spring:
   main:
     banner-mode: off
+  artemis:
+    # Broker trong JVM, không lưu đĩa — test không cần Artemis ngoài. Mỗi Spring context có server-id riêng.
+    mode: embedded
+    embedded:
+      persistent: false
   security:
     # Giá trị giả cho test — không gọi Facebook thật
     oauth2:
