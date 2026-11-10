@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import java.util.List;
@@ -63,6 +64,15 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 .body(problem(HttpStatus.UNAUTHORIZED, ex.getMessage()));
     }
 
+    @ExceptionHandler(TooManyRequestsException.class)
+    ResponseEntity<ProblemDetail> handleTooManyRequests(TooManyRequestsException ex) {
+        // Làm tròn lên để client không gọi lại sớm hơn giới hạn
+        long retryAfterSeconds = Math.max(1, (ex.getRetryAfter().toMillis() + 999) / 1000);
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
+                .body(problem(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage()));
+    }
+
     /**
      * Ném lại để {@code ExceptionTranslationFilter} của Spring Security trả 401/403 (vd {@code @PreAuthorize} từ chối),
      * thay vì bị handler {@link Exception} bên dưới biến thành 500.
@@ -92,6 +102,17 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 .toList();
         body.setProperty("errors", errors);
         return handleExceptionInternal(ex, body, headers, status, request);
+    }
+
+    /** Cần {@code spring.servlet.multipart.resolve-lazily=true} để lỗi phát sinh trong controller và tới được đây. */
+    @Override
+    protected ResponseEntity<Object> handleMaxUploadSizeExceededException(MaxUploadSizeExceededException ex,
+                                                                          HttpHeaders headers,
+                                                                          HttpStatusCode status,
+                                                                          WebRequest request) {
+        log.warn("Rejected upload exceeding the size limit");
+        ProblemDetail body = problem(HttpStatus.PAYLOAD_TOO_LARGE, "File exceeds the maximum allowed size");
+        return handleExceptionInternal(ex, body, headers, HttpStatus.PAYLOAD_TOO_LARGE, request);
     }
 
     /**

@@ -9,7 +9,7 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 | Tính năng | Mô tả | Giai đoạn | Trạng thái |
 |---|---|---|---|
 | CRUD bài viết & metrics | REST API `/api/posts`, `/api/metrics` + Swagger UI | 1 | ✅ |
-| Import / Export Excel | Upload danh sách bài viết (`/api/import-posts`), xuất báo cáo (`/api/export-report`) bằng Apache POI + Reflection | 2 | ⏳ |
+| Import / Export Excel | Upload danh sách bài viết (`/api/import-posts`), xuất báo cáo (`/api/export-report`) bằng Apache POI + Reflection | 2 | ✅ |
 | Social Login | Đăng nhập Facebook & Twitter/X qua OAuth2, bảo vệ CSRF | 3 | ⏳ |
 | Background job | `updateSocialMetricsJob` chạy mỗi giờ, crawl metrics (mock API) đa luồng | 4 | ⏳ |
 | JMS | Import xong → message `IMPORT_COMPLETED` → listener cập nhật thống kê, có retry + DLQ | 5 | ⏳ |
@@ -109,7 +109,8 @@ Kiến trúc 3 lớp (3-Tier), package gốc `com.huuhv.socialanalytics`:
 
 ```
 src/main/java/com/huuhv/socialanalytics/
-├── config/          # SecurityConfig, AsyncConfig, JmsConfig, WebSocketConfig, WebServiceConfig, OpenApiConfig
+├── config/          # SecurityConfig, AsyncConfig, JmsConfig, WebSocketConfig, WebServiceConfig, OpenApiConfig, RateLimitConfig
+│   └── properties/  # AppProperties (cấu hình app.*)
 ├── controller/
 │   ├── web/         # Controller Thymeleaf: /login, /dashboard, /posts ...
 │   └── api/         # REST controller /api/**
@@ -148,6 +149,7 @@ src/main/resources/
 | `config/OpenApiConfig` | Thông tin tài liệu OpenAPI (title, version) + khai báo HTTP Basic cho nút Authorize của Swagger UI |
 | `src/test/resources/application-test.yml` | Profile `test` chỉ dành cho test, không đóng gói vào JAR (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
 | `logback-spring.xml` | Log console + file theo ngày trong `logs/` (giữ 30 ngày), pattern kèm MDC `jobId` / `importId` |
+| `config/properties/AppProperties` | Bind cấu hình `app.*` (record + validation): `app.import.max-rows` / `max-uncompressed-size`, `app.export.max-rows` / `min-interval` |
 | `.env` | Giá trị bí mật cho môi trường local — copy từ `.env.example` |
 | `docker-compose.yaml` | MySQL 8.4 + ActiveMQ Artemis + app, và service `maven` (JDK 25) để chạy lệnh Maven |
 | `Dockerfile` | Build multi-stage: JDK 25 build JAR → JRE 25 chạy app bằng user không phải root |
@@ -177,13 +179,14 @@ Dùng **Flyway**, tự chạy khi ứng dụng khởi động. File đặt tại
 
 Quy ước: tên bảng số nhiều, snake_case (`users`, `posts`, `social_metrics`...); `ddl-auto=validate` nên schema chỉ thay đổi qua migration. **Không sửa migration đã commit** — muốn đổi schema thì thêm file version mới.
 
-Schema hiện tại (`V1__init_schema.sql` + `V2__posts_unique_per_user.sql`):
+Schema hiện tại (`V1__init_schema.sql` + `V1_1__rate_limit_buckets.sql`):
 
 | Bảng | Mô tả | Ràng buộc / index chính |
 |---|---|---|
 | `users` | Người dùng (email có thể NULL vì X không trả email), `role` USER/ADMIN | `uk_users_email` |
 | `posts` | Bài viết FB/X, `user_id` là chủ sở hữu (phân quyền theo owner) | `uk_posts_user_provider_external_id (user_id, provider, external_id)` — nhiều user theo dõi được cùng 1 bài, FK `users` |
 | `social_metrics` | Snapshot likes/shares/comments/followers theo `collected_at` — mỗi lần crawl thêm 1 dòng | `idx_social_metrics_post_collected (post_id, collected_at)`, FK `posts` `ON DELETE CASCADE` |
+| `rate_limit_buckets` | Trạng thái bucket Bucket4j (giới hạn tần suất export theo user, dùng chung giữa các instance) — do Bucket4j đọc/ghi, không sửa tay | PK `id` (`action:userId:intervalMs`) |
 
 ## REST API
 
@@ -205,6 +208,9 @@ Tạm thời (tới giai đoạn 3) `/api/**` xác thực bằng **HTTP Basic** 
 | GET | `/api/metrics/{id}` | Chi tiết snapshot |
 | POST | `/api/metrics` | Ghi nhận snapshot thủ công (snapshot bất biến — không có PUT) |
 | DELETE | `/api/metrics/{id}` | Xoá snapshot |
+| POST | `/api/import-posts` | Import bài viết từ file `.xlsx` (multipart, field `file`) — xem bên dưới |
+| GET | `/api/import-posts/template` | Tải file `.xlsx` mẫu (header + dữ liệu giả + sheet hướng dẫn) |
+| GET | `/api/export-report` | Tải báo cáo `.xlsx`: mỗi bài viết 1 dòng kèm snapshot metric mới nhất — xem bên dưới |
 
 Ví dụ:
 
@@ -220,9 +226,50 @@ curl -b cookies.txt -u "$API_USER_NAME:$API_USER_PASSWORD" -X POST http://localh
   -d '{"provider":"FACEBOOK","externalId":"123","url":"https://www.facebook.com/page/posts/123","content":"Hello"}'
 ```
 
+### Import bài viết từ Excel
+
+File mẫu: tải qua Swagger UI (`GET /api/import-posts/template` → *Download file*) hoặc lấy trực tiếp [`src/main/resources/excel/posts-import-template.xlsx`](src/main/resources/excel/posts-import-template.xlsx) — import nguyên file sẽ thành công.
+
+File `.xlsx`, sheet đầu tiên, dòng 1 là header (không phân biệt hoa thường, thứ tự cột tuỳ ý, cột thừa bị bỏ qua):
+
+| Provider | External ID | URL | Content | Published At |
+|---|---|---|---|---|
+| `FACEBOOK` / `TWITTER` | chữ, số, `_`, `-` (≤ 100) | https, đúng domain của provider | tuỳ chọn (≤ 5000) | tuỳ chọn — ô kiểu ngày hoặc `yyyy-MM-dd HH:mm:ss` |
+
+- Giới hạn: tối đa **5MB** (`spring.servlet.multipart.max-file-size`, vượt → 413) và **1000 dòng** (`app.import.max-rows`).
+- Chỉ nhận `.xlsx` thật (kiểm tra cả nội dung); ô chứa công thức bị từ chối.
+- Ô ngày giờ trong Excel không có múi giờ → **Published At hiểu theo múi giờ của server** (biến `TZ` của JVM/container), cùng quy ước với file export; DB lưu giờ UTC.
+- Dòng lỗi trả về kèm số dòng, dòng hợp lệ vẫn được lưu. Bài đã có (cùng provider + External ID, không phân biệt hoa thường) được **cập nhật**.
+
+```bash
+curl -b cookies.txt -u "$API_USER_NAME:$API_USER_PASSWORD" -X POST http://localhost:8080/api/import-posts \
+  -H "X-XSRF-TOKEN: $XSRF" -F "file=@posts.xlsx"
+# {"totalRows":3,"created":1,"updated":1,"failed":1,"errors":[{"row":4,"column":"URL","message":"must not be blank"}]}
+```
+
+### Xuất báo cáo Excel
+
+`GET /api/export-report` trả file `posts-report-yyyyMMdd-HHmmss.xlsx` (`Content-Disposition: attachment`), gồm mọi bài viết của user đang đăng nhập:
+
+| Provider | External ID | URL | Content | Published At | Likes | Shares | Comments | Followers | Metrics Collected At |
+|---|---|---|---|---|---|---|---|---|---|
+
+- Cột metric lấy từ snapshot mới nhất của bài; bài chưa có snapshot để trống.
+- 5 cột đầu đúng định dạng file import → có thể sửa file báo cáo rồi import lại (các cột metric bị bỏ qua khi import).
+- Published At / Metrics Collected At ghi theo **múi giờ của server** (DB lưu UTC, đổi khi xuất file) — import lại trên cùng server giữ nguyên thời điểm.
+- Tối đa **10000 dòng** (`app.export.max-rows`, vượt → 400).
+- Mỗi user export cách nhau tối thiểu **10 giây** (`app.export.min-interval`, gọi sớm hơn → 429 kèm header `Retry-After`). Mốc chặn lưu ở MySQL (Bucket4j) nên vẫn đúng khi chạy nhiều instance hoặc sau restart.
+- Tải file tối đa **60 giây** (`spring.mvc.async.request-timeout`, tính cả lúc dựng file) — quá hạn thì kết nối bị đóng. Đo với 10.000 dòng: dữ liệu thực tế (content ~200 ký tự) ~0,5 MB, dựng ~6s → dư nhiều kể cả mạng 1 Mbps; trường hợp xấu nhất (mọi cột chạm giới hạn, content 5000 ký tự) ~45 MB, dựng ~29s, cần mạng > ~10 Mbps — chấp nhận không phủ, nếu cần thì giảm `app.export.max-rows` thay vì tăng timeout.
+- File được stream thẳng vào response (không dựng cả file trong bộ nhớ).
+- Chống Formula Injection: ô bắt đầu bằng `=`, `+`, `-`, `@`, tab, CR được đánh dấu *quote prefix* (như gõ `'` trong Excel) → Excel hiển thị nguyên văn, không chạy như công thức.
+
+```bash
+curl -OJ -u "$API_USER_NAME:$API_USER_PASSWORD" http://localhost:8080/api/export-report
+```
+
 ## Xử Lý Lỗi
 
-- REST (`controller/api`): `ApiExceptionHandler` (`@RestControllerAdvice`) trả `ProblemDetail` (RFC 9457): 400 (validation, kèm `errors[{field, message}]`), 401, 404, 409, 500 (thông điệp chung).
+- REST (`controller/api`): `ApiExceptionHandler` (`@RestControllerAdvice`) trả `ProblemDetail` (RFC 9457): 400 (validation, kèm `errors[{field, message}]`), 401, 404, 409, 429 (kèm `Retry-After`), 500 (thông điệp chung).
 - Web (`controller/web`): `WebExceptionHandler` (`@ControllerAdvice`) trả view lỗi hoặc flash message.
 - Không trả stack trace / thông tin nội bộ ra client.
 

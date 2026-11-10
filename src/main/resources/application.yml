@@ -22,6 +22,26 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  servlet:
+    multipart:
+      # Giới hạn upload (import Excel — OWASP A06). Quá giới hạn → 413
+      max-file-size: 5MB
+      max-request-size: 6MB
+      # Parse multipart khi controller đọc tham số → lỗi quá dung lượng do ApiExceptionHandler xử lý (ProblemDetail)
+      resolve-lazily: true
+
+  mvc:
+    async:
+      # Request async (StreamingResponseBody của /api/export-report): tính cả lúc dựng file lẫn lúc client tải về.
+      # Mặc định 30s của Tomcat cắt ngang khi tải báo cáo lớn (gần app.export.max-rows) qua mạng chậm → file .xlsx hỏng.
+      # Không đặt quá dài: mỗi lượt tải chậm giữ 1 thread của executor async trong suốt thời gian này.
+      # Cơ sở chọn 60s (đo 10.000 dòng = app.export.max-rows; SXSSF dựng xong file rồi mới ghi → thời gian = dựng + tải):
+      #   - Dữ liệu thực tế (content ~200 ký tự): file ~0,5 MB, dựng ~6s, tải ~4s ở 1 Mbps → dư nhiều.
+      #   - Xấu nhất (mọi cột chạm giới hạn validate, content 5000 ký tự): ~45 MB, dựng ~29s → cần mạng > ~10 Mbps.
+      #     Chấp nhận không phủ trường hợp này (lớn hơn dữ liệu thực tế ~80 lần); nếu cần thì giảm app.export.max-rows
+      #     thay vì kéo timeout lên vài phút.
+      request-timeout: 60s
+
   security:
     # TẠM THỜI tới Task 3.1: user HTTP Basic để gọi /api/**. Username dùng làm email của User (owner).
     # API_USER_PASSWORD bắt buộc: để trống thì app dừng khởi động (SecurityConfig), không sinh mật khẩu in ra log.
@@ -71,3 +91,17 @@ logging:
   level:
     root: INFO
     com.huuhv.socialanalytics: INFO
+
+# Cấu hình riêng của ứng dụng — bind vào com.huuhv.socialanalytics.config.properties.AppProperties
+# (giới hạn phân trang dùng spring.data.web.pageable.* của Boot ở trên, không khai trong app.*)
+app:
+  import:
+    # Số dòng dữ liệu tối đa mỗi file import Excel
+    max-rows: 1000
+    # Tổng dung lượng sau giải nén của file .xlsx — chặn file nén cao (zip bomb) làm tràn heap
+    max-uncompressed-size: 20MB
+  export:
+    # Số dòng tối đa mỗi báo cáo export Excel — vượt thì trả 400
+    max-rows: 10000
+    # Khoảng cách tối thiểu giữa 2 lần export của cùng 1 user — gọi sớm hơn trả 429 (0 = tắt)
+    min-interval: 10s
