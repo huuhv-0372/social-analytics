@@ -1,6 +1,7 @@
 package com.huuhv.socialanalytics.config;
 
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -29,7 +30,8 @@ import java.io.IOException;
  * Cấu hình Spring Security (OWASP A01/A02):
  * <ul>
  *     <li><b>Deny-by-default</b>: chỉ {@code /login}, {@code /oauth2/**}, {@code /error} và static resource là public;
- *     mọi đường dẫn khác (kể cả {@code /api/**}, Swagger) phải đăng nhập.</li>
+ *     mọi đường dẫn khác (kể cả {@code /api/**}, Swagger) phải đăng nhập. Dispatch {@code ERROR} (trang lỗi) luôn được
+ *     cho qua để giữ đúng mã lỗi gốc.</li>
  *     <li>Chưa đăng nhập: REST ({@code /api/**}, {@code /v3/api-docs/**}) nhận 401 {@code ProblemDetail};
  *     trang web (kể cả Swagger UI) được redirect về {@code /login}. Bị từ chối (403, gồm lỗi CSRF): REST nhận
  *     {@code ProblemDetail}, trang web nhận trang lỗi 403.</li>
@@ -78,6 +80,11 @@ public class SecurityConfig {
         OAuth2LoginResultHandler loginResultHandler = new OAuth2LoginResultHandler(LOGIN_SUCCESS_URL, LOGIN_FAILURE_URL);
         http
                 .authorizeHttpRequests(auth -> auth
+                        // Lỗi gửi bằng sendError (vd 403 CSRF, 404) được Tomcat dispatch lại sang trang lỗi và chain
+                        // chạy lại cho lượt đó: cho qua mọi dispatch ERROR (không phụ thuộc server.error.path) để giữ
+                        // mã lỗi gốc, không bị anyRequest().authenticated() đè thành 401 / redirect login.
+                        // Request gốc đã qua kiểm tra quyền ở dispatch REQUEST nên không mở thêm quyền truy cập nào.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers(LOGIN_PAGE, "/oauth2/**", "/error").permitAll()
                         .requestMatchers("/css/**", "/js/**", "/images/**", "/favicon.ico").permitAll()
                         .anyRequest().authenticated())
