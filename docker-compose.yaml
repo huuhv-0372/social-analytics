@@ -15,6 +15,9 @@ x-app-env: &app-env
   ARTEMIS_PORT: 61616
   ARTEMIS_USER: ${ARTEMIS_USER:?ARTEMIS_USER is required}
   ARTEMIS_PASSWORD: ${ARTEMIS_PASSWORD:?ARTEMIS_PASSWORD is required}
+  # TẠM THỜI tới Task 3.1: tài khoản HTTP Basic cho /api/**
+  API_USER_NAME: ${API_USER_NAME:-dev@social-analytics.local}
+  API_USER_PASSWORD: ${API_USER_PASSWORD:?API_USER_PASSWORD is required}
 
 services:
   mysql:
@@ -58,6 +61,10 @@ services:
     container_name: social-analytics-app
     environment:
       <<: *app-env
+      # Compose dùng cho môi trường local → mặc định profile dev (bật Swagger, log DEBUG)
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      # Trống khi truy cập trực tiếp; "native" khi đặt sau reverse proxy tin cậy (xem .env.example)
+      FORWARD_HEADERS_STRATEGY: ${FORWARD_HEADERS_STRATEGY:-}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     depends_on:
@@ -66,22 +73,40 @@ services:
       artemis:
         condition: service_started
 
-  # Container JDK 25 để chạy lệnh Maven (test, package...) mà không cần cài JDK local.
+  # Container JDK 25 để chạy lệnh Maven (compile, package, unit test...) mà không cần cài JDK local.
   # Chỉ chạy khi gọi: docker compose run --rm maven <goal>
+  # KHÔNG có Docker socket: code của dependency/plugin chạy trong build không điều khiển được Docker của host.
+  # Vì vậy test dùng Testcontainers (@DataJpaTest, @SpringBootTest) không chạy được ở đây — dùng maven-testcontainers.
   maven:
     image: eclipse-temurin:25-jdk
     profiles: ["tools"]
     working_dir: /workspace
     entrypoint: ["sh", "./mvnw", "-B"]
-    command: ["test"]
+    command: ["package", "-DskipTests"]
     environment:
       <<: *app-env
     volumes:
       - .:/workspace
       - maven-repo:/root/.m2
+    # SocialAnalyticsApplicationTests (contextLoads) vẫn dùng MySQL của compose tới Task 7.4
     depends_on:
       mysql:
         condition: service_healthy
+
+  # Như maven nhưng mount Docker socket của host để Testcontainers tạo container MySQL "anh em".
+  # CẢNH BÁO: quyền trên Docker socket tương đương root trên máy host — mọi test/plugin/dependency chạy trong build
+  # đều có quyền này (rủi ro supply chain, OWASP A03). Chỉ dùng khi tin dependency hiện tại; ưu tiên chạy
+  # ./mvnw test bằng JDK 25 local. Gọi: docker compose run --rm maven-testcontainers test
+  maven-testcontainers:
+    extends: maven
+    command: ["test"]
+    environment:
+      # Port của container MySQL do Testcontainers tạo mở trên host nên phải kết nối qua host.docker.internal
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   mysql-data:

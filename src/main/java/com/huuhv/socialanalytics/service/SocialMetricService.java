@@ -1,0 +1,92 @@
+package com.huuhv.socialanalytics.service;
+
+import com.huuhv.socialanalytics.dto.request.SocialMetricRequest;
+import com.huuhv.socialanalytics.dto.response.PageResponse;
+import com.huuhv.socialanalytics.dto.response.SocialMetricResponse;
+import com.huuhv.socialanalytics.entity.Post;
+import com.huuhv.socialanalytics.entity.SocialMetric;
+import com.huuhv.socialanalytics.exception.BadRequestException;
+import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
+import com.huuhv.socialanalytics.repository.SocialMetricRepository;
+import com.huuhv.socialanalytics.util.PageableUtils;
+import com.huuhv.socialanalytics.util.UtcDateTimes;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.Set;
+
+/**
+ * Snapshot metric của bài viết. Snapshot là bất biến nên không có thao tác cập nhật.
+ * Quyền sở hữu bài viết kiểm tra qua {@link PostService}.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class SocialMetricService {
+
+    private static final Set<String> SORTABLE_PROPERTIES = Set.of("collectedAt", "likes", "shares", "comments", "followers");
+    private static final Sort DEFAULT_SORT = Sort.by(Sort.Direction.DESC, "collectedAt");
+    private static final String RESOURCE = "Metric";
+
+    private final SocialMetricRepository socialMetricRepository;
+    private final PostService postService;
+    private final CurrentUserService currentUserService;
+
+    @Transactional(readOnly = true)
+    public PageResponse<SocialMetricResponse> findByPost(Long postId, Instant from, Instant to,
+                                                         Pageable pageable) {
+        if (from != null && to != null && from.isAfter(to)) {
+            throw new BadRequestException("from must not be after to");
+        }
+        postService.checkOwnedPost(postId);
+        Pageable safePageable = PageableUtils.withAllowedSort(pageable, SORTABLE_PROPERTIES, DEFAULT_SORT);
+        return PageResponse.from(socialMetricRepository
+                .search(postId, UtcDateTimes.toUtc(from), UtcDateTimes.toUtc(to), safePageable)
+                .map(SocialMetricResponse::from));
+    }
+
+    @Transactional(readOnly = true)
+    public SocialMetricResponse findLatest(Long postId) {
+        postService.checkOwnedPost(postId);
+        return socialMetricRepository.findTopByPostIdOrderByCollectedAtDesc(postId)
+                .map(SocialMetricResponse::from)
+                .orElseThrow(() -> new ResourceNotFoundException(RESOURCE));
+    }
+
+    @Transactional(readOnly = true)
+    public SocialMetricResponse findById(Long id) {
+        return SocialMetricResponse.from(findOwnedMetric(id));
+    }
+
+    @Transactional
+    public SocialMetricResponse create(SocialMetricRequest request) {
+        Post post = postService.getOwnedPost(request.postId());
+        SocialMetric saved = socialMetricRepository.save(SocialMetric.builder()
+                .post(post)
+                .likes(request.likes())
+                .shares(request.shares())
+                .comments(request.comments())
+                .followers(request.followers())
+                .collectedAt(UtcDateTimes.toUtc(request.collectedAt()))
+                .build());
+        return SocialMetricResponse.from(saved);
+    }
+
+    @Transactional
+    public void delete(Long id) {
+        SocialMetric metric = findOwnedMetric(id);
+        socialMetricRepository.delete(metric);
+        log.info("Deleted metric {} of post {}", id, metric.getPost().getId());
+    }
+
+    private SocialMetric findOwnedMetric(Long id) {
+        Long userId = currentUserService.getCurrentUser().getId();
+        return socialMetricRepository.findByIdAndPostUserId(id, userId)
+                .orElseThrow(() -> new ResourceNotFoundException(RESOURCE));
+    }
+}

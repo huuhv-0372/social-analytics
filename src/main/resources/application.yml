@@ -22,18 +22,47 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  security:
+    # TẠM THỜI tới Task 3.1: user HTTP Basic để gọi /api/**. Username dùng làm email của User (owner).
+    # API_USER_PASSWORD bắt buộc: để trống thì app dừng khởi động (SecurityConfig), không sinh mật khẩu in ra log.
+    user:
+      name: ${API_USER_NAME:dev@social-analytics.local}
+      password: ${API_USER_PASSWORD:}
+
   artemis:
     broker-url: tcp://${ARTEMIS_HOST:localhost}:${ARTEMIS_PORT:61616}
     user: ${ARTEMIS_USER}
     password: ${ARTEMIS_PASSWORD}
 
+  data:
+    web:
+      pageable:
+        # Giới hạn size của tham số Pageable — vượt thì bị hạ xuống giá trị này (OWASP A06). Size mặc định 20 của Boot.
+        max-page-size: 100
+
 server:
+  # Chạy sau reverse proxy / load balancer kết thúc HTTPS: đặt FORWARD_HEADERS_STRATEGY=native để scheme/host
+  # (link Location, cờ Secure của cookie) lấy từ X-Forwarded-*. Để trống khi không có proxy tin cậy đứng trước —
+  # nếu bật, client có thể giả header này. Trống = Boot tự nhận diện nền tảng (vd Kubernetes → native).
+  # Tomcat chỉ tin X-Forwarded-* từ proxy có IP nội bộ (10/8, 172.16/12, 192.168/16, 127/8...); proxy IP khác thì
+  # khai thêm server.tomcat.remoteip.internal-proxies.
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:}
   error:
     # Không trả chi tiết lỗi nội bộ ra client (OWASP A02/A10)
     include-stacktrace: never
     include-message: never
     include-binding-errors: never
     include-exception: false
+
+# Swagger / OpenAPI tắt mặc định (không public ở production — OWASP A01), chỉ bật ở profile dev
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+    # Swagger UI đọc cookie XSRF-TOKEN và gửi header X-XSRF-TOKEN cho POST/PUT/DELETE
+    csrf:
+      enabled: true
 
 logging:
   file:
@@ -42,9 +71,3 @@ logging:
   level:
     root: INFO
     com.huuhv.socialanalytics: INFO
-
-# Cấu hình riêng của ứng dụng — bind vào com.huuhv.socialanalytics.config.AppProperties
-app:
-  pagination:
-    default-size: 20
-    max-size: 100
