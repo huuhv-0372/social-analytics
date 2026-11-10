@@ -22,7 +22,8 @@ public class MdcTaskDecorator implements TaskDecorator {
             try {
                 runnable.run();
             } finally {
-                // CallerRunsPolicy chạy task ngay trên thread gửi → khôi phục để không xoá MDC của thread đó
+                // Task có thể chạy ngay trên thread gửi (vd executor chạy đồng bộ) → khôi phục để không xoá MDC của
+                // thread đó
                 setContext(previous);
             }
         };

@@ -20,7 +20,6 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -58,13 +57,13 @@ class AsyncConfigTest {
     void socialCrawlerExecutorIsConfiguredFromProperties() {
         contextRunner.run(context -> {
             ThreadPoolTaskExecutor executor =
-                    context.getBean(AsyncConfig.SOCIAL_CRAWLER_EXECUTOR, ThreadPoolTaskExecutor.class);
+                    context.getBean(AppProperties.SocialCrawler.EXECUTOR_BEAN_NAME, ThreadPoolTaskExecutor.class);
             assertThat(executor.getCorePoolSize()).isEqualTo(2);
             assertThat(executor.getMaxPoolSize()).isEqualTo(3);
             assertThat(executor.getQueueCapacity()).isEqualTo(5);
             assertThat(executor.getThreadNamePrefix()).isEqualTo("social-crawler-");
             assertThat(executor.getThreadPoolExecutor().getRejectedExecutionHandler())
-                    .isInstanceOf(ThreadPoolExecutor.CallerRunsPolicy.class);
+                    .isInstanceOf(WaitForQueueSpacePolicy.class);
             assertThat(executor).extracting("waitForTasksToCompleteOnShutdown").isEqualTo(true);
             assertThat(executor).extracting("awaitTerminationMillis").isEqualTo(7000L);
         });
@@ -120,13 +119,13 @@ class AsyncConfigTest {
 
     static class AsyncProbe {
 
-        @Async(AsyncConfig.SOCIAL_CRAWLER_EXECUTOR)
+        @Async(AppProperties.SocialCrawler.EXECUTOR_BEAN_NAME)
         public CompletableFuture<List<String>> threadAndJobId() {
             return CompletableFuture.completedFuture(
                     List.of(Thread.currentThread().getName(), String.valueOf(MDC.get("jobId"))));
         }
 
-        @Async(AsyncConfig.SOCIAL_CRAWLER_EXECUTOR)
+        @Async(AppProperties.SocialCrawler.EXECUTOR_BEAN_NAME)
         public void fail(String accessToken) {
             throw new IllegalStateException("boom");
         }

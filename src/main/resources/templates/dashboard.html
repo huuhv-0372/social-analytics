@@ -16,7 +16,7 @@
             <h2 class="h6 text-muted mb-1">Last updated time</h2>
             <p class="fs-5 mb-0" id="last-updated-at">
                 <time th:if="${lastUpdatedAt != null}"
-                      th:datetime="${lastUpdatedAt.toOffsetDateTime()}"
+                      th:datetime="${#temporals.format(lastUpdatedAt, 'yyyy-MM-dd''T''HH:mm:ssXXX')}"
                       th:text="${#temporals.format(lastUpdatedAt, 'yyyy-MM-dd HH:mm:ss xxx')}">2026-01-01 00:00:00 +07:00</time>
                 <span th:if="${lastUpdatedAt == null}" class="text-muted">Chưa cập nhật</span>
             </p>

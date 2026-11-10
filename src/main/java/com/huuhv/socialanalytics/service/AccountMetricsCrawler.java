@@ -6,7 +6,6 @@ import com.huuhv.socialanalytics.client.social.SocialPlatformClient;
 import com.huuhv.socialanalytics.client.social.SocialPlatformClients;
 import com.huuhv.socialanalytics.client.social.SocialPlatformException;
 import com.huuhv.socialanalytics.config.properties.AppProperties;
-import com.huuhv.socialanalytics.config.AsyncConfig;
 import com.huuhv.socialanalytics.dto.response.PostRef;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,6 +13,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
@@ -35,6 +35,9 @@ import java.util.concurrent.CompletableFuture;
  * <p>
  * Mọi lỗi của tài khoản được xử lý tại đây (log + {@link CrawlResult.Status#FAILED}) để không ảnh hưởng tài khoản
  * khác. Không log access token, cũng không log id bài viết (dữ liệu người dùng nhập từ Excel) — chỉ log số lượng.
+ * <p>
+ * Hạn chót của lần chạy job được kiểm tra trước khi bắt đầu, trước mỗi lô gọi API và trước khi ghi: quá hạn → dừng,
+ * bỏ kết quả ({@code FAILED}, không ghi gì) để task trễ không chồng lên lần chạy sau.
  */
 @Slf4j
 @Service
@@ -48,13 +51,21 @@ public class AccountMetricsCrawler {
     private final AppProperties appProperties;
     private final Clock clock;
 
-    @Async(AsyncConfig.SOCIAL_CRAWLER_EXECUTOR)
-    public CompletableFuture<CrawlResult> crawl(Long accountId) {
-        return CompletableFuture.completedFuture(crawlNow(accountId));
+    /**
+     * @param deadline hạn chót của lần chạy job — quá hạn thì không làm tiếp và không ghi kết quả
+     */
+    @Async(AppProperties.SocialCrawler.EXECUTOR_BEAN_NAME)
+    public CompletableFuture<CrawlResult> crawl(Long accountId, Instant deadline) {
+        return CompletableFuture.completedFuture(crawlNow(accountId, deadline));
     }
 
-    CrawlResult crawlNow(Long accountId) {
+    CrawlResult crawlNow(Long accountId, Instant deadline) {
         try {
+            if (isPast(deadline)) {
+                // Task nằm trong hàng đợi tới khi job đã quá hạn
+                log.warn("Account {}: job deadline passed before crawling started; skipped", accountId);
+                return CrawlResult.failed(accountId);
+            }
             Optional<CrawlAccount> found = socialAccountService.findCrawlAccount(accountId);
             if (found.isEmpty()) {
                 log.info("Skip account {}: no longer exists", accountId);
@@ -67,7 +78,7 @@ public class AccountMetricsCrawler {
                         account.provider(), accountId);
                 return CrawlResult.skipped(accountId);
             }
-            return crawl(account);
+            return crawl(account, deadline);
         } catch (InvalidAccessTokenException e) {
             // Token bị thu hồi phía provider: lỗi nghiệp vụ, không cần stack trace
             log.warn("Account {}: access token rejected by provider, user must log in again", accountId);
@@ -81,7 +92,7 @@ public class AccountMetricsCrawler {
         }
     }
 
-    private CrawlResult crawl(CrawlAccount account) {
+    private CrawlResult crawl(CrawlAccount account, Instant deadline) {
         List<PostRef> posts = postService.findPostRefs(account.userId(), account.provider());
         SocialPlatformClient client = socialPlatformClients.get(account.provider());
         int batchSize = appProperties.jobs().updateMetrics().batchSize();
@@ -89,6 +100,9 @@ public class AccountMetricsCrawler {
         List<CrawledMetric> crawled = new ArrayList<>(posts.size());
         int rejected = 0;
         for (int from = 0; from < posts.size(); from += batchSize) {
+            if (isPast(deadline)) {
+                return deadlineExceeded(account.id());
+            }
             List<PostRef> batch = posts.subList(from, Math.min(from + batchSize, posts.size()));
             List<PostMetrics> results = client.fetchMetrics(account.accessToken(),
                     batch.stream().map(PostRef::externalId).toList());
@@ -101,11 +115,24 @@ public class AccountMetricsCrawler {
 
         // Tài khoản không có bài vẫn ghi last_updated_at: đã đồng bộ thành công, chỉ là không có gì để cập nhật.
         // Mọi mốc thời gian lưu DB theo giờ UTC (UtcDateTimes) — cắt về micro giây cho khớp DATETIME(6)
+        if (isPast(deadline)) {
+            return deadlineExceeded(account.id());
+        }
         LocalDateTime nowUtc = LocalDateTime.now(clock.withZone(ZoneOffset.UTC)).truncatedTo(ChronoUnit.MICROS);
-        socialMetricService.recordSnapshots(account.id(), crawled, nowUtc, nowUtc);
+        // Bài bị xoá trong lúc crawl được bỏ qua khi ghi → số snapshot đã lưu có thể nhỏ hơn số kết quả
+        int saved = socialMetricService.recordSnapshots(account.id(), crawled, nowUtc, nowUtc);
         log.info("Account {} ({}): saved {} snapshots for {} posts", account.id(), account.provider(),
-                crawled.size(), posts.size());
-        return CrawlResult.succeeded(account.id(), crawled.size());
+                saved, posts.size());
+        return CrawlResult.succeeded(account.id(), saved);
+    }
+
+    private boolean isPast(Instant deadline) {
+        return !clock.instant().isBefore(deadline);
+    }
+
+    private static CrawlResult deadlineExceeded(Long accountId) {
+        log.warn("Account {}: job deadline passed while crawling; results discarded", accountId);
+        return CrawlResult.failed(accountId);
     }
 
     /**

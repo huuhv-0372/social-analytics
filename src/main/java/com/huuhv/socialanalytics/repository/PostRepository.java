@@ -47,6 +47,14 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     List<PostRef> findRefsByUserIdAndProvider(@Param("userId") Long userId, @Param("provider") Provider provider);
 
     /**
+     * Id các bài còn tồn tại trong {@code ids}, giữ khoá chia sẻ ({@code FOR SHARE}, MySQL 8) tới hết transaction: bài
+     * không bị xoá được cho tới khi caller commit → INSERT snapshot theo các id này không vi phạm khoá ngoại. Cần chạy
+     * trong transaction.
+     */
+    @Query(value = "SELECT id FROM posts WHERE id IN (:ids) FOR SHARE", nativeQuery = true)
+    List<Long> lockExistingIds(@Param("ids") Collection<Long> ids);
+
+    /**
      * Báo cáo export: mọi bài của user kèm snapshot mới nhất (LEFT JOIN — bài chưa có snapshot vẫn có dòng).
      * Hai snapshot cùng {@code collectedAt} thì lấy bản có id lớn hơn để mỗi bài đúng 1 dòng.
      * <p>

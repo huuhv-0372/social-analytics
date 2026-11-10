@@ -58,7 +58,7 @@ class MdcTaskDecoratorTest {
 
     @Test
     void restoresCallerMdcWhenTaskRunsOnSubmittingThread() {
-        // CallerRunsPolicy: task chạy ngay trên thread gửi — MDC của thread đó phải còn nguyên sau task
+        // Task chạy ngay trên thread gửi — MDC của thread đó phải còn nguyên sau task
         MDC.put("jobId", "job-2");
         Runnable task = decorator.decorate(() -> MDC.put("jobId", "changed-inside-task"));
 

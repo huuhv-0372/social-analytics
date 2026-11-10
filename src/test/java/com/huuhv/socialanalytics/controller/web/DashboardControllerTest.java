@@ -68,7 +68,9 @@ class DashboardControllerTest {
 
     @Test
     void showsLastUpdatedTimeInServerTimeZone() throws Exception {
-        ZonedDateTime lastUpdatedAt = ZonedDateTime.of(2026, 11, 7, 10, 0, 5, 0, ZoneId.of("Asia/Ho_Chi_Minh"));
+        // Job lưu tới micro giây (DATETIME(6)); HTML <time datetime> chỉ cho phép tối đa 3 chữ số lẻ → cắt về giây
+        ZonedDateTime lastUpdatedAt = ZonedDateTime.of(2026, 11, 7, 10, 0, 5, 123_456_000,
+                ZoneId.of("Asia/Ho_Chi_Minh"));
         when(dashboardService.findLastUpdatedAt()).thenReturn(Optional.of(lastUpdatedAt));
 
         mockMvc.perform(get("/dashboard").with(oauth2Login()))

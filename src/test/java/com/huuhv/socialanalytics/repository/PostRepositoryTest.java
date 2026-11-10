@@ -211,6 +211,18 @@ class PostRepositoryTest {
         assertThat(postRepository.findRefsByUserIdAndProvider(other.getId(), Provider.TWITTER)).isEmpty();
     }
 
+    @Test
+    void lockExistingIdsReturnsOnlyPostsThatStillExist() {
+        User owner = saveUser("owner@example.com");
+        Post kept = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));
+        Post deleted = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-2"));
+        postRepository.delete(deleted);
+        postRepository.flush();
+
+        assertThat(postRepository.lockExistingIds(List.of(kept.getId(), deleted.getId(), -1L)))
+                .containsExactly(kept.getId());
+    }
+
     private void saveMetric(Post post, long likes, LocalDateTime collectedAt) {
         socialMetricRepository.saveAndFlush(SocialMetric.builder()
                 .post(post).likes(likes).shares(1).comments(2).followers(3).collectedAt(collectedAt).build());

@@ -10,7 +10,7 @@ import org.springframework.data.repository.query.Param;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
-public interface SocialMetricRepository extends JpaRepository<SocialMetric, Long> {
+public interface SocialMetricRepository extends JpaRepository<SocialMetric, Long>, SocialMetricRepositoryCustom {
 
     /** Snapshot mới nhất của 1 bài viết. */
     Optional<SocialMetric> findTopByPostIdOrderByCollectedAtDesc(Long postId);

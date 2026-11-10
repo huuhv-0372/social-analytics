@@ -83,16 +83,23 @@ public class SocialMetricService {
     /**
      * Lưu kết quả crawl của 1 tài khoản: snapshot mới cho từng bài + {@code last_updated_at} của tài khoản trong
      * <b>cùng 1 transaction</b> — lỗi giữa chừng thì không lưu gì, lần chạy sau làm lại (không có trạng thái nửa vời).
-     * Bài bị xoá trong lúc crawl làm vi phạm khoá ngoại → cả lô rollback, lần sau bài đó không còn trong danh sách.
+     * <p>
+     * Bài bị xoá trong lúc crawl (API gọi ngoài transaction) được bỏ qua, không làm hỏng snapshot của các bài còn lại:
+     * bài còn tồn tại bị khoá chia sẻ trước khi ghi ({@link PostService#lockExistingIds}) nên không thể bị xoá xen giữa
+     * → INSERT không vi phạm khoá ngoại. Ghi bằng INSERT nhiều dòng ({@link SocialMetricRepository#insertAll}), không
+     * qua {@code saveAll} (1 câu INSERT/snapshot vì id {@code IDENTITY}).
      *
      * @param metrics      số liệu đã được validate (bài thuộc tài khoản, giá trị không âm)
      * @param collectedAt  thời điểm lấy số liệu, giờ UTC (như snapshot nhập qua API — {@link UtcDateTimes})
      * @param updatedAtUtc thời điểm ghi vào {@code social_accounts.last_updated_at}, giờ UTC
+     * @return số snapshot đã lưu
      */
     @Transactional
-    public void recordSnapshots(Long accountId, List<CrawledMetric> metrics, LocalDateTime collectedAt,
-                                LocalDateTime updatedAtUtc) {
-        socialMetricRepository.saveAll(metrics.stream()
+    public int recordSnapshots(Long accountId, List<CrawledMetric> metrics, LocalDateTime collectedAt,
+                               LocalDateTime updatedAtUtc) {
+        Set<Long> existingPostIds = postService.lockExistingIds(metrics.stream().map(CrawledMetric::postId).toList());
+        List<SocialMetric> snapshots = metrics.stream()
+                .filter(metric -> existingPostIds.contains(metric.postId()))
                 .map(metric -> SocialMetric.builder()
                         .post(postService.getReference(metric.postId()))
                         .likes(metric.likes())
@@ -101,8 +108,14 @@ public class SocialMetricService {
                         .followers(metric.followers())
                         .collectedAt(collectedAt)
                         .build())
-                .toList());
+                .toList();
+        if (snapshots.size() < metrics.size()) {
+            log.info("Account {}: skipped {} snapshots of posts deleted while crawling", accountId,
+                    metrics.size() - snapshots.size());
+        }
+        int saved = socialMetricRepository.insertAll(snapshots);
         socialAccountService.markMetricsUpdated(accountId, updatedAtUtc);
+        return saved;
     }
 
     @Transactional

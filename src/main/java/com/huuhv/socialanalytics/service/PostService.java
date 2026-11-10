@@ -21,8 +21,11 @@ import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -37,6 +40,7 @@ public class PostService {
     private static final Set<String> SORTABLE_PROPERTIES = Set.of("createdAt", "updatedAt", "publishedAt", "provider");
     private static final Sort DEFAULT_SORT = Sort.by(Sort.Direction.DESC, "createdAt");
     private static final String RESOURCE = "Post";
+    static final int LOCK_BATCH_SIZE = 1000;
 
     private final PostRepository postRepository;
     private final CurrentUserService currentUserService;
@@ -137,6 +141,23 @@ public class PostService {
      */
     Post getReference(Long id) {
         return postRepository.getReferenceById(id);
+    }
+
+    /**
+     * Lọc ra các bài còn tồn tại và khoá chia sẻ chúng tới hết transaction của caller (bắt buộc có transaction): bài bị
+     * xoá trong lúc job crawl bị loại, bài còn lại không thể bị xoá trước khi snapshot được ghi. Id phải đến từ dữ liệu
+     * nội bộ (vd {@link #findPostRefs}), không từ client. Tra theo lô {@value #LOCK_BATCH_SIZE} id để câu
+     * {@code IN (...)} không quá dài.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public Set<Long> lockExistingIds(Collection<Long> postIds) {
+        List<Long> ids = List.copyOf(postIds);
+        Set<Long> existing = new HashSet<>(ids.size());
+        for (int from = 0; from < ids.size(); from += LOCK_BATCH_SIZE) {
+            existing.addAll(postRepository.lockExistingIds(ids.subList(from, Math.min(from + LOCK_BATCH_SIZE,
+                    ids.size()))));
+        }
+        return existing;
     }
 
     private static void validateUrl(PostRequest request) {

@@ -9,12 +9,10 @@ import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
-import java.util.concurrent.ThreadPoolExecutor;
-
 /**
  * Bật {@code @Async} / {@code @Scheduled} (đặt ở config riêng, không ở Application class) và khai báo thread pool
- * {@value #SOCIAL_CRAWLER_EXECUTOR} cho việc crawl metrics song song. Gọi bằng
- * {@code @Async(AsyncConfig.SOCIAL_CRAWLER_EXECUTOR)}.
+ * {@value AppProperties.SocialCrawler#EXECUTOR_BEAN_NAME} cho việc crawl metrics song song. Gọi bằng
+ * {@code @Async(AppProperties.SocialCrawler.EXECUTOR_BEAN_NAME)}.
  * <ul>
  *     <li>{@link AsyncConfigurer} khai báo thành bean riêng, class này <b>không</b> implements nó: Boot bọc mọi bean
  *     {@code AsyncConfigurer} bằng proxy của nó, nếu class config vừa là {@code AsyncConfigurer} vừa có
@@ -30,10 +28,9 @@ import java.util.concurrent.ThreadPoolExecutor;
 @EnableScheduling
 public class AsyncConfig {
 
-    public static final String SOCIAL_CRAWLER_EXECUTOR = "socialCrawlerExecutor";
     static final String SOCIAL_CRAWLER_THREAD_PREFIX = "social-crawler-";
 
-    @Bean(name = SOCIAL_CRAWLER_EXECUTOR)
+    @Bean(name = AppProperties.SocialCrawler.EXECUTOR_BEAN_NAME)
     ThreadPoolTaskExecutor socialCrawlerExecutor(AppProperties appProperties) {
         AppProperties.SocialCrawler settings = appProperties.async().socialCrawler();
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
@@ -41,8 +38,9 @@ public class AsyncConfig {
         executor.setMaxPoolSize(settings.maxPoolSize());
         executor.setQueueCapacity(settings.queueCapacity());
         executor.setThreadNamePrefix(SOCIAL_CRAWLER_THREAD_PREFIX);
-        // Hàng đợi đầy + đủ max thread → thread gửi task (scheduler) tự chạy task: chậm lại thay vì làm mất task
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        // Hàng đợi đầy + đủ max thread → thread gửi task chờ tới khi có chỗ (không mất task, không tự chạy task);
+        // executor đã tắt → TaskRejectedException
+        executor.setRejectedExecutionHandler(new WaitForQueueSpacePolicy());
         executor.setTaskDecorator(new MdcTaskDecorator());
         // Tắt app: chờ task đang crawl ghi xong (có giới hạn thời gian) thay vì ngắt giữa chừng
         executor.setWaitForTasksToCompleteOnShutdown(true);

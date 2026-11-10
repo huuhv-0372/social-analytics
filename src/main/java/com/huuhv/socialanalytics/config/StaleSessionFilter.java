@@ -2,15 +2,14 @@ package com.huuhv.socialanalytics.config;
 
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.service.CurrentUserService;
+import com.huuhv.socialanalytics.util.StaleSessionLogout;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
-import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.util.matcher.OrRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
@@ -35,13 +34,11 @@ import java.io.IOException;
  * Request REST đã qua filter vẫn bị {@code CurrentUserService} kiểm tra lần nữa ở Service (thêm 1 query theo khoá chính):
  * chấp nhận để Service tự fail closed khi chạy ngoài filter chain và khi user bị xoá giữa request.
  */
-@Slf4j
 class StaleSessionFilter extends OncePerRequestFilter {
 
     private static final RequestMatcher STATIC_RESOURCES = staticResources();
 
     private final CurrentUserService currentUserService;
-    private final SecurityContextLogoutHandler logoutHandler = new SecurityContextLogoutHandler();
 
     StaleSessionFilter(CurrentUserService currentUserService) {
         this.currentUserService = currentUserService;
@@ -60,10 +57,7 @@ class StaleSessionFilter extends OncePerRequestFilter {
             try {
                 currentUserService.getCurrentUser();
             } catch (AuthenticationRequiredException e) {
-                // Không log id session / cookie (OWASP A09); registration id là hằng số cấu hình
-                log.warn("Invalidated stale {} session: authenticated user no longer exists",
-                        ((OAuth2AuthenticationToken) authentication).getAuthorizedClientRegistrationId());
-                logoutHandler.logout(request, response, authentication);
+                StaleSessionLogout.logout(request, response, authentication);
             }
         }
         filterChain.doFilter(request, response);

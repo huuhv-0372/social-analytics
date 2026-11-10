@@ -44,6 +44,7 @@ class AccountMetricsCrawlerTest {
     // Server chạy ở +07: collectedAt, last_updated_at và hạn token đều lưu theo UTC, không theo giờ server
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-11-07T03:00:00Z"), ZoneId.of("Asia/Ho_Chi_Minh"));
     private static final LocalDateTime NOW_UTC = LocalDateTime.of(2026, 11, 7, 3, 0);
+    private static final Instant DEADLINE = CLOCK.instant().plusSeconds(60);
 
     @Mock
     private SocialAccountService socialAccountService;
@@ -64,10 +65,7 @@ class AccountMetricsCrawlerTest {
 
     @BeforeEach
     void setUp() {
-        AppProperties properties = new AppProperties(null, null, null, null, null,
-                new AppProperties.Jobs(new AppProperties.UpdateMetrics(2, Duration.ofMinutes(1))));
-        crawler = new AccountMetricsCrawler(socialAccountService, postService, socialMetricService,
-                socialPlatformClients, properties, CLOCK);
+        crawler = crawlerWithClock(CLOCK);
     }
 
     @Test
@@ -77,8 +75,9 @@ class AccountMetricsCrawlerTest {
         when(client.fetchMetrics(TOKEN, List.of("a", "b")))
                 .thenReturn(List.of(metrics("a", 10), metrics("b", 20)));
         when(client.fetchMetrics(TOKEN, List.of("c"))).thenReturn(List.of(metrics("c", 30)));
+        givenSavedSnapshots(3);
 
-        CrawlResult result = crawler.crawlNow(ACCOUNT_ID);
+        CrawlResult result = crawler.crawlNow(ACCOUNT_ID, DEADLINE);
 
         assertThat(result).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, 3));
         verify(socialMetricService).recordSnapshots(ACCOUNT_ID, List.of(
@@ -93,7 +92,7 @@ class AccountMetricsCrawlerTest {
         givenPosts(new PostRef(1L, "a"));
         when(client.fetchMetrics(TOKEN, List.of("a"))).thenReturn(List.of(metrics("a", 10)));
 
-        assertThat(crawler.crawlNow(ACCOUNT_ID).status()).isEqualTo(CrawlResult.Status.SUCCEEDED);
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE).status()).isEqualTo(CrawlResult.Status.SUCCEEDED);
     }
 
     @Test
@@ -102,7 +101,7 @@ class AccountMetricsCrawlerTest {
         when(postService.findPostRefs(USER_ID, Provider.FACEBOOK)).thenReturn(List.of());
         when(socialPlatformClients.get(Provider.FACEBOOK)).thenReturn(client);
 
-        assertThat(crawler.crawlNow(ACCOUNT_ID)).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, 0));
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, 0));
         verifyNoInteractions(client);
         verify(socialMetricService).recordSnapshots(ACCOUNT_ID, List.of(), NOW_UTC, NOW_UTC);
     }
@@ -111,7 +110,7 @@ class AccountMetricsCrawlerTest {
     void expiredTokenIsSkippedWithoutCallingProvider() {
         givenAccount(TOKEN, NOW_UTC);
 
-        assertThat(crawler.crawlNow(ACCOUNT_ID)).isEqualTo(CrawlResult.skipped(ACCOUNT_ID));
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.skipped(ACCOUNT_ID));
         verifyNoInteractions(postService, socialPlatformClients, socialMetricService);
     }
 
@@ -120,7 +119,7 @@ class AccountMetricsCrawlerTest {
         // AccessTokenConverter trả null khi không giải mã được (đổi key, dữ liệu hỏng)
         givenAccount(null, NOW_UTC.plusDays(30));
 
-        assertThat(crawler.crawlNow(ACCOUNT_ID)).isEqualTo(CrawlResult.skipped(ACCOUNT_ID));
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.skipped(ACCOUNT_ID));
         verifyNoInteractions(postService, socialPlatformClients, socialMetricService);
     }
 
@@ -128,7 +127,7 @@ class AccountMetricsCrawlerTest {
     void deletedAccountIsSkipped() {
         when(socialAccountService.findCrawlAccount(ACCOUNT_ID)).thenReturn(Optional.empty());
 
-        assertThat(crawler.crawlNow(ACCOUNT_ID)).isEqualTo(CrawlResult.skipped(ACCOUNT_ID));
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.skipped(ACCOUNT_ID));
         verifyNoInteractions(postService, socialMetricService);
     }
 
@@ -138,7 +137,7 @@ class AccountMetricsCrawlerTest {
         givenPosts(new PostRef(1L, "a"));
         when(client.fetchMetrics(anyString(), anyList())).thenThrow(new InvalidAccessTokenException("revoked"));
 
-        assertThat(crawler.crawlNow(ACCOUNT_ID)).isEqualTo(CrawlResult.failed(ACCOUNT_ID));
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.failed(ACCOUNT_ID));
         verifyNoInteractions(socialMetricService);
     }
 
@@ -150,7 +149,7 @@ class AccountMetricsCrawlerTest {
                 .thenReturn(List.of(metrics("a", 10), metrics("b", 20)));
         when(client.fetchMetrics(TOKEN, List.of("c"))).thenThrow(new SocialPlatformException("timeout"));
 
-        assertThat(crawler.crawlNow(ACCOUNT_ID)).isEqualTo(CrawlResult.failed(ACCOUNT_ID));
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.failed(ACCOUNT_ID));
         verify(socialMetricService, never()).recordSnapshots(any(), anyList(), any(), any());
     }
 
@@ -162,7 +161,7 @@ class AccountMetricsCrawlerTest {
         doThrow(new DataIntegrityViolationException("post deleted")).when(socialMetricService)
                 .recordSnapshots(eq(ACCOUNT_ID), anyList(), any(), any());
 
-        assertThat(crawler.crawlNow(ACCOUNT_ID)).isEqualTo(CrawlResult.failed(ACCOUNT_ID));
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.failed(ACCOUNT_ID));
     }
 
     @Test
@@ -177,18 +176,78 @@ class AccountMetricsCrawlerTest {
                 metrics("other-users-post", 5),
                 // Số âm
                 new PostMetrics("b", 1, -1, 0, 0)));
+        givenSavedSnapshots(1);
 
-        assertThat(crawler.crawlNow(ACCOUNT_ID)).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, 1));
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, 1));
         ArgumentCaptor<List<CrawledMetric>> saved = ArgumentCaptor.captor();
         verify(socialMetricService).recordSnapshots(eq(ACCOUNT_ID), saved.capture(), any(), any());
         assertThat(saved.getValue()).containsExactly(new CrawledMetric(1L, 10, 1, 2, 100));
     }
 
     @Test
+    void reportsOnlySnapshotsActuallySaved() {
+        // Bài bị xoá trong lúc crawl bị bỏ qua khi ghi → số đã lưu nhỏ hơn số kết quả
+        givenAccount(TOKEN, NOW_UTC.plusDays(30));
+        givenPosts(new PostRef(1L, "a"), new PostRef(2L, "b"));
+        when(client.fetchMetrics(TOKEN, List.of("a", "b"))).thenReturn(List.of(metrics("a", 10), metrics("b", 20)));
+        givenSavedSnapshots(1);
+
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, 1));
+    }
+
+    @Test
+    void taskStartingAfterDeadlineDoesNothing() {
+        assertThat(crawler.crawlNow(ACCOUNT_ID, CLOCK.instant())).isEqualTo(CrawlResult.failed(ACCOUNT_ID));
+        verifyNoInteractions(socialAccountService, postService, socialPlatformClients, socialMetricService);
+    }
+
+    @Test
+    void deadlinePassingBetweenBatchesDiscardsResults() {
+        MutableClock clock = new MutableClock(CLOCK.instant());
+        crawler = crawlerWithClock(clock);
+        givenAccount(TOKEN, NOW_UTC.plusDays(30));
+        givenPosts(new PostRef(1L, "a"), new PostRef(2L, "b"), new PostRef(3L, "c"));
+        when(client.fetchMetrics(TOKEN, List.of("a", "b"))).thenAnswer(invocation -> {
+            clock.set(DEADLINE);
+            return List.of(metrics("a", 10), metrics("b", 20));
+        });
+
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.failed(ACCOUNT_ID));
+        verify(client, never()).fetchMetrics(TOKEN, List.of("c"));
+        verifyNoInteractions(socialMetricService);
+    }
+
+    @Test
+    void deadlinePassingAfterLastBatchDiscardsResults() {
+        MutableClock clock = new MutableClock(CLOCK.instant());
+        crawler = crawlerWithClock(clock);
+        givenAccount(TOKEN, NOW_UTC.plusDays(30));
+        givenPosts(new PostRef(1L, "a"));
+        when(client.fetchMetrics(TOKEN, List.of("a"))).thenAnswer(invocation -> {
+            clock.set(DEADLINE.plusSeconds(1));
+            return List.of(metrics("a", 10));
+        });
+
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.failed(ACCOUNT_ID));
+        verifyNoInteractions(socialMetricService);
+    }
+
+    @Test
     void asyncEntryPointWrapsResultInCompletedFuture() {
         when(socialAccountService.findCrawlAccount(ACCOUNT_ID)).thenReturn(Optional.empty());
 
-        assertThat(crawler.crawl(ACCOUNT_ID)).isCompletedWithValue(CrawlResult.skipped(ACCOUNT_ID));
+        assertThat(crawler.crawl(ACCOUNT_ID, DEADLINE)).isCompletedWithValue(CrawlResult.skipped(ACCOUNT_ID));
+    }
+
+    private AccountMetricsCrawler crawlerWithClock(Clock clock) {
+        AppProperties properties = new AppProperties(null, null, null, null, null,
+                new AppProperties.Jobs(new AppProperties.UpdateMetrics(2, Duration.ofMinutes(1))));
+        return new AccountMetricsCrawler(socialAccountService, postService, socialMetricService,
+                socialPlatformClients, properties, clock);
+    }
+
+    private void givenSavedSnapshots(int saved) {
+        when(socialMetricService.recordSnapshots(eq(ACCOUNT_ID), anyList(), any(), any())).thenReturn(saved);
     }
 
     private void givenAccount(String token, LocalDateTime expiresAtUtc) {
@@ -203,5 +262,34 @@ class AccountMetricsCrawlerTest {
 
     private static PostMetrics metrics(String externalId, long likes) {
         return new PostMetrics(externalId, likes, 1, 2, 100);
+    }
+
+    /** Clock điều khiển được trong test để mô phỏng thời gian trôi qua giữa các lô gọi API. */
+    private static final class MutableClock extends Clock {
+
+        private volatile Instant now;
+
+        MutableClock(Instant now) {
+            this.now = now;
+        }
+
+        void set(Instant now) {
+            this.now = now;
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return CLOCK.getZone();
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return Clock.fixed(now, zone);
+        }
     }
 }

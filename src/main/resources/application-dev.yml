@@ -20,6 +20,8 @@ app:
   jobs:
     update-metrics:
       cron: "0 */5 * * * *"
+      # Nhỏ hơn chu kỳ 5 phút ở trên (mặc định 50m dành cho cron mỗi giờ)
+      timeout: 4m
 
 logging:
   level:

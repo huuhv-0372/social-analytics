@@ -159,7 +159,7 @@ app:
     read-timeout: 10s
   async:
     # Thread pool socialCrawlerExecutor (AsyncConfig) crawl metrics song song theo tài khoản.
-    # Đủ max-pool-size thread và queue đầy → task chạy ngay trên thread gửi (CallerRunsPolicy), không bị bỏ.
+    # Đủ max-pool-size thread và queue đầy → thread gửi chờ tới khi queue có chỗ (WaitForQueueSpacePolicy), không bị bỏ.
     social-crawler:
       core-pool-size: 4
       max-pool-size: 8
@@ -173,5 +173,6 @@ app:
       cron: "0 0 * * * *"
       # Số bài mỗi lần gọi API mạng xã hội (tối đa 100)
       batch-size: 100
-      # Chờ mọi tài khoản xong tối đa khoảng này (nhỏ hơn chu kỳ cron)
+      # Thời lượng tối đa 1 lần chạy, tính từ lúc bắt đầu (gồm cả lúc gửi task). Quá hạn: tài khoản chưa xong tính lỗi,
+      # task còn chạy bỏ kết quả. Phải nhỏ hơn chu kỳ cron — đổi cron thì đổi cả timeout (xem application-dev.yml)
       timeout: 50m

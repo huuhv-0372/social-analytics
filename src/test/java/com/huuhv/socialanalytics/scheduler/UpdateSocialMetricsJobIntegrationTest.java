@@ -25,6 +25,7 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -119,6 +120,23 @@ class UpdateSocialMetricsJobIntegrationTest {
                 .isCloseTo(LocalDateTime.now(ZoneOffset.UTC), within(1, ChronoUnit.MINUTES));
         assertThat(socialAccountRepository.findById(expiredAccount.getId()).orElseThrow().getLastUpdatedAt())
                 .isNull();
+    }
+
+    @Test
+    void postDeletedWhileCrawlingDoesNotLoseSnapshotsOfOtherPosts() {
+        // User xoá 1 bài sau khi crawler đã gọi API (ngoài transaction), trước khi ghi — từ thread khác như request thật
+        doAnswer(invocation -> {
+            CompletableFuture.runAsync(() -> postRepository.deleteById(fbPost2.getId())).join();
+            return invocation.callRealMethod();
+        }).when(socialMetricService).recordSnapshots(any(), anyList(), any(), any());
+
+        UpdateSocialMetricsJob.Summary summary = job.runOnce();
+
+        assertThat(summary).isEqualTo(new UpdateSocialMetricsJob.Summary(2, 1, 1, 0, 1));
+        assertThat(socialMetricRepository.findAll()).extracting(metric -> metric.getPost().getId())
+                .containsExactly(fbPost1.getId());
+        assertThat(socialAccountRepository.findById(activeAccount.getId()).orElseThrow().getLastUpdatedAt())
+                .isNotNull();
     }
 
     @Test

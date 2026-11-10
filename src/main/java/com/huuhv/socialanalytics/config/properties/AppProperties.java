@@ -136,6 +136,13 @@ public record AppProperties(
             @PositiveOrZero @Max(10000) @DefaultValue("100") int queueCapacity,
             @NotNull @DefaultValue("30s") Duration awaitTermination) {
 
+        /**
+         * Tên bean executor: {@code @Async(AppProperties.SocialCrawler.EXECUTOR_BEAN_NAME)}. Đặt ở đây (không ở
+         * {@code config/AsyncConfig}) để service dùng được mà không import package {@code config} — tránh vòng phụ
+         * thuộc {@code service} ↔ {@code config}.
+         */
+        public static final String EXECUTOR_BEAN_NAME = "socialCrawlerExecutor";
+
         @AssertTrue(message = "app.async.social-crawler.core-pool-size must not exceed max-pool-size")
         public boolean isCorePoolSizeWithinMax() {
             return corePoolSize <= maxPoolSize;
@@ -158,8 +165,9 @@ public record AppProperties(
      * Job {@code updateSocialMetricsJob}.
      *
      * @param batchSize số bài mỗi lần gọi API mạng xã hội (không vượt giới hạn 100 id/lần của client)
-     * @param timeout   thời gian tối đa chờ mọi tài khoản crawl xong; quá hạn thì kết thúc lần chạy, tài khoản chưa
-     *                  xong tính là lỗi
+     * @param timeout   thời lượng tối đa của 1 lần chạy, tính từ lúc bắt đầu (gồm cả lúc gửi task). Quá hạn: tài khoản
+     *                  chưa xong tính là lỗi, task còn chạy dừng ở bước kế tiếp và bỏ kết quả (không ghi DB). Phải
+     *                  nhỏ hơn chu kỳ cron
      */
     public record UpdateMetrics(
             @Positive @Max(100) @DefaultValue("100") int batchSize,

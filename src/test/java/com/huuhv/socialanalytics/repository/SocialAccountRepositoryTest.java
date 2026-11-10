@@ -162,6 +162,37 @@ class SocialAccountRepositoryTest {
         assertThat(reloaded.getTokenExpiresAt()).isEqualTo(LocalDateTime.of(2030, 1, 1, 0, 0));
     }
 
+    @Test
+    void savingStaleAccountDoesNotOverwriteLastUpdatedAtWrittenByJob() {
+        // Đăng nhập nạp tài khoản (last_updated_at = null) ...
+        SocialAccount loadedByLogin = socialAccountRepository
+                .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "1234567890").orElseThrow();
+        assertThat(loadedByLogin.getLastUpdatedAt()).isNull();
+        // ... trong lúc đó job ghi thời điểm crawl (UPDATE 1 cột, không đổi entity đang quản lý) ...
+        LocalDateTime crawledAt = LocalDateTime.of(2026, 11, 10, 3, 0);
+        socialAccountRepository.updateLastUpdatedAt(loadedByLogin.getId(), crawledAt);
+        // ... rồi đăng nhập flush token mới: không được ghi giá trị cũ đã nạp đè lên kết quả của job
+        loadedByLogin.setAccessToken("new-token");
+        socialAccountRepository.saveAndFlush(loadedByLogin);
+        entityManager.clear();
+
+        SocialAccount reloaded = socialAccountRepository.findById(loadedByLogin.getId()).orElseThrow();
+        assertThat(reloaded.getLastUpdatedAt()).isEqualTo(crawledAt);
+        assertThat(reloaded.getAccessToken()).isEqualTo("new-token");
+    }
+
+    @Test
+    void lastUpdatedAtSetOnNewEntityIsNotInserted() {
+        // Chỉ job ghi cột này — entity mới luôn bắt đầu "chưa cập nhật"
+        User other = userRepository.save(User.builder().displayName("Other").build());
+        SocialAccount account = account(other, Provider.TWITTER, "2244994945");
+        account.setLastUpdatedAt(LocalDateTime.of(2026, 11, 10, 3, 0));
+        Long id = socialAccountRepository.saveAndFlush(account).getId();
+        entityManager.clear();
+
+        assertThat(socialAccountRepository.findById(id).orElseThrow().getLastUpdatedAt()).isNull();
+    }
+
     private static SocialAccount account(User user, Provider provider, String providerUserId) {
         return SocialAccount.builder()
                 .user(user)
