@@ -3,6 +3,8 @@ package com.huuhv.socialanalytics.config;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.mock.web.MockHttpSession;
+import org.springframework.security.web.WebAttributes;
 import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
@@ -42,5 +44,29 @@ class OAuth2LoginResultHandlerTest {
                 new OAuth2AuthenticationException(new OAuth2Error("access_denied\r\nforged log line")));
 
         assertThat(response.getRedirectedUrl()).isEqualTo("/login?error");
+    }
+
+    @Test
+    void failureDoesNotStoreExceptionInSession() throws Exception {
+        // Session lưu MySQL: exception (cause tuỳ ý) không được serialize vào session
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        MockHttpSession session = new MockHttpSession();
+        request.setSession(session);
+
+        handler.onAuthenticationFailure(request, new MockHttpServletResponse(), new OAuth2AuthenticationException(
+                new OAuth2Error("server_error"), new IllegalStateException("db down")));
+
+        assertThat(session.getAttribute(WebAttributes.AUTHENTICATION_EXCEPTION)).isNull();
+        assertThat(session.getAttributeNames().hasMoreElements()).isFalse();
+    }
+
+    @Test
+    void failureDoesNotCreateSession() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+
+        handler.onAuthenticationFailure(request, new MockHttpServletResponse(),
+                new OAuth2AuthenticationException(new OAuth2Error("access_denied")));
+
+        assertThat(request.getSession(false)).isNull();
     }
 }

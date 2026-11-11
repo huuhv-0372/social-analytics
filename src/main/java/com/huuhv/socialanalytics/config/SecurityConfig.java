@@ -77,6 +77,9 @@ public class SecurityConfig {
     static final String LOGIN_SUCCESS_URL = "/dashboard";
     static final String LOGIN_FAILURE_URL = LOGIN_PAGE + "?error";
 
+    /** Cookie session mặc định của Spring Session ({@code DefaultCookieSerializer}) — session lưu MySQL, xem {@link SessionConfig}. */
+    static final String SESSION_COOKIE_NAME = "SESSION";
+
     static final List<String> STATIC_RESOURCE_PATTERNS = List.of("/css/**", "/js/**", "/images/**", "/favicon.ico");
 
     @Bean
@@ -116,7 +119,7 @@ public class SecurityConfig {
                         .logoutSuccessHandler(logoutSuccessHandler())
                         .invalidateHttpSession(true)
                         .clearAuthentication(true)
-                        .deleteCookies("JSESSIONID"))
+                        .deleteCookies(SESSION_COOKIE_NAME))
                 .headers(headers -> headers
                         .contentSecurityPolicy(csp -> csp.policyDirectives(CONTENT_SECURITY_POLICY))
                         .frameOptions(frame -> frame.deny())

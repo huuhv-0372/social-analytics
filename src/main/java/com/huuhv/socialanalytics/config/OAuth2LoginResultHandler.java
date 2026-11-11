@@ -9,9 +9,10 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.web.DefaultRedirectStrategy;
+import org.springframework.security.web.RedirectStrategy;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
-import org.springframework.security.web.authentication.SimpleUrlAuthenticationFailureHandler;
 import org.springframework.security.web.authentication.SimpleUrlAuthenticationSuccessHandler;
 
 import java.io.IOException;
@@ -20,17 +21,22 @@ import java.io.IOException;
  * Kết quả đăng nhập OAuth2: ghi log sự kiện bảo mật (OWASP A09) rồi redirect tới URL nội bộ cố định
  * (không theo tham số hay saved request → không open redirect, OWASP A01).
  * Chỉ log provider, id user phía provider và mã lỗi chuẩn OAuth2 — không log token, code, state hay cookie.
+ * <p>
+ * Thất bại: không dùng {@code SimpleUrlAuthenticationFailureHandler} vì nó lưu exception vào session
+ * ({@code SPRING_SECURITY_LAST_EXCEPTION}) — session nằm trong MySQL, exception kèm {@code cause} tuỳ ý (lỗi HTTP, lỗi
+ * DB) có thể không serialize được hoặc bị bộ lọc deserialize chặn, và trang login không đọc nó (chỉ hiện thông báo chung).
  */
 @Slf4j
 class OAuth2LoginResultHandler implements AuthenticationSuccessHandler, AuthenticationFailureHandler {
 
     private final SimpleUrlAuthenticationSuccessHandler successDelegate;
-    private final SimpleUrlAuthenticationFailureHandler failureDelegate;
+    private final RedirectStrategy redirectStrategy = new DefaultRedirectStrategy();
+    private final String failureUrl;
 
     OAuth2LoginResultHandler(String successUrl, String failureUrl) {
         this.successDelegate = new SimpleUrlAuthenticationSuccessHandler(successUrl);
         this.successDelegate.setAlwaysUseDefaultTargetUrl(true);
-        this.failureDelegate = new SimpleUrlAuthenticationFailureHandler(failureUrl);
+        this.failureUrl = failureUrl;
     }
 
     @Override
@@ -53,6 +59,6 @@ class OAuth2LoginResultHandler implements AuthenticationSuccessHandler, Authenti
                 : exception.getClass().getSimpleName();
         log.warn("Login failed: error={} remoteAddr={}", LogSanitizer.stripLineBreaks(errorCode),
                 request.getRemoteAddr());
-        failureDelegate.onAuthenticationFailure(request, response, exception);
+        redirectStrategy.sendRedirect(request, response, failureUrl);
     }
 }

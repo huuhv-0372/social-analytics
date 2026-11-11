@@ -73,6 +73,11 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-oauth2-client</artifactId>
         </dependency>
+        <!-- Session lưu MySQL (bảng SPRING_SESSION, Flyway V3_1): nhiều instance dùng chung, restart không mất đăng nhập -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-session-jdbc</artifactId>
+        </dependency>
 
         <!-- Messaging / Realtime / WebService -->
         <dependency>

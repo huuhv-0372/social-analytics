@@ -14,6 +14,7 @@ import org.springframework.security.oauth2.client.endpoint.OAuth2AuthorizationCo
 import org.springframework.security.oauth2.client.endpoint.RestClientAuthorizationCodeTokenResponseClient;
 import org.springframework.security.oauth2.client.http.OAuth2ErrorResponseErrorHandler;
 import org.springframework.security.oauth2.client.userinfo.DefaultOAuth2UserService;
+import org.springframework.security.oauth2.client.web.OAuth2AuthorizedClientRepository;
 import org.springframework.security.oauth2.core.http.converter.OAuth2AccessTokenResponseHttpMessageConverter;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
@@ -30,6 +31,8 @@ import java.util.Map;
  *     {@code userInfoEndpoint().userService(customOAuth2UserService)}.</li>
  *     <li>{@code authorizationCodeTokenResponseClient}: đổi authorization code lấy access token. {@code oauth2Login}
  *     tự lấy bean kiểu {@code OAuth2AccessTokenResponseClient<OAuth2AuthorizationCodeGrantRequest>} từ context.</li>
+ *     <li>{@code authorizedClientRepository}: không giữ access token trong bộ nhớ
+ *     ({@link DiscardingOAuth2AuthorizedClientRepository}) — token chỉ có 1 bản, mã hoá trong DB.</li>
  * </ul>
  * Cả hai giữ nguyên cấu hình mặc định của Spring Security (message converter, error handler dịch lỗi OAuth2) và chỉ
  * thêm connect/read timeout từ {@code app.oauth2.*} (OWASP A10). Hết giờ → {@code OAuth2AuthenticationException} →
@@ -51,6 +54,12 @@ public class OAuth2ClientConfig {
     OAuth2AccessTokenResponseClient<OAuth2AuthorizationCodeGrantRequest> authorizationCodeTokenResponseClient(
             AppProperties properties) {
         return tokenResponseClient(properties.oauth2());
+    }
+
+    /** Thay repository mặc định của Boot (giữ token dạng rõ trong heap) — {@code oauth2Login} tự lấy bean này. */
+    @Bean
+    OAuth2AuthorizedClientRepository authorizedClientRepository() {
+        return new DiscardingOAuth2AuthorizedClientRepository();
     }
 
     @Bean
