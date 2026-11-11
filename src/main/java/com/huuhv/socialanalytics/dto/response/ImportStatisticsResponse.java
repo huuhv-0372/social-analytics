@@ -1,9 +1,9 @@
 package com.huuhv.socialanalytics.dto.response;
 
 import com.huuhv.socialanalytics.entity.UserImportStatistic;
+import com.huuhv.socialanalytics.util.UtcDateTimes;
 
 import java.time.ZoneId;
-import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 
 /**
@@ -20,6 +20,6 @@ public record ImportStatisticsResponse(long totalImports, long totalRows, long s
     public static ImportStatisticsResponse from(UserImportStatistic statistic, ZoneId zone) {
         return new ImportStatisticsResponse(statistic.getTotalImports(), statistic.getTotalRows(),
                 statistic.getSuccessRows(), statistic.getFailedRows(),
-                statistic.getLastImportAt().atZone(ZoneOffset.UTC).withZoneSameInstant(zone));
+                UtcDateTimes.atZone(statistic.getLastImportAt(), zone));
     }
 }

@@ -11,6 +11,7 @@ import com.huuhv.socialanalytics.repository.ImportHistoryRepository;
 import com.huuhv.socialanalytics.repository.PostRepository;
 import com.huuhv.socialanalytics.repository.UserImportStatisticRepository;
 import com.huuhv.socialanalytics.repository.UserRepository;
+import com.huuhv.socialanalytics.service.ImportHistoryService;
 import com.huuhv.socialanalytics.service.ImportStatisticsService;
 import com.huuhv.socialanalytics.service.PostUpsertService;
 import org.junit.jupiter.api.AfterEach;
@@ -75,6 +76,11 @@ class ImportCompletedFlowIntegrationTest {
     @MockitoSpyBean
     private ImportStatisticsService importStatisticsService;
 
+    // Không dùng trong class này: khai báo cùng bộ spy với ImportCompletedDlqIntegrationTest để 2 class dùng chung
+    // context đã cache (bean override là một phần của khoá cache)
+    @MockitoSpyBean
+    private ImportHistoryService importHistoryService;
+
     private User owner;
 
     @BeforeEach
@@ -92,7 +98,7 @@ class ImportCompletedFlowIntegrationTest {
 
     @Test
     void committedImportIsAddedToOwnerStatisticsAsynchronously() {
-        long importId = postUpsertService.upsert(owner, List.of(post("fb-1"), post("fb-2")), 3).importId();
+        long importId = postUpsertService.saveImport(owner, List.of(post("fb-1"), post("fb-2")), 3).importId();
 
         await().atMost(WAIT).untilAsserted(() ->
                 assertThat(userImportStatisticRepository.findById(owner.getId())).get().satisfies(statistic -> {
@@ -110,7 +116,7 @@ class ImportCompletedFlowIntegrationTest {
 
     @Test
     void redeliveredMessageDoesNotCountImportTwice() {
-        long importId = postUpsertService.upsert(owner, List.of(post("fb-1")), 1).importId();
+        long importId = postUpsertService.saveImport(owner, List.of(post("fb-1")), 1).importId();
         verify(importStatisticsService, timeout(WAIT_MS)).applyImport(importId, owner.getId());
         awaitProcessed(importId);
 
@@ -127,7 +133,7 @@ class ImportCompletedFlowIntegrationTest {
     @Test
     void rolledBackImportReachesNoListener() {
         transactionTemplate.executeWithoutResult(status -> {
-            postUpsertService.upsert(owner, List.of(post("fb-1")), 1);
+            postUpsertService.saveImport(owner, List.of(post("fb-1")), 1);
             status.setRollbackOnly();
         });
 

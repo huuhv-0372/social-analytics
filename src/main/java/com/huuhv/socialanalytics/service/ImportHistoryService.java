@@ -42,11 +42,13 @@ public class ImportHistoryService {
      * và sự kiện {@code @TransactionalEventListener(AFTER_COMMIT)} chỉ được phát khi có transaction (không có thì
      * Spring lặng lẽ bỏ sự kiện → mất message).
      *
+     * Số dòng do caller tính ({@link PostUpsertService#saveImport}); DB kiểm tra
+     * {@code total_rows = created_rows + updated_rows + failed_rows} (CHECK constraint).
+     *
      * @return {@code importId}
      */
     @Transactional(propagation = Propagation.MANDATORY)
-    public long record(User owner, int totalRows, int createdRows, int updatedRows) {
-        int failedRows = totalRows - createdRows - updatedRows;
+    public long record(User owner, int totalRows, int createdRows, int updatedRows, int failedRows) {
         ImportHistory history = importHistoryRepository.save(ImportHistory.builder()
                 .user(owner)
                 .totalRows(totalRows)

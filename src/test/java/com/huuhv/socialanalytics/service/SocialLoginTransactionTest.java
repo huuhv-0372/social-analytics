@@ -163,7 +163,7 @@ class SocialLoginTransactionTest {
         authenticate(token);
 
         User owner = currentUserService.getCurrentUser();
-        PostUpsertService.Result result = postUpsertService.upsert(owner, List.of(postRequest()), 1);
+        PostUpsertService.Result result = postUpsertService.saveImport(owner, List.of(postRequest()), 1);
 
         assertThat(result.created()).isEqualTo(1);
         // Lịch sử import cũng gán được owner là reference lấy ngoài transaction

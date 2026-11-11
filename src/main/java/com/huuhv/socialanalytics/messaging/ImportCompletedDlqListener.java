@@ -2,14 +2,18 @@ package com.huuhv.socialanalytics.messaging;
 
 import com.huuhv.socialanalytics.service.ImportHistoryService;
 import com.huuhv.socialanalytics.util.LogSanitizer;
+import jakarta.jms.BytesMessage;
 import jakarta.jms.JMSException;
 import jakarta.jms.Message;
+import jakarta.jms.TextMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.jms.annotation.JmsListener;
 import org.springframework.jms.support.converter.MessageConverter;
 import org.springframework.stereotype.Component;
+
+import java.time.Instant;
 
 /**
  * Nhận message {@code IMPORT_COMPLETED} đã giao lỗi đủ số lần tối đa và bị broker chuyển sang
@@ -23,7 +27,11 @@ import org.springframework.stereotype.Component;
  * (theo address setting mặc định {@code #}), không mất cảnh báo.
  * <p>
  * Nhận {@link Message} thô thay vì {@link ImportCompletedMessage}: message có thể vào DLQ chính vì payload không đọc
- * được — chuyển đổi ở tham số method sẽ lỗi lại ở đây. Payload không đọc được chỉ được log, không ném exception.
+ * được — chuyển đổi ở tham số method sẽ lỗi lại ở đây. Payload không đọc được chỉ được log (kèm {@code JMSMessageID},
+ * thời điểm gửi, độ dài body — không log nội dung), không ném exception.
+ * <p>
+ * Address setting riêng của {@value QueueNames#IMPORT_COMPLETED_DLQ} trong {@code artemis/broker.properties}: giao lại
+ * vô hạn, giãn dần — lỗi DB kéo dài không đẩy message sang queue {@code DLQ} chung (không có listener).
  */
 @Slf4j
 @Component
@@ -32,6 +40,8 @@ public class ImportCompletedDlqListener {
 
     /** Property Artemis gắn khi chuyển message sang dead-letter address: address gốc của message. */
     static final String ORIGINAL_ADDRESS_PROPERTY = "_AMQ_ORIG_ADDRESS";
+
+    private static final int MAX_LOGGED_ID_LENGTH = 100;
 
     private final MessageConverter messageConverter;
     private final ImportHistoryService importHistoryService;
@@ -68,10 +78,52 @@ public class ImportCompletedDlqListener {
             }
             log.warn("Dead-lettered message has no valid importId");
         } catch (JMSException | RuntimeException e) {
-            // Thông điệp lỗi có thể chứa dữ liệu của message (vd giá trị _type) → chỉ log loại lỗi
-            log.warn("Dead-lettered message is unreadable ({})", e.getClass().getSimpleName());
+            // Message bị lấy khỏi DLQ và không dựng lại được từ DB → log đủ thông tin nhận dạng để đối chiếu với log
+            // broker / producer. Thông điệp lỗi có thể chứa dữ liệu của message (vd giá trị _type) → chỉ log loại lỗi,
+            // không log payload.
+            log.warn("Dead-lettered message is unreadable ({}): messageId={}, timestamp={}, bodyLength={}",
+                    e.getClass().getSimpleName(), messageId(message), timestamp(message), bodyLength(message));
         }
         return null;
+    }
+
+    private static String messageId(Message message) {
+        try {
+            String id = message.getJMSMessageID();
+            // Do client phía gửi đặt → không tin cậy: bỏ CR/LF, giới hạn độ dài
+            return id == null ? "unknown" : LogSanitizer.stripLineBreaks(abbreviate(id));
+        } catch (JMSException e) {
+            return "unknown";
+        }
+    }
+
+    private static Object timestamp(Message message) {
+        try {
+            long timestamp = message.getJMSTimestamp();
+            return timestamp > 0 ? Instant.ofEpochMilli(timestamp) : "unknown";
+        } catch (JMSException e) {
+            return "unknown";
+        }
+    }
+
+    /** Số ký tự (TextMessage) / byte (BytesMessage) của body — không đọc nội dung ra log. */
+    private static Object bodyLength(Message message) {
+        try {
+            if (message instanceof TextMessage text) {
+                String body = text.getText();
+                return body == null ? 0 : body.length();
+            }
+            if (message instanceof BytesMessage bytes) {
+                return bytes.getBodyLength();
+            }
+            return "n/a";
+        } catch (JMSException e) {
+            return "unknown";
+        }
+    }
+
+    private static String abbreviate(String value) {
+        return value.length() <= MAX_LOGGED_ID_LENGTH ? value : value.substring(0, MAX_LOGGED_ID_LENGTH) + "...";
     }
 
     private static String originalAddress(Message message) {

@@ -11,6 +11,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.MDC;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.QueryTimeoutException;
 
 import java.time.Instant;
@@ -19,6 +20,7 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -87,6 +89,39 @@ class ImportCompletedListenerTest {
         assertThatThrownBy(() -> listener.onImportCompleted(message(12L, 3L)))
                 .isInstanceOf(QueryTimeoutException.class);
         assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
+    }
+
+    @Test
+    void lockConflictIsRetriedOnceInNewTransaction() {
+        // 2 import đầu tiên của user mới xử lý song song: upsert dòng thống kê chưa tồn tại có thể deadlock
+        when(importStatisticsService.applyImport(12L, 3L))
+                .thenThrow(new CannotAcquireLockException("Deadlock found when trying to get lock"))
+                .thenReturn(ApplyResult.APPLIED);
+
+        listener.onImportCompleted(message(12L, 3L));
+
+        verify(importStatisticsService, times(2)).applyImport(12L, 3L);
+        assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
+    }
+
+    @Test
+    void repeatedLockConflictPropagatesSoBrokerRedelivers() {
+        when(importStatisticsService.applyImport(12L, 3L))
+                .thenThrow(new CannotAcquireLockException("Deadlock found when trying to get lock"));
+
+        assertThatThrownBy(() -> listener.onImportCompleted(message(12L, 3L)))
+                .isInstanceOf(CannotAcquireLockException.class);
+        // Chỉ thử lại 1 lần, phần còn lại do broker (redelivery delay)
+        verify(importStatisticsService, times(2)).applyImport(12L, 3L);
+    }
+
+    @Test
+    void otherDatabaseErrorsAreNotRetriedInProcess() {
+        when(importStatisticsService.applyImport(12L, 3L)).thenThrow(new QueryTimeoutException("db down"));
+
+        assertThatThrownBy(() -> listener.onImportCompleted(message(12L, 3L)))
+                .isInstanceOf(QueryTimeoutException.class);
+        verify(importStatisticsService, times(1)).applyImport(12L, 3L);
     }
 
     private static ImportCompletedMessage message(Long importId, Long userId) {

@@ -68,7 +68,7 @@ class ImportHistoryServiceTest {
             return history;
         });
 
-        long importId = importHistoryService.record(owner, 10, 6, 3);
+        long importId = importHistoryService.record(owner, 10, 6, 3, 1);
 
         assertThat(importId).isEqualTo(55L);
         ArgumentCaptor<ImportHistory> saved = ArgumentCaptor.forClass(ImportHistory.class);
@@ -93,7 +93,7 @@ class ImportHistoryServiceTest {
             return history;
         });
 
-        importHistoryService.record(owner, 4, 0, 0);
+        importHistoryService.record(owner, 4, 0, 0, 4);
 
         ArgumentCaptor<ImportCompletedEvent> event = ArgumentCaptor.forClass(ImportCompletedEvent.class);
         verify(eventPublisher).publishEvent(event.capture());

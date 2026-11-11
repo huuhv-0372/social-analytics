@@ -56,6 +56,9 @@ public class ImportStatisticsService {
         }
         userImportStatisticRepository.addImport(counts.userId(), counts.totalRows(), counts.successRows(),
                 counts.failedRows(), counts.importedAt(), now);
+        // Audit (OWASP A09) ghi owner trong DB — không phải userId của payload. Lỗi commit sau dòng này → exception
+        // thoát khỏi listener (có log của container) và message được giao lại.
+        log.info("Import {} added to import statistics of user {}", importId, counts.userId());
         return ApplyResult.APPLIED;
     }
 

@@ -70,7 +70,7 @@ public class PostImportService {
 
     /**
      * @throws BadRequestException khi file rỗng, không phải .xlsx (đuôi hoặc nội dung), vượt dung lượng giải nén,
-     *                             thiếu cột hoặc quá số dòng
+     *                             thiếu cột, không có dòng dữ liệu nào (chỉ có header) hoặc quá số dòng
      */
     public ImportResultResponse importPosts(MultipartFile file) {
         // Fail closed: kiểm tra owner trước khi parse (POI). Request ẩn danh đã bị SecurityConfig chặn từ filter chain,
@@ -78,13 +78,18 @@ public class PostImportService {
         User owner = currentUserService.getCurrentUser();
         ExcelReadResult<PostImportRow> result = read(file);
 
+        if (result.totalRows() == 0) {
+            // File chỉ có dòng tiêu đề: không phải 1 lần import — không ghi lịch sử, không cộng thống kê
+            throw new BadRequestException("File has no data rows");
+        }
+
         List<ExcelRowError> errors = new ArrayList<>();
         List<PostRequest> validRows = validate(result.rows(), errors);
-        PostUpsertService.Result counts = postUpsertService.upsert(owner, validRows, result.totalRows());
+        PostUpsertService.Result counts = postUpsertService.saveImport(owner, validRows, result.totalRows());
 
         int created = counts.created();
         int updated = counts.updated();
-        int failed = result.totalRows() - created - updated;
+        int failed = counts.failed();
         // Audit (OWASP A09): ai import, bao nhiêu dòng — không log tên file hay nội dung
         log.info("User {} imported posts: importId={}, total={}, created={}, updated={}, failed={}",
                 owner.getId(), counts.importId(), result.totalRows(), created, updated, failed);

@@ -3,6 +3,7 @@ package com.huuhv.socialanalytics.messaging;
 import com.huuhv.socialanalytics.service.ImportHistoryService;
 import jakarta.jms.JMSException;
 import jakarta.jms.Message;
+import jakarta.jms.TextMessage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -10,6 +11,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.MDC;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.jms.support.converter.MessageConversionException;
 import org.springframework.jms.support.converter.MessageConverter;
@@ -20,11 +23,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-@ExtendWith(MockitoExtension.class)
+@ExtendWith({MockitoExtension.class, OutputCaptureExtension.class})
 class ImportCompletedDlqListenerTest {
 
     @Mock
@@ -78,6 +82,29 @@ class ImportCompletedDlqListenerTest {
 
         verifyNoInteractions(importHistoryService);
         assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
+    }
+
+    @Test
+    void unreadablePayloadLogsIdentifyingMetadataButNotTheBody(CapturedOutput output) throws Exception {
+        TextMessage textMessage = mock(TextMessage.class);
+        when(textMessage.getJMSMessageID()).thenReturn("ID:abc\r\nFAKE LOG LINE");
+        when(textMessage.getJMSTimestamp()).thenReturn(Instant.parse("2026-11-10T03:04:05Z").toEpochMilli());
+        when(textMessage.getText()).thenReturn("{\"secret\":\"payload-value\"}");
+        when(messageConverter.fromMessage(textMessage))
+                .thenThrow(new MessageConversionException("Unknown type id java.util.HashMap"));
+
+        listener.onDeadLetter(textMessage);
+
+        assertThat(output)
+                .contains("Dead-lettered message is unreadable (MessageConversionException)")
+                .contains("messageId=ID:abc")
+                .contains("timestamp=2026-11-10T03:04:05Z")
+                .contains("bodyLength=26")
+                // Không log nội dung / thông điệp lỗi (có thể chứa dữ liệu message), không để CR/LF tách dòng log
+                .doesNotContain("payload-value")
+                .doesNotContain("java.util.HashMap")
+                .doesNotContain("\nFAKE LOG LINE");
+        verifyNoInteractions(importHistoryService);
     }
 
     @Test

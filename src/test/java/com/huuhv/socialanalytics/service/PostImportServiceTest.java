@@ -100,7 +100,7 @@ class PostImportServiceTest {
                 new Object[]{"FACEBOOK", "bad id!", "", "x"},
                 new Object[]{"TWITTER", "tw-1", "https://x.com/owner/status/1"});
         // Lịch sử import ghi đủ số dòng của file (kể cả dòng lỗi)
-        when(importHistoryService.record(owner, 3, 2, 0)).thenReturn(99L);
+        when(importHistoryService.record(owner, 3, 2, 0, 1)).thenReturn(99L);
 
         ImportResultResponse result = postImportService.importPosts(upload(file));
 
@@ -268,6 +268,18 @@ class PostImportServiceTest {
         assertThatThrownBy(() -> postImportService.importPosts(file))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessage("File is empty");
+    }
+
+    @Test
+    void rejectsHeaderOnlyFileWithoutRecordingAnImport() {
+        givenCurrentUser();
+        byte[] file = xlsx(HEADER);
+
+        assertThatThrownBy(() -> postImportService.importPosts(upload(file)))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("File has no data rows");
+        // Không ghi lịch sử → không có IMPORT_COMPLETED, thống kê "Imports" không tăng
+        verifyNoInteractions(importHistoryService, postRepository);
     }
 
     @Test

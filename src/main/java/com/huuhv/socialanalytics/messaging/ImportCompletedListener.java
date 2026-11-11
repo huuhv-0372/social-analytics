@@ -5,6 +5,7 @@ import com.huuhv.socialanalytics.service.ImportStatisticsService.ApplyResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.jms.annotation.JmsListener;
 import org.springframework.stereotype.Component;
 
@@ -37,15 +38,31 @@ public class ImportCompletedListener {
                 log.warn("Discarding invalid {} message", QueueNames.IMPORT_COMPLETED);
                 return;
             }
-            ApplyResult result = importStatisticsService.applyImport(message.importId(), message.userId());
+            ApplyResult result = apply(message);
             switch (result) {
-                case APPLIED -> log.info("Import statistics updated for user {}", message.userId());
+                // Owner thật (trong DB) được ImportStatisticsService log — userId của payload không đáng tin
+                case APPLIED -> log.debug("Import statistics updated");
                 case ALREADY_PROCESSED -> log.info("Import already processed, duplicate message ignored");
                 case NOT_FOUND -> log.warn("No import history for this message, ignored");
             }
         } finally {
             // Thread của listener container dùng lại cho message sau → không để sót importId
             MDC.clear();
+        }
+    }
+
+    /**
+     * Tranh chấp khoá (deadlock / lock wait timeout) — vd 2 lần import đầu tiên của cùng user mới được xử lý song song,
+     * cả 2 cùng {@code INSERT ... ON DUPLICATE KEY UPDATE} dòng thống kê chưa tồn tại — thử lại ngay 1 lần trong
+     * transaction mới (transaction cũ đã rollback, xử lý lại idempotent) thay vì tốn 1 lần giao của broker. Lỗi DB khác
+     * hoặc lần thử lại vẫn lỗi → exception thoát ra, broker giao lại theo address setting.
+     */
+    private ApplyResult apply(ImportCompletedMessage message) {
+        try {
+            return importStatisticsService.applyImport(message.importId(), message.userId());
+        } catch (PessimisticLockingFailureException e) {
+            log.debug("Lock conflict while updating import statistics ({}), retrying", e.getClass().getSimpleName());
+            return importStatisticsService.applyImport(message.importId(), message.userId());
         }
     }
 

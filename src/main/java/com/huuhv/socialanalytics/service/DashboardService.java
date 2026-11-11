@@ -2,12 +2,12 @@ package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.dto.response.DashboardResponse;
 import com.huuhv.socialanalytics.dto.response.ImportStatisticsResponse;
+import com.huuhv.socialanalytics.util.UtcDateTimes;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
 import java.time.ZoneId;
-import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 
 /**
@@ -35,7 +35,7 @@ public class DashboardService {
         Long userId = currentUserService.getCurrentUser().getId();
         ZoneId zone = clock.getZone();
         ZonedDateTime lastUpdatedAt = socialAccountService.findLastMetricsUpdatedAt(userId)
-                .map(utc -> utc.atZone(ZoneOffset.UTC).withZoneSameInstant(zone))
+                .map(utc -> UtcDateTimes.atZone(utc, zone))
                 .orElse(null);
         ImportStatisticsResponse importStatistics = importStatisticsService.findByUserId(userId)
                 .map(statistic -> ImportStatisticsResponse.from(statistic, zone))

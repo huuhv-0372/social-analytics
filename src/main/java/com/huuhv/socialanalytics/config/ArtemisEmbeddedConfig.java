@@ -64,6 +64,10 @@ public class ArtemisEmbeddedConfig {
         if (!(configuration instanceof ConfigurationImpl impl)) {
             throw new IllegalStateException("Unsupported Artemis configuration type: " + configuration.getClass());
         }
+        if (properties.isEmpty()) {
+            // File chỉ có comment → broker chạy không có retry/DLQ
+            throw new IllegalStateException("Artemis broker properties contain no keys");
+        }
         try {
             impl.parsePrefixedProperties(properties, null);
         } catch (Exception e) {
@@ -78,10 +82,18 @@ public class ArtemisEmbeddedConfig {
     /**
      * Lỗi parse trong status JSON của Artemis: {@code {"properties":{"<nguồn>":{"errors":[{"value","reason"}]}}}}.
      * {@code value} là dòng {@code khoá=giá trị} của file cấu hình (không chứa secret).
+     * <p>
+     * Định dạng này là chi tiết nội bộ của Artemis: sau khi parse, Artemis luôn ghi ít nhất 1 nguồn dưới
+     * {@code properties} (kể cả khi không lỗi) → không thấy thì coi như định dạng đã đổi (vd sau khi nâng version) và
+     * ném lỗi, thay vì kết luận "không có lỗi" khiến khoá sai lại bị bỏ qua lặng lẽ (fail closed).
      */
     static List<String> propertyErrors(String status) {
         List<String> errors = new ArrayList<>();
         JsonNode sources = JsonMapper.shared().readTree(status == null ? "{}" : status).path("properties");
+        if (!sources.isObject() || sources.isEmpty()) {
+            throw new IllegalStateException(
+                    "Cannot verify Artemis broker properties: unrecognised configuration status format");
+        }
         for (JsonNode source : sources) {
             for (JsonNode error : source.path("errors")) {
                 errors.add(error.path("value").asString() + " (" + error.path("reason").asString() + ")");
