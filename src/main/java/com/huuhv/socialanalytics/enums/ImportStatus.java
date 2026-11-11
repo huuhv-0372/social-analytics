@@ -5,5 +5,7 @@ package com.huuhv.socialanalytics.enums;
  */
 public enum ImportStatus {
     /** Đã import (bài viết đã commit), listener chưa cập nhật thống kê tổng hợp. */
-    PENDING
+    PENDING,
+    /** Listener đã cộng lần import vào thống kê ({@code processed_at}) — nhận lại message thì bỏ qua. */
+    PROCESSED
 }

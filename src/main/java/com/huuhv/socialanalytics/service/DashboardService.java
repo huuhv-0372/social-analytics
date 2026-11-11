@@ -1,12 +1,14 @@
 package com.huuhv.socialanalytics.service;
 
+import com.huuhv.socialanalytics.dto.response.DashboardResponse;
+import com.huuhv.socialanalytics.dto.response.ImportStatisticsResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
-import java.util.Optional;
 
 /**
  * Dữ liệu hiển thị trên trang {@code /dashboard} của user đang đăng nhập.
@@ -17,17 +19,27 @@ public class DashboardService {
 
     private final CurrentUserService currentUserService;
     private final SocialAccountService socialAccountService;
+    private final ImportStatisticsService importStatisticsService;
     private final Clock clock;
 
     /**
-     * "Last updated time": lần job cập nhật metrics thành công gần nhất trong các tài khoản của user hiện tại.
-     * {@code last_updated_at} lưu giờ UTC → đổi sang múi giờ của server ({@link Clock#getZone()}).
-     *
-     * @return rỗng khi job chưa cập nhật tài khoản nào của user
+     * Owner lấy 1 lần từ {@link CurrentUserService} (fail closed: session không map được user →
+     * {@code AuthenticationRequiredException}); mọi số liệu chỉ thuộc user đó. Giờ UTC trong DB đổi sang múi giờ của
+     * server ({@link Clock#getZone()}).
+     * <ul>
+     *     <li>"Last updated time": lần job cập nhật metrics thành công gần nhất trong các tài khoản của user.</li>
+     *     <li>Thống kê import tổng hợp (cập nhật bất đồng bộ bởi listener {@code IMPORT_COMPLETED}).</li>
+     * </ul>
      */
-    public Optional<ZonedDateTime> findLastUpdatedAt() {
+    public DashboardResponse getDashboard() {
         Long userId = currentUserService.getCurrentUser().getId();
-        return socialAccountService.findLastMetricsUpdatedAt(userId)
-                .map(utc -> utc.atZone(ZoneOffset.UTC).withZoneSameInstant(clock.getZone()));
+        ZoneId zone = clock.getZone();
+        ZonedDateTime lastUpdatedAt = socialAccountService.findLastMetricsUpdatedAt(userId)
+                .map(utc -> utc.atZone(ZoneOffset.UTC).withZoneSameInstant(zone))
+                .orElse(null);
+        ImportStatisticsResponse importStatistics = importStatisticsService.findByUserId(userId)
+                .map(statistic -> ImportStatisticsResponse.from(statistic, zone))
+                .orElse(null);
+        return new DashboardResponse(lastUpdatedAt, importStatistics);
     }
 }
