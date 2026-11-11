@@ -27,15 +27,20 @@ import java.util.stream.Collectors;
 public class PostUpsertService {
 
     private final PostRepository postRepository;
+    private final ImportHistoryService importHistoryService;
 
     /**
      * Tạo mới hoặc cập nhật theo (provider, externalId) trong phạm vi bài của {@code owner}. Bài đã có chỉ được ghi
      * các giá trị khác null: ô Content / Published At để trống giữ nguyên dữ liệu cũ (URL luôn bắt buộc).
+     * <p>
+     * Cùng transaction: ghi lịch sử import ({@link ImportHistoryService#record}) → message {@code IMPORT_COMPLETED}
+     * được publish sau khi bài viết và lịch sử cùng commit; lỗi ghi bài → rollback cả 2, không có message.
      *
-     * @param requests đã validate, không trùng (provider, externalId)
+     * @param requests  đã validate, không trùng (provider, externalId)
+     * @param totalRows tổng số dòng dữ liệu trong file (gồm cả dòng lỗi không nằm trong {@code requests})
      */
     @Transactional
-    public Result upsert(User owner, List<PostRequest> requests) {
+    public Result upsert(User owner, List<PostRequest> requests, int totalRows) {
         Map<Provider, List<PostRequest>> byProvider = requests.stream()
                 .collect(Collectors.groupingBy(PostRequest::provider, LinkedHashMap::new, Collectors.toList()));
         List<Post> toSave = new ArrayList<>();
@@ -67,10 +72,14 @@ public class PostUpsertService {
             }
         }
         postRepository.saveAll(toSave);
-        return new Result(created, updated);
+        long importId = importHistoryService.record(owner, totalRows, created, updated);
+        return new Result(importId, created, updated);
     }
 
-    public record Result(int created, int updated) {
+    /**
+     * @param importId id lịch sử import ({@code import_histories})
+     */
+    public record Result(long importId, int created, int updated) {
     }
 
     /** Collation của MySQL (utf8mb4_unicode_ci) không phân biệt hoa thường → so khớp externalId cũng vậy. */

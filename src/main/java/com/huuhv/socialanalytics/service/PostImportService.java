@@ -80,15 +80,15 @@ public class PostImportService {
 
         List<ExcelRowError> errors = new ArrayList<>();
         List<PostRequest> validRows = validate(result.rows(), errors);
-        PostUpsertService.Result counts = postUpsertService.upsert(owner, validRows);
+        PostUpsertService.Result counts = postUpsertService.upsert(owner, validRows, result.totalRows());
 
         int created = counts.created();
         int updated = counts.updated();
         int failed = result.totalRows() - created - updated;
         // Audit (OWASP A09): ai import, bao nhiêu dòng — không log tên file hay nội dung
-        log.info("User {} imported posts: total={}, created={}, updated={}, failed={}",
-                owner.getId(), result.totalRows(), created, updated, failed);
-        return new ImportResultResponse(result.totalRows(), created, updated, failed, errors.stream()
+        log.info("User {} imported posts: importId={}, total={}, created={}, updated={}, failed={}",
+                owner.getId(), counts.importId(), result.totalRows(), created, updated, failed);
+        return new ImportResultResponse(counts.importId(), result.totalRows(), created, updated, failed, errors.stream()
                 .map(error -> new ImportResultResponse.RowError(error.rowNumber(), error.column(), error.message()))
                 .toList());
     }

@@ -10,7 +10,10 @@ import java.util.Map;
  */
 public final class MessageTypes {
 
-    public static final Map<String, Class<?>> TYPE_ID_MAPPINGS = Map.of();
+    public static final String IMPORT_COMPLETED = "importCompleted";
+
+    public static final Map<String, Class<?>> TYPE_ID_MAPPINGS = Map.of(
+            IMPORT_COMPLETED, ImportCompletedMessage.class);
 
     private MessageTypes() {
     }

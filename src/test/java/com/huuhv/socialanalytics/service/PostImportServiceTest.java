@@ -63,6 +63,9 @@ class PostImportServiceTest {
     @Mock
     private CurrentUserService currentUserService;
 
+    @Mock
+    private ImportHistoryService importHistoryService;
+
     private PostImportService postImportService;
 
     private final User owner = User.builder().id(OWNER_ID).email("owner@example.com").displayName("Owner").build();
@@ -79,7 +82,8 @@ class PostImportServiceTest {
                 new AppProperties.ExportSettings(10000, Duration.ZERO),
                 // Service không dùng key mã hoá token / timeout OAuth2, thread pool, job
                 null, null, null, null);
-        return new PostImportService(new GenericExcelImporter(), new PostUpsertService(postRepository),
+        return new PostImportService(new GenericExcelImporter(),
+                new PostUpsertService(postRepository, importHistoryService),
                 currentUserService, validator, properties, CLOCK);
     }
 
@@ -95,9 +99,12 @@ class PostImportServiceTest {
                 new Object[]{"FACEBOOK", "fb-1", "https://facebook.com/posts/1", "Hello", LocalDateTime.of(2026, 1, 1, 9, 0)},
                 new Object[]{"FACEBOOK", "bad id!", "", "x"},
                 new Object[]{"TWITTER", "tw-1", "https://x.com/owner/status/1"});
+        // Lịch sử import ghi đủ số dòng của file (kể cả dòng lỗi)
+        when(importHistoryService.record(owner, 3, 2, 0)).thenReturn(99L);
 
         ImportResultResponse result = postImportService.importPosts(upload(file));
 
+        assertThat(result.importId()).isEqualTo(99L);
         assertThat(result.totalRows()).isEqualTo(3);
         assertThat(result.created()).isEqualTo(2);
         assertThat(result.updated()).isZero();

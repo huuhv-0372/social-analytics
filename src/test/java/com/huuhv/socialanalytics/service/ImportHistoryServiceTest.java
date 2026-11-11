@@ -1,0 +1,80 @@
+package com.huuhv.socialanalytics.service;
+
+import com.huuhv.socialanalytics.entity.ImportHistory;
+import com.huuhv.socialanalytics.entity.User;
+import com.huuhv.socialanalytics.enums.ImportStatus;
+import com.huuhv.socialanalytics.repository.ImportHistoryRepository;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.time.Instant;
+import java.time.LocalDateTime;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class ImportHistoryServiceTest {
+
+    @Mock
+    private ImportHistoryRepository importHistoryRepository;
+
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
+    @InjectMocks
+    private ImportHistoryService importHistoryService;
+
+    private final User owner = User.builder().id(7L).displayName("Owner").build();
+
+    @Test
+    void recordsPendingHistoryAndPublishesEventWithCounts() {
+        when(importHistoryRepository.save(any(ImportHistory.class))).thenAnswer(invocation -> {
+            ImportHistory history = invocation.getArgument(0);
+            history.setId(55L);
+            // created_at do @PrePersist gán (giờ UTC)
+            ReflectionTestUtils.setField(history, "createdAt", LocalDateTime.of(2026, 11, 10, 3, 4, 5));
+            return history;
+        });
+
+        long importId = importHistoryService.record(owner, 10, 6, 3);
+
+        assertThat(importId).isEqualTo(55L);
+        ArgumentCaptor<ImportHistory> saved = ArgumentCaptor.forClass(ImportHistory.class);
+        verify(importHistoryRepository).save(saved.capture());
+        assertThat(saved.getValue()).satisfies(history -> {
+            assertThat(history.getUser()).isSameAs(owner);
+            assertThat(history.getTotalRows()).isEqualTo(10);
+            assertThat(history.getCreatedRows()).isEqualTo(6);
+            assertThat(history.getUpdatedRows()).isEqualTo(3);
+            assertThat(history.getFailedRows()).isEqualTo(1);
+            assertThat(history.getStatus()).isEqualTo(ImportStatus.PENDING);
+        });
+        verify(eventPublisher).publishEvent(
+                new ImportCompletedEvent(55L, 7L, 10, 9, 1, Instant.parse("2026-11-10T03:04:05Z")));
+    }
+
+    @Test
+    void recordsImportWhereEveryRowFailed() {
+        when(importHistoryRepository.save(any(ImportHistory.class))).thenAnswer(invocation -> {
+            ImportHistory history = invocation.getArgument(0);
+            history.setId(56L);
+            return history;
+        });
+
+        importHistoryService.record(owner, 4, 0, 0);
+
+        ArgumentCaptor<ImportCompletedEvent> event = ArgumentCaptor.forClass(ImportCompletedEvent.class);
+        verify(eventPublisher).publishEvent(event.capture());
+        assertThat(event.getValue().successRows()).isZero();
+        assertThat(event.getValue().failedRows()).isEqualTo(4);
+    }
+}
