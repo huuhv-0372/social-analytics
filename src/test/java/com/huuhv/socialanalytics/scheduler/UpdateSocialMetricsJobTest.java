@@ -211,7 +211,7 @@ class UpdateSocialMetricsJobTest {
 
     private UpdateSocialMetricsJob jobWithTimeout(Duration timeout) {
         AppProperties properties = new AppProperties(null, null, null, null, null,
-                new AppProperties.Jobs(new AppProperties.UpdateMetrics(100, timeout)));
+                new AppProperties.Jobs(new AppProperties.UpdateMetrics(100, timeout)), null);
         return new UpdateSocialMetricsJob(socialAccountService, accountMetricsCrawler, properties, Clock.systemUTC());
     }
 

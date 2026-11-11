@@ -1,7 +1,6 @@
 package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.dto.response.ImportCounts;
-import com.huuhv.socialanalytics.enums.ImportStatus;
 import com.huuhv.socialanalytics.repository.ImportHistoryRepository;
 import com.huuhv.socialanalytics.repository.UserImportStatisticRepository;
 import com.huuhv.socialanalytics.service.ImportStatisticsService.ApplyResult;
@@ -59,15 +58,13 @@ class ImportStatisticsServiceTest {
         ApplyResult result = service.applyImport(IMPORT_ID, OWNER_ID);
 
         assertThat(result).isEqualTo(ApplyResult.APPLIED);
-        verify(importHistoryRepository).transitionStatus(IMPORT_ID, ImportStatus.PENDING, ImportStatus.PROCESSED,
-                NOW_UTC);
+        verify(importHistoryRepository).markProcessed(IMPORT_ID, NOW_UTC);
         verify(userImportStatisticRepository).addImport(OWNER_ID, 10, 8, 2, IMPORTED_AT, NOW_UTC);
     }
 
     @Test
     void duplicateMessageForProcessedImportDoesNotAddAgain() {
-        when(importHistoryRepository.transitionStatus(IMPORT_ID, ImportStatus.PENDING, ImportStatus.PROCESSED,
-                NOW_UTC)).thenReturn(0);
+        when(importHistoryRepository.markProcessed(IMPORT_ID, NOW_UTC)).thenReturn(0);
         when(importHistoryRepository.existsById(IMPORT_ID)).thenReturn(true);
 
         ApplyResult result = service.applyImport(IMPORT_ID, OWNER_ID);
@@ -109,8 +106,7 @@ class ImportStatisticsServiceTest {
     }
 
     private void givenPendingImport() {
-        when(importHistoryRepository.transitionStatus(IMPORT_ID, ImportStatus.PENDING, ImportStatus.PROCESSED,
-                NOW_UTC)).thenReturn(1);
+        when(importHistoryRepository.markProcessed(IMPORT_ID, NOW_UTC)).thenReturn(1);
         when(importHistoryRepository.findCountsById(IMPORT_ID))
                 .thenReturn(Optional.of(new ImportCounts(OWNER_ID, 10, 8, 2, IMPORTED_AT)));
     }

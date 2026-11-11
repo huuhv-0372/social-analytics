@@ -180,6 +180,12 @@ app:
       queue-capacity: 100
       # Tắt app: chờ task đang chạy tối đa khoảng này
       await-termination: 30s
+  jms:
+    # Retry + DLQ (address settings, queue DLQ) khai báo DUY NHẤT trong artemis/broker.properties: broker riêng của
+    # docker compose mount chính file đó, broker embedded (dev/test) nạp từ classpath các file dưới đây theo thứ tự
+    # (file sau ghi đè khoá trùng — config/ArtemisEmbeddedConfig). Chỉ có tác dụng khi spring.artemis.mode=embedded.
+    embedded-broker-properties:
+      - classpath:artemis/broker.properties
   jobs:
     update-metrics:
       # Crawl metrics mọi tài khoản (UpdateSocialMetricsJob). Cron Spring 6 trường: giây phút giờ ngày tháng thứ.

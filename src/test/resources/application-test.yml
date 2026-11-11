@@ -31,6 +31,11 @@ logging:
     com.huuhv.socialanalytics: INFO
 
 app:
+  jms:
+    # File chính + file ghi đè của test (giao lại sau 100ms để test retry → DLQ không phải chờ vài giây)
+    embedded-broker-properties:
+      - classpath:artemis/broker.properties
+      - classpath:artemis/broker-test.properties
   jobs:
     update-metrics:
       # Tắt lịch chạy tự động — test gọi UpdateSocialMetricsJob.runOnce() trực tiếp khi cần

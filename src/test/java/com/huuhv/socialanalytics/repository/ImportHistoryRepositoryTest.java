@@ -45,26 +45,57 @@ class ImportHistoryRepositoryTest {
     }
 
     @Test
-    void transitionsPendingImportOnlyOnce() {
+    void marksPendingImportProcessedOnlyOnce() {
         Long id = saveHistory(10, 6, 2, 2).getId();
 
-        int first = importHistoryRepository.transitionStatus(id, ImportStatus.PENDING, ImportStatus.PROCESSED, NOW);
-        int second = importHistoryRepository.transitionStatus(id, ImportStatus.PENDING, ImportStatus.PROCESSED, NOW);
+        int first = importHistoryRepository.markProcessed(id, NOW);
+        int second = importHistoryRepository.markProcessed(id, NOW.plusSeconds(5));
 
-        // Lần 2 (message trùng) không khớp điều kiện status = PENDING → 0 dòng
+        // Lần 2 (message trùng): đã PROCESSED → 0 dòng, processed_at giữ mốc lần đầu
         assertThat(first).isEqualTo(1);
         assertThat(second).isZero();
-        entityManager.clear();
-        ImportHistory stored = importHistoryRepository.findById(id).orElseThrow();
+        ImportHistory stored = reload(id);
         assertThat(stored.getStatus()).isEqualTo(ImportStatus.PROCESSED);
         assertThat(stored.getProcessedAt()).isEqualTo(NOW);
         assertThat(stored.getUpdatedAt()).isEqualTo(NOW);
     }
 
     @Test
-    void transitionOfUnknownImportUpdatesNothing() {
-        assertThat(importHistoryRepository.transitionStatus(Long.MAX_VALUE, ImportStatus.PENDING,
-                ImportStatus.PROCESSED, NOW)).isZero();
+    void markingUnknownImportUpdatesNothing() {
+        assertThat(importHistoryRepository.markProcessed(Long.MAX_VALUE, NOW)).isZero();
+        assertThat(importHistoryRepository.markDeadLettered(Long.MAX_VALUE, NOW)).isZero();
+    }
+
+    @Test
+    void marksPendingImportDeadLetteredWithoutProcessedAt() {
+        Long id = saveHistory(10, 6, 2, 2).getId();
+
+        assertThat(importHistoryRepository.markDeadLettered(id, NOW)).isEqualTo(1);
+
+        ImportHistory stored = reload(id);
+        assertThat(stored.getStatus()).isEqualTo(ImportStatus.DEAD_LETTERED);
+        assertThat(stored.getProcessedAt()).isNull();
+        assertThat(stored.getUpdatedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void processedImportIsNotMarkedDeadLettered() {
+        // Bản sao message lỗi vào DLQ sau khi bản gốc đã xử lý xong → giữ PROCESSED
+        Long id = saveHistory(10, 6, 2, 2).getId();
+        importHistoryRepository.markProcessed(id, NOW);
+
+        assertThat(importHistoryRepository.markDeadLettered(id, NOW.plusSeconds(5))).isZero();
+        assertThat(reload(id).getStatus()).isEqualTo(ImportStatus.PROCESSED);
+    }
+
+    @Test
+    void deadLetteredImportCanStillBeProcessedOnceWhenMessageIsResent() {
+        Long id = saveHistory(10, 6, 2, 2).getId();
+        importHistoryRepository.markDeadLettered(id, NOW);
+
+        assertThat(importHistoryRepository.markProcessed(id, NOW.plusMinutes(1))).isEqualTo(1);
+        assertThat(importHistoryRepository.markProcessed(id, NOW.plusMinutes(2))).isZero();
+        assertThat(reload(id).getStatus()).isEqualTo(ImportStatus.PROCESSED);
     }
 
     @Test
@@ -81,6 +112,12 @@ class ImportHistoryRepositoryTest {
         // CHECK ck_import_histories_rows: total = created + updated + failed
         assertThatThrownBy(() -> saveHistory(10, 6, 2, 1))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    /** UPDATE hàng loạt không cập nhật persistence context → đọc lại từ DB. */
+    private ImportHistory reload(Long id) {
+        entityManager.clear();
+        return importHistoryRepository.findById(id).orElseThrow();
     }
 
     private ImportHistory saveHistory(int total, int created, int updated, int failed) {

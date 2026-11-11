@@ -2,7 +2,6 @@ package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.dto.response.ImportCounts;
 import com.huuhv.socialanalytics.entity.UserImportStatistic;
-import com.huuhv.socialanalytics.enums.ImportStatus;
 import com.huuhv.socialanalytics.repository.ImportHistoryRepository;
 import com.huuhv.socialanalytics.repository.UserImportStatisticRepository;
 import com.huuhv.socialanalytics.util.UtcDateTimes;
@@ -33,9 +32,10 @@ public class ImportStatisticsService {
      * Cộng 1 lần import vào thống kê của chủ sở hữu — <b>idempotent</b> theo {@code importId}: nhận lại cùng message
      * (redelivery, gửi trùng) không cộng 2 lần.
      * <p>
-     * 1 transaction: chuyển lịch sử {@code PENDING → PROCESSED} bằng UPDATE có điều kiện (0 dòng = đã xử lý / không
-     * tồn tại → bỏ qua) rồi cộng thống kê. Lỗi ở bước cộng → rollback cả 2, lịch sử vẫn {@code PENDING} → message
-     * được giao lại và xử lý lại từ đầu.
+     * 1 transaction: đánh dấu lịch sử {@code PROCESSED} bằng UPDATE có điều kiện (0 dòng = đã xử lý / không tồn tại →
+     * bỏ qua) rồi cộng thống kê. Lỗi ở bước cộng → rollback cả 2, lịch sử giữ trạng thái cũ → message được giao lại và
+     * xử lý lại từ đầu (hết số lần giao → DLQ). Lần import {@code DEAD_LETTERED} được cộng khi message được gửi lại
+     * sau khi khắc phục lỗi.
      * <p>
      * Số liệu và owner lấy từ {@code import_histories} trong DB, không lấy từ payload message (OWASP A08 — payload là
      * dữ liệu không tin cậy).
@@ -45,15 +45,13 @@ public class ImportStatisticsService {
     @Transactional
     public ApplyResult applyImport(long importId, Long reportedUserId) {
         LocalDateTime now = UtcDateTimes.toUtc(clock.instant());
-        int transitioned = importHistoryRepository.transitionStatus(importId, ImportStatus.PENDING,
-                ImportStatus.PROCESSED, now);
-        if (transitioned == 0) {
+        if (importHistoryRepository.markProcessed(importId, now) == 0) {
             return importHistoryRepository.existsById(importId) ? ApplyResult.ALREADY_PROCESSED : ApplyResult.NOT_FOUND;
         }
         // Dòng vừa UPDATE ở trên chắc chắn tồn tại và đang bị khoá bởi transaction này
         ImportCounts counts = importHistoryRepository.findCountsById(importId).orElseThrow();
         if (!Objects.equals(counts.userId(), reportedUserId)) {
-            log.warn("Import {} message reports user {} but history belongs to user {} — using stored owner",
+            log.warn("Import {} message reports user {} but history belongs to user {}; using stored owner",
                     importId, reportedUserId, counts.userId());
         }
         userImportStatisticRepository.addImport(counts.userId(), counts.totalRows(), counts.successRows(),

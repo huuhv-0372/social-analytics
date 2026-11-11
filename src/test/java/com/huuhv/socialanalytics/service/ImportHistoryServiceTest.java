@@ -4,17 +4,19 @@ import com.huuhv.socialanalytics.entity.ImportHistory;
 import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.enums.ImportStatus;
 import com.huuhv.socialanalytics.repository.ImportHistoryRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -24,16 +26,37 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ImportHistoryServiceTest {
 
+    // Server +07: thời điểm ghi DB là giờ UTC
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-11-10T04:00:00Z"), ZoneId.of("Asia/Ho_Chi_Minh"));
+
     @Mock
     private ImportHistoryRepository importHistoryRepository;
 
     @Mock
     private ApplicationEventPublisher eventPublisher;
 
-    @InjectMocks
     private ImportHistoryService importHistoryService;
 
     private final User owner = User.builder().id(7L).displayName("Owner").build();
+
+    @BeforeEach
+    void setUp() {
+        importHistoryService = new ImportHistoryService(importHistoryRepository, eventPublisher, CLOCK);
+    }
+
+    @Test
+    void marksDeadLetteredAtCurrentUtcTime() {
+        when(importHistoryRepository.markDeadLettered(55L, LocalDateTime.of(2026, 11, 10, 4, 0))).thenReturn(1);
+
+        assertThat(importHistoryService.markDeadLettered(55L)).isTrue();
+    }
+
+    @Test
+    void importNotPendingIsNotMarkedDeadLettered() {
+        when(importHistoryRepository.markDeadLettered(55L, LocalDateTime.of(2026, 11, 10, 4, 0))).thenReturn(0);
+
+        assertThat(importHistoryService.markDeadLettered(55L)).isFalse();
+    }
 
     @Test
     void recordsPendingHistoryAndPublishesEventWithCounts() {

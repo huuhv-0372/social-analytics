@@ -241,7 +241,7 @@ class AccountMetricsCrawlerTest {
 
     private AccountMetricsCrawler crawlerWithClock(Clock clock) {
         AppProperties properties = new AppProperties(null, null, null, null, null,
-                new AppProperties.Jobs(new AppProperties.UpdateMetrics(2, Duration.ofMinutes(1))));
+                new AppProperties.Jobs(new AppProperties.UpdateMetrics(2, Duration.ofMinutes(1))), null);
         return new AccountMetricsCrawler(socialAccountService, postService, socialMetricService,
                 socialPlatformClients, properties, clock);
     }

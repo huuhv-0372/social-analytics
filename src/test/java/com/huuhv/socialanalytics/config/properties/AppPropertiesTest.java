@@ -215,6 +215,30 @@ class AppPropertiesTest {
                 .run(context -> assertThat(context).hasFailed());
     }
 
+    @Test
+    void bindsEmbeddedBrokerPropertiesInOrder() {
+        // Mặc định: chỉ file chính — cũng là file broker riêng của docker compose nạp
+        contextRunner.run(context -> assertThat(context.getBean(AppProperties.class).jms().embeddedBrokerProperties())
+                .containsExactly("classpath:artemis/broker.properties"));
+        contextRunner
+                .withPropertyValues("app.jms.embedded-broker-properties="
+                        + "classpath:artemis/broker.properties,classpath:artemis/broker-test.properties")
+                .run(context -> assertThat(context.getBean(AppProperties.class).jms().embeddedBrokerProperties())
+                        .containsExactly("classpath:artemis/broker.properties",
+                                "classpath:artemis/broker-test.properties"));
+    }
+
+    @Test
+    void failsStartupWhenEmbeddedBrokerPropertiesAreEmpty() {
+        // Không nạp file nào: broker embedded chạy không có retry/DLQ
+        contextRunner
+                .withPropertyValues("app.jms.embedded-broker-properties=")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.jms.embedded-broker-properties[0]= ")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties(AppProperties.class)
     static class TestConfig {

@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -16,6 +17,7 @@ import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
 
 /**
  * Cấu hình riêng của ứng dụng, prefix {@code app.*}. Sai giá trị → app không khởi động (fail fast).
@@ -30,7 +32,8 @@ public record AppProperties(
         @Valid @DefaultValue TokenEncryption tokenEncryption,
         @Valid @DefaultValue OAuth2Client oauth2,
         @Valid @DefaultValue AsyncSettings async,
-        @Valid @DefaultValue Jobs jobs) {
+        @Valid @DefaultValue Jobs jobs,
+        @Valid @DefaultValue JmsSettings jms) {
 
     /**
      * Timeout khi gọi provider OAuth2 (đổi code lấy token, user info) trong lúc login callback (OWASP A10): provider
@@ -152,6 +155,19 @@ public record AppProperties(
         public boolean isAwaitTerminationNotNegative() {
             return awaitTermination == null || !awaitTermination.isNegative();
         }
+    }
+
+    /**
+     * JMS ({@code app.jms.*}).
+     *
+     * @param embeddedBrokerProperties file "broker properties" của Artemis (location kiểu Spring, vd
+     *                                 {@code classpath:...}) nạp vào broker <b>embedded</b> theo thứ tự, file sau ghi đè
+     *                                 khoá trùng của file trước ({@code config/ArtemisEmbeddedConfig}). File đầu tiên
+     *                                 cũng là file broker riêng của docker compose nạp → retry/DLQ chỉ khai báo 1 nơi.
+     */
+    public record JmsSettings(
+            @NotEmpty @DefaultValue("classpath:artemis/broker.properties")
+            List<@NotBlank String> embeddedBrokerProperties) {
     }
 
     /**
