@@ -4,7 +4,11 @@ import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.security.oauth2.client.autoconfigure.OAuth2ClientProperties;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.security.oauth2.client.endpoint.OAuth2AuthorizationCodeGrantRequest;
 import org.springframework.security.oauth2.client.registration.ClientRegistration;
 import org.springframework.security.oauth2.client.userinfo.DefaultOAuth2UserService;
@@ -133,6 +137,35 @@ class OAuth2ClientConfigTest {
                 "twitter", registration("x-client-id", "x-secret"));
 
         assertThatCode(() -> OAuth2ClientConfig.requireClientSecrets(registrations)).doesNotThrowAnyException();
+    }
+
+    /**
+     * Chạy app không có {@code .env} / biến môi trường: mọi placeholder client id/secret trong {@code application.yml}
+     * phải ra chuỗi rỗng (có {@code :} cuối) để bị chặn lúc khởi động — không giữ nguyên chuỗi {@code ${...}}.
+     */
+    @Test
+    void applicationYmlWithoutEnvironmentVariablesFailsStartup() throws IOException {
+        OAuth2ClientProperties properties = bindApplicationYmlWithoutEnvironment();
+
+        assertThat(properties.getRegistration()).containsOnlyKeys("facebook", "twitter");
+        assertThat(properties.getRegistration().values()).allSatisfy(registration -> {
+            assertThat(registration.getClientId()).isEmpty();
+            assertThat(registration.getClientSecret()).isEmpty();
+        });
+        // Boot chặn client id rỗng, OAuth2ClientConfig chặn client secret rỗng
+        assertThatThrownBy(properties::validate).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> OAuth2ClientConfig.requireClientSecrets(properties.getRegistration()))
+                .hasMessageContaining("[facebook, twitter]");
+    }
+
+    private static OAuth2ClientProperties bindApplicationYmlWithoutEnvironment() throws IOException {
+        // MockEnvironment không chứa biến môi trường / system property của máy chạy test
+        MockEnvironment environment = new MockEnvironment();
+        new YamlPropertySourceLoader().load("application.yml", new ClassPathResource("application.yml"))
+                .forEach(source -> environment.getPropertySources().addLast(source));
+        return Binder.get(environment)
+                .bind("spring.security.oauth2.client", OAuth2ClientProperties.class)
+                .get();
     }
 
     private String serveJson(String path, String body) throws IOException {

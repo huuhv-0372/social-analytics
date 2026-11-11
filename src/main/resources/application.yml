@@ -49,9 +49,11 @@ spring:
           # Facebook có sẵn trong CommonOAuth2Provider (authorization/token/user-info URI, user-name-attribute=id).
           # Redirect URI mặc định {baseUrl}/login/oauth2/code/facebook — phải khai báo y hệt trên Facebook Developers.
           # Bắt buộc: thiếu biến môi trường thì app dừng khởi động. Không commit secret (OWASP A02/A04).
+          # Giữ dấu ":" cuối placeholder: thiếu biến → chuỗi rỗng → Boot (client-id) và OAuth2ClientConfig
+          # (client-secret) chặn lúc khởi động. Không có ":" thì Boot giữ nguyên chuỗi "${...}" → lọt kiểm tra.
           facebook:
-            client-id: ${FACEBOOK_CLIENT_ID}
-            client-secret: ${FACEBOOK_CLIENT_SECRET}
+            client-id: ${FACEBOOK_CLIENT_ID:}
+            client-secret: ${FACEBOOK_CLIENT_SECRET:}
             # Quyền tối thiểu để đăng nhập (OWASP A01 — least privilege)
             scope: public_profile,email
           # X (Twitter) không có trong CommonOAuth2Provider → khai báo thủ công (OAuth 2.0 Authorization Code + PKCE).
@@ -60,8 +62,8 @@ spring:
           twitter:
             provider: twitter
             client-name: X
-            client-id: ${TWITTER_CLIENT_ID}
-            client-secret: ${TWITTER_CLIENT_SECRET}
+            client-id: ${TWITTER_CLIENT_ID:}
+            client-secret: ${TWITTER_CLIENT_SECRET:}
             client-authentication-method: client_secret_basic
             authorization-grant-type: authorization_code
             redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
@@ -83,6 +85,16 @@ spring:
     scheduling:
       thread-name-prefix: scheduler-
 
+  # Session HTTP lưu MySQL (Spring Session JDBC, config/SessionConfig): nhiều instance sau load balancer dùng chung
+  # session (state/PKCE của OAuth2, SecurityContext), restart không đăng xuất user. Mỗi request đọc + ghi bảng session.
+  # Timeout + cookie lấy từ server.servlet.session.* bên dưới; cookie tên SESSION (không còn JSESSIONID).
+  session:
+    jdbc:
+      # Bảng do Flyway tạo (V3_1__spring_session.sql) — Spring Session không tự chạy script schema
+      initialize-schema: never
+      # Mặc định của Spring Session: mỗi phút xoá session hết hạn (mọi instance đều chạy, DELETE theo index EXPIRY_TIME)
+      cleanup-cron: "0 * * * * *"
+
   artemis:
     broker-url: tcp://${ARTEMIS_HOST:localhost}:${ARTEMIS_PORT:61616}
     user: ${ARTEMIS_USER}
@@ -103,8 +115,9 @@ server:
   forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:}
   servlet:
     session:
+      # Spring Session JDBC cũng dùng giá trị này (cột MAX_INACTIVE_INTERVAL) khi không đặt spring.session.timeout
       timeout: 30m
-      # Cookie session (OWASP A02): JS không đọc được, không gửi kèm request cross-site dạng POST
+      # Cookie session SESSION của Spring Session (OWASP A02): JS không đọc được, không gửi kèm request cross-site dạng POST
       cookie:
         http-only: true
         same-site: lax
