@@ -1,6 +1,5 @@
-package com.huuhv.socialanalytics.config;
+package com.huuhv.socialanalytics.security;
 
-import com.huuhv.socialanalytics.service.AppOAuth2User;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.convert.ConversionService;

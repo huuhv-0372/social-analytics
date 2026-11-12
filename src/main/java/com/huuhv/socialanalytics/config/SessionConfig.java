@@ -1,5 +1,6 @@
 package com.huuhv.socialanalytics.config;
 
+import com.huuhv.socialanalytics.security.SessionAttributeSerialization;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

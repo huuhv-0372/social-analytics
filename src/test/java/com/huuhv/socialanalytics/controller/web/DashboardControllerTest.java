@@ -5,7 +5,7 @@ import com.huuhv.socialanalytics.config.WebConfig;
 import com.huuhv.socialanalytics.dto.response.DashboardResponse;
 import com.huuhv.socialanalytics.dto.response.ImportStatisticsResponse;
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
-import com.huuhv.socialanalytics.service.AppOAuth2User;
+import com.huuhv.socialanalytics.security.AppOAuth2User;
 import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.DashboardService;

@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.config;
+package com.huuhv.socialanalytics.security;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -20,7 +20,7 @@ import java.util.function.Supplier;
  * thử giải mask bằng {@link XorCsrfTokenRequestAttributeHandler}, không giải được (độ dài không khớp, không phải UTF-8
  * hợp lệ) thì so khớp raw.
  */
-final class CsrfHeaderOrFormTokenRequestHandler implements CsrfTokenRequestHandler {
+public final class CsrfHeaderOrFormTokenRequestHandler implements CsrfTokenRequestHandler {
 
     private final XorCsrfTokenRequestAttributeHandler xor = new XorCsrfTokenRequestAttributeHandler();
     private final CsrfTokenRequestAttributeHandler plain = new CsrfTokenRequestAttributeHandler();

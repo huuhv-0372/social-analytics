@@ -1,6 +1,5 @@
-package com.huuhv.socialanalytics.config;
+package com.huuhv.socialanalytics.security;
 
-import com.huuhv.socialanalytics.service.AppOAuth2User;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.ConfigurableObjectInputStream;
 import org.springframework.core.convert.converter.Converter;
@@ -28,7 +27,7 @@ import java.io.ObjectInputStream;
  * không trả 500 cho mọi request tới khi session hết hạn.
  */
 @Slf4j
-final class SessionAttributeSerialization {
+public final class SessionAttributeSerialization {
 
     static final String FILTER_PATTERN = String.join(";",
             "maxdepth=32",
@@ -51,7 +50,7 @@ final class SessionAttributeSerialization {
     private SessionAttributeSerialization() {
     }
 
-    static GenericConversionService conversionService(ClassLoader classLoader) {
+    public static GenericConversionService conversionService(ClassLoader classLoader) {
         GenericConversionService conversionService = new GenericConversionService();
         conversionService.addConverter(Object.class, byte[].class, new SerializingConverter());
         conversionService.addConverter(byte[].class, Object.class, new FilteredDeserializingConverter(classLoader));

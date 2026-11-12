@@ -1,6 +1,7 @@
 package com.huuhv.socialanalytics.config;
 
 import com.huuhv.socialanalytics.config.properties.AppProperties;
+import com.huuhv.socialanalytics.security.DiscardingOAuth2AuthorizedClientRepository;
 import com.huuhv.socialanalytics.service.OAuth2UserAttributes;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.security.oauth2.client.autoconfigure.OAuth2ClientProperties;
