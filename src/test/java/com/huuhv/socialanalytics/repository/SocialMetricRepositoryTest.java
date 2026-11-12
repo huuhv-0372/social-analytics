@@ -5,6 +5,7 @@ import com.huuhv.socialanalytics.entity.Post;
 import com.huuhv.socialanalytics.entity.SocialMetric;
 import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.enums.Provider;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +18,8 @@ import org.springframework.data.domain.Sort;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -36,6 +39,9 @@ class SocialMetricRepositoryTest {
 
     @Autowired
     private SocialMetricRepository socialMetricRepository;
+
+    @Autowired
+    private EntityManager entityManager;
 
     private User owner;
     private Post post;
@@ -94,6 +100,50 @@ class SocialMetricRepositoryTest {
 
         assertThat(socialMetricRepository.findByIdAndPostUserId(metric.getId(), owner.getId())).isPresent();
         assertThat(socialMetricRepository.findByIdAndPostUserId(metric.getId(), other.getId())).isEmpty();
+    }
+
+    @Test
+    void insertAllWritesEverySnapshotAcrossMultipleStatements() {
+        Post second = postRepository.save(Post.builder()
+                .user(owner)
+                .provider(Provider.TWITTER)
+                .externalId("tw-2")
+                .url("https://x.com/owner/status/2")
+                .build());
+        LocalDateTime collectedAt = LocalDateTime.of(2026, 11, 10, 3, 0, 0, 123_456_000);
+        // Nhiều hơn 1 câu INSERT (ROWS_PER_STATEMENT dòng/câu) để kiểm tra cả phần chia lô
+        int count = SocialMetricRepositoryImpl.ROWS_PER_STATEMENT + 1;
+        List<SocialMetric> snapshots = IntStream.range(0, count)
+                .mapToObj(i -> SocialMetric.builder()
+                        .post(i % 2 == 0 ? post : second)
+                        .likes(i)
+                        .shares(i + 1)
+                        .comments(i + 2)
+                        .followers(i + 3)
+                        .collectedAt(collectedAt)
+                        .build())
+                .toList();
+
+        assertThat(socialMetricRepository.insertAll(snapshots)).isEqualTo(count);
+        entityManager.clear();
+
+        assertThat(socialMetricRepository.search(second.getId(), null, null, PageRequest.of(0, 1000)))
+                .hasSize(count / 2)
+                .allSatisfy(metric -> {
+                    assertThat(metric.getShares()).isEqualTo(metric.getLikes() + 1);
+                    assertThat(metric.getComments()).isEqualTo(metric.getLikes() + 2);
+                    assertThat(metric.getFollowers()).isEqualTo(metric.getLikes() + 3);
+                    assertThat(metric.getCollectedAt()).isEqualTo(collectedAt);
+                });
+        // 3 snapshot của setUp + phần mới
+        assertThat(socialMetricRepository.search(post.getId(), null, null, PageRequest.of(0, 1000)))
+                .hasSize(3 + count - count / 2);
+    }
+
+    @Test
+    void insertAllOfNothingWritesNothing() {
+        assertThat(socialMetricRepository.insertAll(List.of())).isZero();
+        assertThat(socialMetricRepository.count()).isEqualTo(3);
     }
 
     private SocialMetric saveSnapshot(LocalDateTime collectedAt, long likes) {

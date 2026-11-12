@@ -25,10 +25,13 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -52,6 +55,9 @@ class SocialMetricServiceTest {
 
     @Mock
     private CurrentUserService currentUserService;
+
+    @Mock
+    private SocialAccountService socialAccountService;
 
     @InjectMocks
     private SocialMetricService socialMetricService;
@@ -200,6 +206,62 @@ class SocialMetricServiceTest {
         socialMetricService.delete(5L);
 
         verify(socialMetricRepository).delete(existing);
+    }
+
+    @Test
+    void recordSnapshotsInsertsOneSnapshotPerPostAndMarksAccountUpdated() {
+        Post other = Post.builder().id(11L).build();
+        when(postService.lockExistingIds(List.of(10L, 11L))).thenReturn(Set.of(10L, 11L));
+        when(postService.getReference(10L)).thenReturn(post);
+        when(postService.getReference(11L)).thenReturn(other);
+        when(socialMetricRepository.insertAll(anyList())).thenReturn(2);
+        LocalDateTime updatedAtUtc = NOW.minusHours(7);
+
+        int saved = socialMetricService.recordSnapshots(7L, List.of(
+                new CrawledMetric(10L, 5, 1, 2, 300),
+                new CrawledMetric(11L, 8, 0, 0, 40)), NOW, updatedAtUtc);
+
+        assertThat(saved).isEqualTo(2);
+        ArgumentCaptor<List<SocialMetric>> inserted = ArgumentCaptor.captor();
+        verify(socialMetricRepository).insertAll(inserted.capture());
+        assertThat(inserted.getValue())
+                .extracting(SocialMetric::getPost, SocialMetric::getLikes, SocialMetric::getShares,
+                        SocialMetric::getComments, SocialMetric::getFollowers, SocialMetric::getCollectedAt)
+                .containsExactly(
+                        tuple(post, 5L, 1L, 2L, 300L, NOW),
+                        tuple(other, 8L, 0L, 0L, 40L, NOW));
+        // Không dùng saveAll: id IDENTITY → 1 câu INSERT cho mỗi snapshot
+        verify(socialMetricRepository, never()).saveAll(anyList());
+        verify(socialAccountService).markMetricsUpdated(7L, updatedAtUtc);
+        // Job chạy nền: không dựa vào user đăng nhập
+        verifyNoInteractions(currentUserService);
+    }
+
+    @Test
+    void recordSnapshotsSkipsPostsDeletedWhileCrawlingAndKeepsOthers() {
+        when(postService.lockExistingIds(List.of(10L, 11L))).thenReturn(Set.of(10L));
+        when(postService.getReference(10L)).thenReturn(post);
+        when(socialMetricRepository.insertAll(anyList())).thenReturn(1);
+
+        int saved = socialMetricService.recordSnapshots(7L, List.of(
+                new CrawledMetric(10L, 5, 1, 2, 300),
+                new CrawledMetric(11L, 8, 0, 0, 40)), NOW, NOW);
+
+        assertThat(saved).isEqualTo(1);
+        ArgumentCaptor<List<SocialMetric>> inserted = ArgumentCaptor.captor();
+        verify(socialMetricRepository).insertAll(inserted.capture());
+        assertThat(inserted.getValue()).extracting(SocialMetric::getPost).containsExactly(post);
+        verify(postService, never()).getReference(11L);
+        verify(socialAccountService).markMetricsUpdated(7L, NOW);
+    }
+
+    @Test
+    void recordSnapshotsWithoutMetricsStillMarksAccountUpdated() {
+        when(postService.lockExistingIds(List.of())).thenReturn(Set.of());
+
+        assertThat(socialMetricService.recordSnapshots(7L, List.of(), NOW, NOW)).isZero();
+
+        verify(socialAccountService).markMetricsUpdated(7L, NOW);
     }
 
     private void givenCurrentUser() {

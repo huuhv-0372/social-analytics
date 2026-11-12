@@ -26,6 +26,10 @@ logging:
     com.huuhv.socialanalytics: INFO
 
 app:
+  jobs:
+    update-metrics:
+      # Tắt lịch chạy tự động — test gọi UpdateSocialMetricsJob.runOnce() trực tiếp khi cần
+      cron: "-"
   token-encryption:
     # Key giả chỉ dùng cho test (Base64 của "test-only-key-do-not-use-in-prod", 32 byte)
     key: dGVzdC1vbmx5LWtleS1kby1ub3QtdXNlLWluLXByb2Q=

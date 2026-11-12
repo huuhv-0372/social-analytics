@@ -77,6 +77,14 @@ spring:
             # Response {"data": {"id", "name", "username"}} — CustomOAuth2UserService bóc "data" trước khi đọc "id"
             user-name-attribute: id
 
+  task:
+    execution:
+      # Khai báo socialCrawlerExecutor (AsyncConfig) làm Boot bỏ applicationTaskExecutor mặc định → "force" để giữ nó
+      # cho @Async không ghi tên executor và các tác vụ async khác của Spring
+      mode: force
+    scheduling:
+      thread-name-prefix: scheduler-
+
   # Session HTTP lưu MySQL (Spring Session JDBC, config/SessionConfig): nhiều instance sau load balancer dùng chung
   # session (state/PKCE của OAuth2, SecurityContext), restart không đăng xuất user. Mỗi request đọc + ghi bảng session.
   # Timeout + cookie lấy từ server.servlet.session.* bên dưới; cookie tên SESSION (không còn JSESSIONID).
@@ -162,3 +170,30 @@ app:
     # Tomcat vô thời hạn; hết giờ → /login?error. Phải > 0
     connect-timeout: 5s
     read-timeout: 10s
+  async:
+    # Thread pool socialCrawlerExecutor (AsyncConfig) crawl metrics song song theo tài khoản.
+    # Đủ max-pool-size thread và queue đầy → thread gửi chờ tới khi queue có chỗ (WaitForQueueSpacePolicy), không bị bỏ.
+    social-crawler:
+      # Số việc chạy song song thực tế = core-pool-size: thread vượt core chỉ được tạo khi queue đã đầy (vd core 4,
+      # queue 100 → tới 104 tài khoản vẫn chỉ 4 thread). Giữ core = max; thread rảnh quá 60s tự dừng giữa 2 lần chạy
+      core-pool-size: 8
+      max-pool-size: 8
+      queue-capacity: 100
+      # Tắt app: chờ task đang chạy tối đa khoảng này
+      await-termination: 30s
+  jobs:
+    update-metrics:
+      # Crawl metrics mọi tài khoản (UpdateSocialMetricsJob). Cron Spring 6 trường: giây phút giờ ngày tháng thứ.
+      # Mặc định đầu mỗi giờ; "-" = tắt job
+      cron: "0 0 * * * *"
+      # Số bài mỗi lần gọi API mạng xã hội (tối đa 100)
+      batch-size: 100
+      # Thời lượng tối đa 1 lần chạy, tính từ lúc bắt đầu (gồm cả lúc gửi task). Quá hạn: tài khoản chưa xong tính lỗi,
+      # task còn chạy bỏ kết quả. Phải nhỏ hơn chu kỳ cron — đổi cron thì đổi cả timeout (xem application-dev.yml)
+      timeout: 50m
+      # Khoá chung giữa các instance (ShedLock, bảng scheduler_locks): mỗi lịch chỉ 1 instance chạy job.
+      # lock-at-most-for: timeout < giá trị < chu kỳ cron — instance chết giữa chừng thì khoá hết hạn trước lần chạy sau.
+      # lock-at-least-for: giữ khoá tối thiểu kể cả khi job xong sớm, để instance có đồng hồ lệch vài giây không chạy lại.
+      # Đổi cron thì đổi cả 2 giá trị (xem application-dev.yml)
+      lock-at-most-for: 55m
+      lock-at-least-for: 5m

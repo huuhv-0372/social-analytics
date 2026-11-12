@@ -2,10 +2,12 @@ package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.dto.request.PostRequest;
 import com.huuhv.socialanalytics.dto.response.PageResponse;
+import com.huuhv.socialanalytics.dto.response.PostRef;
 import com.huuhv.socialanalytics.dto.response.PostReportRow;
 import com.huuhv.socialanalytics.dto.response.PostResponse;
 import com.huuhv.socialanalytics.entity.Post;
 import com.huuhv.socialanalytics.entity.User;
+import com.huuhv.socialanalytics.enums.Provider;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.exception.DuplicateResourceException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
@@ -19,8 +21,11 @@ import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -35,6 +40,7 @@ public class PostService {
     private static final Set<String> SORTABLE_PROPERTIES = Set.of("createdAt", "updatedAt", "publishedAt", "provider");
     private static final Sort DEFAULT_SORT = Sort.by(Sort.Direction.DESC, "createdAt");
     private static final String RESOURCE = "Post";
+    static final int LOCK_BATCH_SIZE = 1000;
 
     private final PostRepository postRepository;
     private final CurrentUserService currentUserService;
@@ -118,6 +124,40 @@ public class PostService {
     @Transactional(readOnly = true)
     public List<PostReportRow> findReportRows(Long ownerId, int limit) {
         return postRepository.findReportRows(ownerId, Limit.of(limit));
+    }
+
+    /**
+     * Bài của 1 user trên 1 provider cho job crawl metrics. Job chạy nền không có user đăng nhập: {@code userId} lấy
+     * từ tài khoản mạng xã hội đang crawl, không bao giờ từ client.
+     */
+    @Transactional(readOnly = true)
+    public List<PostRef> findPostRefs(Long userId, Provider provider) {
+        return postRepository.findRefsByUserIdAndProvider(userId, provider);
+    }
+
+    /**
+     * Reference tới bài viết theo id (không query) để gán khoá ngoại snapshot. Gọi trong transaction của caller; id
+     * phải đến từ dữ liệu nội bộ đã kiểm tra quyền (vd {@link #findPostRefs}), không từ client.
+     */
+    Post getReference(Long id) {
+        return postRepository.getReferenceById(id);
+    }
+
+    /**
+     * Lọc ra các bài còn tồn tại và khoá chia sẻ chúng tới hết transaction của caller (bắt buộc có transaction): bài bị
+     * xoá trong lúc job crawl bị loại, bài còn lại không thể bị xoá trước khi snapshot được ghi. Id phải đến từ dữ liệu
+     * nội bộ (vd {@link #findPostRefs}), không từ client. Tra theo lô {@value #LOCK_BATCH_SIZE} id để câu
+     * {@code IN (...)} không quá dài.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public Set<Long> lockExistingIds(Collection<Long> postIds) {
+        List<Long> ids = List.copyOf(postIds);
+        Set<Long> existing = new HashSet<>(ids.size());
+        for (int from = 0; from < ids.size(); from += LOCK_BATCH_SIZE) {
+            existing.addAll(postRepository.lockExistingIds(ids.subList(from, Math.min(from + LOCK_BATCH_SIZE,
+                    ids.size()))));
+        }
+        return existing;
     }
 
     private static void validateUrl(PostRequest request) {

@@ -59,4 +59,10 @@ public class SocialAccount extends AuditableEntity {
 
     @Column(name = "token_expires_at")
     private LocalDateTime tokenExpiresAt;
+
+    // Lần crawl metrics thành công gần nhất (giờ UTC) — chỉ job ghi, qua SocialAccountService.markMetricsUpdated
+    // (UPDATE 1 cột). insertable/updatable = false: entity chỉ đọc cột này, nên flush của luồng khác (vd recordLogin
+    // cập nhật token) không ghi đè giá trị cũ đã nạp lên kết quả mới của job
+    @Column(name = "last_updated_at", insertable = false, updatable = false)
+    private LocalDateTime lastUpdatedAt;
 }

@@ -77,8 +77,8 @@ class PostImportServiceTest {
         AppProperties properties = new AppProperties(
                 new AppProperties.ImportSettings(maxRows, DataSize.ofMegabytes(20)),
                 new AppProperties.ExportSettings(10000, Duration.ZERO),
-                // Service không dùng key mã hoá token / timeout OAuth2
-                null, null);
+                // Service không dùng key mã hoá token / timeout OAuth2, thread pool, job
+                null, null, null, null);
         return new PostImportService(new GenericExcelImporter(), new PostUpsertService(postRepository),
                 currentUserService, validator, properties, CLOCK);
     }

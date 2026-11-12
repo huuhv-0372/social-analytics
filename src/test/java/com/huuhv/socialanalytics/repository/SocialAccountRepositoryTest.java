@@ -81,6 +81,75 @@ class SocialAccountRepositoryTest {
     }
 
     @Test
+    void findAllIdsPutsLeastRecentlyUpdatedAccountsFirst() {
+        Long neverUpdatedFirst = socialAccountRepository
+                .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "1234567890").orElseThrow().getId();
+        User other = userRepository.save(User.builder().displayName("Other").build());
+        // Tạo theo thứ tự id tăng dần nhưng thời điểm cập nhật không theo id
+        Long neverUpdatedSecond = socialAccountRepository.saveAndFlush(account(other, Provider.TWITTER, "1")).getId();
+        Long updatedNewest = socialAccountRepository.saveAndFlush(account(other, Provider.FACEBOOK, "2")).getId();
+        Long updatedOldest = socialAccountRepository.saveAndFlush(account(owner, Provider.TWITTER, "3")).getId();
+        Long updatedOldestTie = socialAccountRepository.saveAndFlush(account(other, Provider.TWITTER, "4")).getId();
+        LocalDateTime oldest = LocalDateTime.of(2026, 11, 7, 1, 0);
+        socialAccountRepository.updateLastUpdatedAt(updatedNewest, oldest.plusHours(1));
+        socialAccountRepository.updateLastUpdatedAt(updatedOldest, oldest);
+        socialAccountRepository.updateLastUpdatedAt(updatedOldestTie, oldest);
+
+        // NULL (chưa từng cập nhật) trước, rồi cũ → mới; trùng thời điểm thì theo id
+        assertThat(socialAccountRepository.findAllIdsStalestFirst()).containsExactly(
+                neverUpdatedFirst, neverUpdatedSecond, updatedOldest, updatedOldestTie, updatedNewest);
+    }
+
+    @Test
+    void updateLastUpdatedAtChangesOnlyThatColumnOfThatAccount() {
+        User other = userRepository.save(User.builder().displayName("Other").build());
+        SocialAccount untouched = socialAccountRepository.saveAndFlush(account(other, Provider.TWITTER, "2244994945"));
+        SocialAccount target = socialAccountRepository
+                .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "1234567890").orElseThrow();
+        LocalDateTime updatedAtBefore = target.getUpdatedAt();
+        LocalDateTime at = LocalDateTime.of(2026, 11, 7, 3, 0, 0, 123_456_000);
+        entityManager.clear();
+
+        assertThat(socialAccountRepository.updateLastUpdatedAt(target.getId(), at)).isEqualTo(1);
+        entityManager.clear();
+
+        SocialAccount reloaded = socialAccountRepository.findById(target.getId()).orElseThrow();
+        assertThat(reloaded.getLastUpdatedAt()).isEqualTo(at);
+        assertThat(reloaded.getAccessToken()).isEqualTo("token-1234567890");
+        assertThat(reloaded.getUpdatedAt()).isEqualTo(updatedAtBefore);
+        assertThat(socialAccountRepository.findById(untouched.getId()).orElseThrow().getLastUpdatedAt()).isNull();
+    }
+
+    @Test
+    void maxLastUpdatedAtIsTakenOnlyFromAccountsOfThatUser() {
+        SocialAccount ownerFacebook = socialAccountRepository
+                .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "1234567890").orElseThrow();
+        SocialAccount ownerTwitter = socialAccountRepository.saveAndFlush(account(owner, Provider.TWITTER, "111"));
+        User other = userRepository.save(User.builder().displayName("Other").build());
+        SocialAccount otherAccount = socialAccountRepository.saveAndFlush(account(other, Provider.TWITTER, "222"));
+        LocalDateTime older = LocalDateTime.of(2026, 11, 7, 1, 0);
+        LocalDateTime newer = LocalDateTime.of(2026, 11, 7, 2, 0);
+        socialAccountRepository.updateLastUpdatedAt(ownerFacebook.getId(), older);
+        socialAccountRepository.updateLastUpdatedAt(ownerTwitter.getId(), newer);
+        // Tài khoản của user khác mới hơn nhưng không được tính
+        socialAccountRepository.updateLastUpdatedAt(otherAccount.getId(), newer.plusHours(1));
+
+        assertThat(socialAccountRepository.findMaxLastUpdatedAtByUserId(owner.getId())).contains(newer);
+    }
+
+    @Test
+    void maxLastUpdatedAtIsEmptyWhenNeverUpdatedOrNoAccount() {
+        assertThat(socialAccountRepository.findMaxLastUpdatedAtByUserId(owner.getId())).isEmpty();
+        User withoutAccount = userRepository.save(User.builder().displayName("No account").build());
+        assertThat(socialAccountRepository.findMaxLastUpdatedAtByUserId(withoutAccount.getId())).isEmpty();
+    }
+
+    @Test
+    void updateLastUpdatedAtOfMissingAccountUpdatesNothing() {
+        assertThat(socialAccountRepository.updateLastUpdatedAt(-1L, LocalDateTime.now())).isZero();
+    }
+
+    @Test
     void accountWithUndecryptableTokenCanStillBeUpdated() {
         // Token lưu bằng key cũ / dữ liệu hỏng → converter trả null. Cập nhật field khác (vd job Giai đoạn 4) ghi lại
         // mọi cột, kể cả access_token = NULL: không được vi phạm NOT NULL (V3)
@@ -101,6 +170,37 @@ class SocialAccountRepositoryTest {
                 .orElseThrow();
         assertThat(reloaded.getAccessToken()).isNull();
         assertThat(reloaded.getTokenExpiresAt()).isEqualTo(LocalDateTime.of(2030, 1, 1, 0, 0));
+    }
+
+    @Test
+    void savingStaleAccountDoesNotOverwriteLastUpdatedAtWrittenByJob() {
+        // Đăng nhập nạp tài khoản (last_updated_at = null) ...
+        SocialAccount loadedByLogin = socialAccountRepository
+                .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "1234567890").orElseThrow();
+        assertThat(loadedByLogin.getLastUpdatedAt()).isNull();
+        // ... trong lúc đó job ghi thời điểm crawl (UPDATE 1 cột, không đổi entity đang quản lý) ...
+        LocalDateTime crawledAt = LocalDateTime.of(2026, 11, 10, 3, 0);
+        socialAccountRepository.updateLastUpdatedAt(loadedByLogin.getId(), crawledAt);
+        // ... rồi đăng nhập flush token mới: không được ghi giá trị cũ đã nạp đè lên kết quả của job
+        loadedByLogin.setAccessToken("new-token");
+        socialAccountRepository.saveAndFlush(loadedByLogin);
+        entityManager.clear();
+
+        SocialAccount reloaded = socialAccountRepository.findById(loadedByLogin.getId()).orElseThrow();
+        assertThat(reloaded.getLastUpdatedAt()).isEqualTo(crawledAt);
+        assertThat(reloaded.getAccessToken()).isEqualTo("new-token");
+    }
+
+    @Test
+    void lastUpdatedAtSetOnNewEntityIsNotInserted() {
+        // Chỉ job ghi cột này — entity mới luôn bắt đầu "chưa cập nhật"
+        User other = userRepository.save(User.builder().displayName("Other").build());
+        SocialAccount account = account(other, Provider.TWITTER, "2244994945");
+        account.setLastUpdatedAt(LocalDateTime.of(2026, 11, 10, 3, 0));
+        Long id = socialAccountRepository.saveAndFlush(account).getId();
+        entityManager.clear();
+
+        assertThat(socialAccountRepository.findById(id).orElseThrow().getLastUpdatedAt()).isNull();
     }
 
     private static SocialAccount account(User user, Provider provider, String providerUserId) {

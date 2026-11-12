@@ -1,5 +1,6 @@
 package com.huuhv.socialanalytics.repository;
 
+import com.huuhv.socialanalytics.dto.response.PostRef;
 import com.huuhv.socialanalytics.dto.response.PostReportRow;
 import com.huuhv.socialanalytics.entity.Post;
 import com.huuhv.socialanalytics.enums.Provider;
@@ -32,6 +33,26 @@ public interface PostRepository extends JpaRepository<Post, Long> {
 
     /** Bài đã có của user theo lô externalId (import upsert) — 1 query cho mỗi provider thay vì mỗi dòng. */
     List<Post> findByUserIdAndProviderAndExternalIdIn(Long userId, Provider provider, Collection<String> externalIds);
+
+    /**
+     * Bài của 1 user trên 1 provider cho job crawl metrics (projection, không load Entity). Lọc theo tiền tố của unique
+     * index {@code (user_id, provider, external_id)}.
+     */
+    @Query("""
+            SELECT new com.huuhv.socialanalytics.dto.response.PostRef(p.id, p.externalId)
+            FROM Post p
+            WHERE p.user.id = :userId AND p.provider = :provider
+            ORDER BY p.id
+            """)
+    List<PostRef> findRefsByUserIdAndProvider(@Param("userId") Long userId, @Param("provider") Provider provider);
+
+    /**
+     * Id các bài còn tồn tại trong {@code ids}, giữ khoá chia sẻ ({@code FOR SHARE}, MySQL 8) tới hết transaction: bài
+     * không bị xoá được cho tới khi caller commit → INSERT snapshot theo các id này không vi phạm khoá ngoại. Cần chạy
+     * trong transaction.
+     */
+    @Query(value = "SELECT id FROM posts WHERE id IN (:ids) FOR SHARE", nativeQuery = true)
+    List<Long> lockExistingIds(@Param("ids") Collection<Long> ids);
 
     /**
      * Báo cáo export: mọi bài của user kèm snapshot mới nhất (LEFT JOIN — bài chưa có snapshot vẫn có dòng).

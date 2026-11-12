@@ -20,6 +20,7 @@
         <springdoc.version>3.0.3</springdoc.version>
         <poi.version>5.4.1</poi.version>
         <bucket4j.version>8.21.0</bucket4j.version>
+        <shedlock.version>7.11.0</shedlock.version>
     </properties>
 
     <dependencies>
@@ -105,6 +106,13 @@
             <groupId>com.bucket4j</groupId>
             <artifactId>bucket4j_jdk17-mysql</artifactId>
             <version>${bucket4j.version}</version>
+        </dependency>
+        <!-- Khoá job @Scheduled giữa các instance (bảng scheduler_locks, Flyway V4_1): mỗi lịch chỉ 1 instance chạy.
+             Dùng API LockingTaskExecutor của shedlock-core, không cần shedlock-spring (@SchedulerLock / AOP) -->
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-provider-jdbc-template</artifactId>
+            <version>${shedlock.version}</version>
         </dependency>
 
         <!-- API Docs -->
