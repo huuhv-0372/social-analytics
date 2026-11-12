@@ -1,26 +1,29 @@
 package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.entity.User;
+import com.huuhv.socialanalytics.enums.Provider;
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.repository.UserRepository;
+import com.huuhv.socialanalytics.security.AppOAuth2User;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
+import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
+import org.springframework.security.oauth2.core.user.OAuth2User;
 
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -34,9 +37,6 @@ class CurrentUserServiceTest {
     @Mock
     private UserRepository userRepository;
 
-    @Mock
-    private UserProvisioningService userProvisioningService;
-
     @InjectMocks
     private CurrentUserService currentUserService;
 
@@ -49,6 +49,7 @@ class CurrentUserServiceTest {
     void rejectsWhenNoAuthentication() {
         assertThatThrownBy(() -> currentUserService.getCurrentUser())
                 .isInstanceOf(AuthenticationRequiredException.class);
+        verifyNoInteractions(userRepository);
     }
 
     @Test
@@ -62,90 +63,96 @@ class CurrentUserServiceTest {
     }
 
     @Test
-    void returnsExistingUser() {
-        User existing = User.builder().id(1L).email("dev@example.com").displayName("Dev").build();
-        authenticateAs("dev@example.com");
-        when(userRepository.findByEmail("dev@example.com")).thenReturn(Optional.of(existing));
+    void appPrincipalResolvesOwnerByStoredIdWithoutQueryingSocialAccounts() {
+        User reference = User.builder().id(7L).build();
+        AppOAuth2User principal = new AppOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
+                Map.of("id", "1234567890", "name", "Dev"), "id", 7L, "Dev");
+        authenticate(new OAuth2AuthenticationToken(principal, principal.getAuthorities(), "facebook"));
+        when(userRepository.existsById(7L)).thenReturn(true);
+        when(userRepository.getReferenceById(7L)).thenReturn(reference);
 
-        assertThat(currentUserService.getCurrentUser()).isSameAs(existing);
-        verifyNoInteractions(userProvisioningService);
+        assertThat(currentUserService.getCurrentUser()).isSameAs(reference);
+        verify(userRepository, never()).findBySocialAccount(any(), any());
     }
 
     @Test
-    void getCurrentUserNeverProvisionsAndFailsClosedWhenUserMissing() {
-        authenticateAs("missing@example.com");
-        when(userRepository.findByEmail("missing@example.com")).thenReturn(Optional.empty());
+    void appPrincipalOfDeletedUserIsRejected() {
+        // User bị xoá / DB bị reset khi session còn sống: không trả reference tới id không còn (hoặc đã cấp cho user khác)
+        AppOAuth2User principal = new AppOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
+                Map.of("id", "1234567890"), "id", 7L, "Dev");
+        authenticate(new OAuth2AuthenticationToken(principal, principal.getAuthorities(), "facebook"));
+        when(userRepository.existsById(7L)).thenReturn(false);
 
         assertThatThrownBy(() -> currentUserService.getCurrentUser())
                 .isInstanceOf(AuthenticationRequiredException.class);
-        verifyNoInteractions(userProvisioningService);
+        verify(userRepository, never()).getReferenceById(any());
     }
 
     @Test
-    void provisionSkipsAnonymousRequest() {
-        currentUserService.provisionCurrentUserIfMissing();
+    void appPrincipalStillRequiresAuthenticatedOAuth2Token() {
+        AppOAuth2User principal = new AppOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
+                Map.of("id", "1234567890"), "id", 7L, "Dev");
+        OAuth2AuthenticationToken token =
+                new OAuth2AuthenticationToken(principal, principal.getAuthorities(), "facebook");
+        token.setAuthenticated(false);
+        authenticate(token);
 
-        verifyNoInteractions(userProvisioningService);
+        assertThatThrownBy(() -> currentUserService.getCurrentUser())
+                .isInstanceOf(AuthenticationRequiredException.class);
+        verifyNoInteractions(userRepository);
     }
 
     @Test
-    void provisionSkipsExistingUser() {
-        authenticateAs("dev@example.com");
-        when(userProvisioningService.findByEmail("dev@example.com"))
-                .thenReturn(Optional.of(User.builder().id(1L).build()));
+    void mapsOAuth2PrincipalToUserThroughSocialAccount() {
+        User owner = User.builder().id(1L).displayName("Dev").build();
+        authenticate(oauth2Token("facebook", "1234567890"));
+        when(userRepository.findBySocialAccount(Provider.FACEBOOK, "1234567890")).thenReturn(Optional.of(owner));
 
-        currentUserService.provisionCurrentUserIfMissing();
-
-        verify(userProvisioningService, never()).provision(any());
+        assertThat(currentUserService.getCurrentUser()).isSameAs(owner);
     }
 
     @Test
-    void provisionsUserOnFirstAccess() {
-        authenticateAs("new@example.com");
-        when(userProvisioningService.findByEmail("new@example.com")).thenReturn(Optional.empty());
+    void mapsXRegistrationToTwitterProvider() {
+        User owner = User.builder().id(2L).displayName("Dev").build();
+        authenticate(oauth2Token("twitter", "2244994945"));
+        when(userRepository.findBySocialAccount(Provider.TWITTER, "2244994945")).thenReturn(Optional.of(owner));
 
-        currentUserService.provisionCurrentUserIfMissing();
-
-        verify(userProvisioningService).provision("new@example.com");
+        assertThat(currentUserService.getCurrentUser()).isSameAs(owner);
     }
 
     @Test
-    void concurrentFirstAccessToleratesUserCreatedByOtherRequest() {
-        authenticateAs("race@example.com");
-        when(userProvisioningService.findByEmail("race@example.com"))
-                .thenReturn(Optional.empty())
-                .thenReturn(Optional.of(User.builder().id(3L).build()));
-        when(userProvisioningService.provision("race@example.com"))
-                .thenThrow(new DataIntegrityViolationException("uk_users_email"));
+    void failsClosedWhenSocialAccountIsNotStored() {
+        authenticate(oauth2Token("facebook", "1234567890"));
+        when(userRepository.findBySocialAccount(Provider.FACEBOOK, "1234567890")).thenReturn(Optional.empty());
 
-        assertThatCode(() -> currentUserService.provisionCurrentUserIfMissing()).doesNotThrowAnyException();
+        assertThatThrownBy(() -> currentUserService.getCurrentUser())
+                .isInstanceOf(AuthenticationRequiredException.class);
     }
 
     @Test
-    void rethrowsWhenProvisioningFailsForOtherReason() {
-        authenticateAs("bad@example.com");
-        when(userProvisioningService.findByEmail("bad@example.com")).thenReturn(Optional.empty());
-        DataIntegrityViolationException failure = new DataIntegrityViolationException("other constraint");
-        when(userProvisioningService.provision("bad@example.com")).thenThrow(failure);
+    void rejectsUnknownRegistrationId() {
+        authenticate(oauth2Token("github", "42"));
 
-        assertThatThrownBy(() -> currentUserService.provisionCurrentUserIfMissing()).isSameAs(failure);
+        assertThatThrownBy(() -> currentUserService.getCurrentUser())
+                .isInstanceOf(AuthenticationRequiredException.class);
+        verifyNoInteractions(userRepository);
     }
 
     @Test
-    void provisionRefusesToRunInsideTransaction() {
-        authenticateAs("dev@example.com");
-        TransactionSynchronizationManager.setActualTransactionActive(true);
-        try {
-            assertThatThrownBy(() -> currentUserService.provisionCurrentUserIfMissing())
-                    .isInstanceOf(IllegalStateException.class);
-        } finally {
-            TransactionSynchronizationManager.setActualTransactionActive(false);
-        }
-        verifyNoInteractions(userProvisioningService);
+    void rejectsNonOAuth2Authentication() {
+        // Không còn map username (HTTP Basic / form) sang User theo email
+        authenticate(UsernamePasswordAuthenticationToken.authenticated("dev@example.com", null,
+                AuthorityUtils.NO_AUTHORITIES));
+
+        assertThatThrownBy(() -> currentUserService.getCurrentUser())
+                .isInstanceOf(AuthenticationRequiredException.class);
+        verifyNoInteractions(userRepository);
     }
 
-    private static void authenticateAs(String username) {
-        authenticate(UsernamePasswordAuthenticationToken.authenticated(username, null, AuthorityUtils.NO_AUTHORITIES));
+    private static OAuth2AuthenticationToken oauth2Token(String registrationId, String providerUserId) {
+        OAuth2User principal = new DefaultOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
+                Map.of("id", providerUserId, "name", "Dev"), "id");
+        return new OAuth2AuthenticationToken(principal, principal.getAuthorities(), registrationId);
     }
 
     private static void authenticate(Authentication authentication) {

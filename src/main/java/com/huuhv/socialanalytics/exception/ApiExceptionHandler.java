@@ -57,10 +57,16 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return problem(HttpStatus.CONFLICT, "Request conflicts with existing data");
     }
 
+    /**
+     * Đã đăng nhập nhưng không xác định được owner (vd user trong session đã bị xoá) → 401 giống
+     * {@code ApiAuthenticationEntryPoint} ở tầng filter. Cố ý không gửi {@code WWW-Authenticate} (lệch RFC 9110 có
+     * chủ đích): app chỉ đăng nhập OAuth2 trên trình duyệt bằng session cookie — challenge {@code Basic} làm trình
+     * duyệt / Swagger UI bật hộp thoại đăng nhập không dùng được, còn scheme tự đặt không có client nào hiểu.
+     * Khi API có xác thực bằng token thì gửi {@code WWW-Authenticate: Bearer} (RFC 6750) ở cả 2 tầng.
+     */
     @ExceptionHandler(AuthenticationRequiredException.class)
     ResponseEntity<ProblemDetail> handleAuthenticationRequired(AuthenticationRequiredException ex) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .header(HttpHeaders.WWW_AUTHENTICATE, "Basic realm=\"social-analytics\"")
                 .body(problem(HttpStatus.UNAUTHORIZED, ex.getMessage()));
     }
 

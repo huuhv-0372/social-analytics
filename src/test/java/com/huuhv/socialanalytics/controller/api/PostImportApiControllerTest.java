@@ -5,6 +5,7 @@ import com.huuhv.socialanalytics.config.WebConfig;
 import com.huuhv.socialanalytics.dto.response.ImportResultResponse;
 import com.huuhv.socialanalytics.exception.BadRequestException;
 import com.huuhv.socialanalytics.service.CurrentUserService;
+import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.PostImportService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,7 +27,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oauth2Login;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -49,7 +50,11 @@ class PostImportApiControllerTest {
     @MockitoBean
     private PostImportService postImportService;
 
-    // Interceptor /api/** trong WebConfig gọi provisionCurrentUserIfMissing() trước controller
+    // SecurityConfig cần bean này (oauth2Login → userInfoEndpoint); bản thật phụ thuộc DB
+    @MockitoBean
+    private CustomOAuth2UserService customOAuth2UserService;
+
+    // StaleSessionFilter (SecurityConfig) kiểm tra user của session qua service này; mock trả null = user hợp lệ
     @MockitoBean
     private CurrentUserService currentUserService;
 
@@ -58,7 +63,7 @@ class PostImportApiControllerTest {
         when(postImportService.importPosts(any(MultipartFile.class))).thenReturn(new ImportResultResponse(3, 1, 1, 1,
                 List.of(new ImportResultResponse.RowError(4, "URL", "must not be blank"))));
 
-        mockMvc.perform(multipart("/api/import-posts").file(FILE).with(user("dev@example.com")).with(csrf()))
+        mockMvc.perform(multipart("/api/import-posts").file(FILE).with(oauth2Login()).with(csrf()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalRows").value(3))
                 .andExpect(jsonPath("$.created").value(1))
@@ -73,20 +78,20 @@ class PostImportApiControllerTest {
         // Chặn ở filter chain → file upload không được đọc, Service không được gọi
         mockMvc.perform(multipart("/api/import-posts").file(FILE).with(csrf()))
                 .andExpect(status().isUnauthorized())
-                .andExpect(header().exists(HttpHeaders.WWW_AUTHENTICATE));
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE));
         verifyNoInteractions(postImportService);
     }
 
     @Test
     void importWithoutCsrfTokenReturns403() throws Exception {
-        mockMvc.perform(multipart("/api/import-posts").file(FILE).with(user("dev@example.com")))
+        mockMvc.perform(multipart("/api/import-posts").file(FILE).with(oauth2Login()))
                 .andExpect(status().isForbidden());
         verifyNoInteractions(postImportService);
     }
 
     @Test
     void missingFilePartReturns400() throws Exception {
-        mockMvc.perform(multipart("/api/import-posts").with(user("dev@example.com")).with(csrf()))
+        mockMvc.perform(multipart("/api/import-posts").with(oauth2Login()).with(csrf()))
                 .andExpect(status().isBadRequest());
         verifyNoInteractions(postImportService);
     }
@@ -96,7 +101,7 @@ class PostImportApiControllerTest {
         when(postImportService.importPosts(any(MultipartFile.class)))
                 .thenThrow(new BadRequestException("Only .xlsx files are accepted"));
 
-        mockMvc.perform(multipart("/api/import-posts").file(FILE).with(user("dev@example.com")).with(csrf()))
+        mockMvc.perform(multipart("/api/import-posts").file(FILE).with(oauth2Login()).with(csrf()))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.detail").value("Only .xlsx files are accepted"));
@@ -107,7 +112,7 @@ class PostImportApiControllerTest {
         byte[] content = {'P', 'K', 3, 4};
         when(postImportService.getTemplate()).thenReturn(new ByteArrayResource(content));
 
-        mockMvc.perform(get("/api/import-posts/template").with(user("dev@example.com")))
+        mockMvc.perform(get("/api/import-posts/template").with(oauth2Login()))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType(PostImportApiController.XLSX_MEDIA_TYPE))
                 .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION,
@@ -121,7 +126,7 @@ class PostImportApiControllerTest {
         when(postImportService.importPosts(any(MultipartFile.class)))
                 .thenThrow(new MaxUploadSizeExceededException(5 * 1024 * 1024));
 
-        mockMvc.perform(multipart("/api/import-posts").file(FILE).with(user("dev@example.com")).with(csrf()))
+        mockMvc.perform(multipart("/api/import-posts").file(FILE).with(oauth2Login()).with(csrf()))
                 .andExpect(status().isPayloadTooLarge())
                 .andExpect(jsonPath("$.detail").value("File exceeds the maximum allowed size"));
     }

@@ -3,10 +3,29 @@ spring:
   main:
     banner-mode: off
   security:
-    user:
-      password: test-only-password
+    # Giá trị giả cho test — không gọi Facebook thật
+    oauth2:
+      client:
+        registration:
+          facebook:
+            client-id: test-facebook-client-id
+            client-secret: test-facebook-client-secret
+          twitter:
+            client-id: test-twitter-client-id
+            client-secret: test-twitter-client-secret
+
+server:
+  servlet:
+    session:
+      cookie:
+        secure: false
 
 logging:
   level:
     root: WARN
     com.huuhv.socialanalytics: INFO
+
+app:
+  token-encryption:
+    # Key giả chỉ dùng cho test (Base64 của "test-only-key-do-not-use-in-prod", 32 byte)
+    key: dGVzdC1vbmx5LWtleS1kby1ub3QtdXNlLWluLXByb2Q=

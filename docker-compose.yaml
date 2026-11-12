@@ -15,9 +15,6 @@ x-app-env: &app-env
   ARTEMIS_PORT: 61616
   ARTEMIS_USER: ${ARTEMIS_USER:?ARTEMIS_USER is required}
   ARTEMIS_PASSWORD: ${ARTEMIS_PASSWORD:?ARTEMIS_PASSWORD is required}
-  # TẠM THỜI tới Task 3.1: tài khoản HTTP Basic cho /api/**
-  API_USER_NAME: ${API_USER_NAME:-dev@social-analytics.local}
-  API_USER_PASSWORD: ${API_USER_PASSWORD:?API_USER_PASSWORD is required}
 
 services:
   mysql:
@@ -63,6 +60,14 @@ services:
       <<: *app-env
       # Compose dùng cho môi trường local → mặc định profile dev (bật Swagger, log DEBUG)
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      # Bắt buộc cho app (client-id / client-secret / key rỗng → app dừng khởi động; secret do
+      # config/OAuth2ClientConfig kiểm tra vì Boot chỉ kiểm client-id). Không dùng ${...:?} vì compose kiểm
+      # biến đó cho mọi service, kể cả khi chỉ chạy test bằng service maven (test dùng giá trị giả trong application-test.yml)
+      FACEBOOK_CLIENT_ID: ${FACEBOOK_CLIENT_ID:-}
+      FACEBOOK_CLIENT_SECRET: ${FACEBOOK_CLIENT_SECRET:-}
+      TWITTER_CLIENT_ID: ${TWITTER_CLIENT_ID:-}
+      TWITTER_CLIENT_SECRET: ${TWITTER_CLIENT_SECRET:-}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
       # Trống khi truy cập trực tiếp; "native" khi đặt sau reverse proxy tin cậy (xem .env.example)
       FORWARD_HEADERS_STRATEGY: ${FORWARD_HEADERS_STRATEGY:-}
     ports:

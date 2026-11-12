@@ -1,66 +1,155 @@
 package com.huuhv.socialanalytics.config;
 
+import com.huuhv.socialanalytics.security.ApiAuthenticationEntryPoint;
+import com.huuhv.socialanalytics.security.CsrfHeaderOrFormTokenRequestHandler;
+import com.huuhv.socialanalytics.security.LoggingAccessDeniedHandler;
+import com.huuhv.socialanalytics.security.OAuth2LoginResultHandler;
+import com.huuhv.socialanalytics.service.CurrentUserService;
+import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.boot.security.autoconfigure.SecurityProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.crypto.factory.PasswordEncoderFactories;
-import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
+import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
+import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.authentication.logout.LogoutSuccessHandler;
+import org.springframework.security.web.authentication.logout.SimpleUrlLogoutSuccessHandler;
+import org.springframework.security.web.csrf.CsrfFilter;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfToken;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import org.springframework.security.web.util.matcher.AnyRequestMatcher;
+import org.springframework.security.web.util.matcher.OrRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.regex.Pattern;
-
-import static org.springframework.security.config.Customizer.withDefaults;
+import java.util.List;
 
 /**
- * TẠM THỜI (Task 1.4 → thay ở Task 3.1): mở {@code /api/**} và Swagger để thử API trước khi có OAuth2.
+ * Cấu hình Spring Security (OWASP A01/A02):
  * <ul>
- *     <li>{@code /api/**} permitAll; danh tính gửi qua HTTP Basic (user cấu hình ở {@code spring.security.user.*}).
- *     Request ẩn danh vẫn bị Service từ chối với 401 vì không xác định được owner (fail closed).
- *     Riêng {@code POST /api/import-posts} và {@code /api/export-report} yêu cầu đăng nhập ngay ở filter chain để không
- *     tốn tài nguyên đọc file upload / dựng báo cáo.</li>
- *     <li>CSRF bật cho mọi request ghi (kể cả {@code /api/**}): token nằm trong cookie {@code XSRF-TOKEN},
- *     client gửi lại qua header {@code X-XSRF-TOKEN} (Swagger UI tự làm qua {@code springdoc.swagger-ui.csrf.enabled}).</li>
- *     <li>Mọi đường dẫn khác vẫn deny-by-default.</li>
+ *     <li><b>Deny-by-default</b>: chỉ {@code /login}, {@code /oauth2/**}, {@code /error} và static resource là public;
+ *     mọi đường dẫn khác (kể cả {@code /api/**}, Swagger) phải đăng nhập. Dispatch {@code ERROR} (trang lỗi) luôn được
+ *     cho qua để giữ đúng mã lỗi gốc.</li>
+ *     <li>Chưa đăng nhập: REST ({@code /api/**}, {@code /v3/api-docs/**}) nhận 401 {@code ProblemDetail};
+ *     trang web (kể cả Swagger UI) được redirect về {@code /login}. Bị từ chối (403, gồm lỗi CSRF): REST nhận
+ *     {@code ProblemDetail}, trang web nhận trang lỗi 403.</li>
+ *     <li>CSRF bật cho mọi request ghi: token nằm trong cookie {@code XSRF-TOKEN}, client gửi lại qua header
+ *     {@code X-XSRF-TOKEN} (Swagger UI tự làm qua {@code springdoc.swagger-ui.csrf.enabled}); trang Thymeleaf đọc
+ *     token từ {@code <meta name="_csrf">} / form {@code th:action} chèn hidden {@code _csrf}.</li>
+ *     <li>Đăng nhập OAuth2 (Facebook, X): {@code /oauth2/authorization/{registrationId}} → callback
+ *     {@code /login/oauth2/code/{registrationId}} → luôn redirect {@code /dashboard}; lỗi → {@code /login?error}.</li>
+ *     <li>Logout chỉ nhận POST (có CSRF), redirect cố định về {@code /login?logout} (không open redirect).</li>
+ *     <li>Session đã đăng nhập nhưng user không còn trong DB bị huỷ ({@link StaleSessionFilter}) → xử lý như ẩn
+ *     danh.</li>
+ *     <li>Security header: CSP, {@code X-Content-Type-Options}, {@code Referrer-Policy}, {@code frame-ancestors 'none'}
+ *     + {@code X-Frame-Options: DENY}; HSTS mặc định của Spring (chỉ gửi qua HTTPS).</li>
  * </ul>
- * Task 3.1 phải: bỏ permitAll {@code /api/**}, bỏ user HTTP Basic, không public Swagger ở production, thêm security headers.
+ * Chỉ có đăng nhập OAuth2: không có HTTP Basic / form login / user mặc định của Boot. Gọi API (Swagger UI, Postman)
+ * dùng session cookie sau khi đăng nhập trên trình duyệt.
  */
 @Configuration
 @EnableWebSecurity
-// Đăng ký tường minh: test slice (@WebMvcTest) của Boot 4 không tự tạo bean SecurityProperties
-@EnableConfigurationProperties(SecurityProperties.class)
 public class SecurityConfig {
 
-    private static final Pattern ENCODED_PASSWORD = Pattern.compile("^\\{.+}.*$");
+    /**
+     * Chỉ cho phép tài nguyên từ chính app và CDN đang dùng (jsDelivr, đã pin version + SRI).
+     * Không có {@code 'unsafe-inline'}: script/style riêng đặt trong {@code static/}.
+     */
+    static final String CONTENT_SECURITY_POLICY = String.join("; ",
+            "default-src 'self'",
+            "script-src 'self' https://cdn.jsdelivr.net",
+            "style-src 'self' https://cdn.jsdelivr.net",
+            "img-src 'self' data:",
+            "font-src 'self' https://cdn.jsdelivr.net",
+            "connect-src 'self'",
+            "object-src 'none'",
+            "base-uri 'self'",
+            "form-action 'self'",
+            "frame-ancestors 'none'");
+
+    static final String LOGIN_PAGE = "/login";
+    static final String LOGOUT_SUCCESS_URL = LOGIN_PAGE + "?logout";
+    static final String LOGIN_SUCCESS_URL = "/dashboard";
+    static final String LOGIN_FAILURE_URL = LOGIN_PAGE + "?error";
+
+    /** Cookie session mặc định của Spring Session ({@code DefaultCookieSerializer}) — session lưu MySQL, xem {@link SessionConfig}. */
+    static final String SESSION_COOKIE_NAME = "SESSION";
+
+    static final List<String> STATIC_RESOURCE_PATTERNS = List.of("/css/**", "/js/**", "/images/**", "/favicon.ico");
 
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain securityFilterChain(HttpSecurity http, CustomOAuth2UserService oauth2UserService,
+                                            CurrentUserService currentUserService) throws Exception {
+        ApiAuthenticationEntryPoint apiEntryPoint = new ApiAuthenticationEntryPoint();
+        RequestMatcher restRequestMatcher = restRequestMatcher();
+        OAuth2LoginResultHandler loginResultHandler = new OAuth2LoginResultHandler(LOGIN_SUCCESS_URL, LOGIN_FAILURE_URL);
         http
                 .authorizeHttpRequests(auth -> auth
-                        // Upload: chặn request ẩn danh ở filter chain, trước khi multipart được parse (OWASP A06)
-                        .requestMatchers(HttpMethod.POST, "/api/import-posts").authenticated()
-                        // Export tốn tài nguyên (query + dựng file): từ chối ẩn danh trước khi tới Service
-                        .requestMatchers("/api/export-report").authenticated()
-                        .requestMatchers("/api/**").permitAll()
-                        .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                        // Lỗi gửi bằng sendError (vd 403 CSRF, 404) được Tomcat dispatch lại sang trang lỗi và chain
+                        // chạy lại cho lượt đó: cho qua mọi dispatch ERROR (không phụ thuộc server.error.path) để giữ
+                        // mã lỗi gốc, không bị anyRequest().authenticated() đè thành 401 / redirect login.
+                        // Request gốc đã qua kiểm tra quyền ở dispatch REQUEST nên không mở thêm quyền truy cập nào.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                        .requestMatchers(LOGIN_PAGE, "/oauth2/**", "/error").permitAll()
+                        .requestMatchers(STATIC_RESOURCE_PATTERNS.toArray(String[]::new)).permitAll()
                         .anyRequest().authenticated())
-                .csrf(csrf -> csrf.spa())
-                .addFilterAfter(new CsrfCookieFilter(), BasicAuthenticationFilter.class)
-                .httpBasic(withDefaults());
+                .exceptionHandling(ex -> ex
+                        // Thứ tự quan trọng: REST khớp trước, còn lại (trang web) redirect về trang login
+                        .defaultAuthenticationEntryPointFor(apiEntryPoint, restRequestMatcher)
+                        .defaultAuthenticationEntryPointFor(
+                                new LoginUrlAuthenticationEntryPoint(LOGIN_PAGE), AnyRequestMatcher.INSTANCE)
+                        // 403: REST nhận ProblemDetail, trang web dùng trang lỗi mặc định; cả hai đều được log
+                        .accessDeniedHandler(new LoggingAccessDeniedHandler(restRequestMatcher)))
+                // Như csrf.spa() (cookie XSRF-TOKEN đọc được bằng JS) nhưng header nhận cả token đã mask từ <meta>
+                .csrf(csrf -> csrf
+                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                        .csrfTokenRequestHandler(new CsrfHeaderOrFormTokenRequestHandler()))
+                .addFilterAfter(new CsrfCookieFilter(), CsrfFilter.class)
+                // Session đã đăng nhập nhưng user không còn trong DB → logout rồi xử lý như request ẩn danh
+                .addFilterBefore(new StaleSessionFilter(currentUserService), AnonymousAuthenticationFilter.class)
+                .logout(logout -> logout
+                        .logoutUrl("/logout")
+                        // Handler tường minh: luôn redirect URL nội bộ cố định (không theo tham số → không open redirect),
+                        // không phụ thuộc loại request (Accept)
+                        .logoutSuccessHandler(logoutSuccessHandler())
+                        .invalidateHttpSession(true)
+                        .clearAuthentication(true)
+                        .deleteCookies(SESSION_COOKIE_NAME))
+                .headers(headers -> headers
+                        .contentSecurityPolicy(csp -> csp.policyDirectives(CONTENT_SECURITY_POLICY))
+                        .frameOptions(frame -> frame.deny())
+                        .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN)))
+                // Social login: trang login riêng (không dùng trang mặc định của Spring). state + PKCE (S256) do Spring
+                // xử lý — Spring Security 7 mặc định requireProofKey=true cho mọi client, kể cả confidential client.
+                // Entry point mặc định của oauth2Login không được dùng vì 2 entry point khai báo ở trên khớp trước.
+                .oauth2Login(oauth2 -> oauth2
+                        .loginPage(LOGIN_PAGE)
+                        // Map user info theo provider (X bọc thông tin trong "data")
+                        .userInfoEndpoint(userInfo -> userInfo.userService(oauth2UserService))
+                        .successHandler(loginResultHandler)
+                        .failureHandler(loginResultHandler));
         return http.build();
+    }
+
+    private static LogoutSuccessHandler logoutSuccessHandler() {
+        SimpleUrlLogoutSuccessHandler handler = new SimpleUrlLogoutSuccessHandler();
+        handler.setDefaultTargetUrl(LOGOUT_SUCCESS_URL);
+        handler.setAlwaysUseDefaultTargetUrl(true);
+        return handler;
+    }
+
+    private static RequestMatcher restRequestMatcher() {
+        PathPatternRequestMatcher.Builder path = PathPatternRequestMatcher.withDefaults();
+        return new OrRequestMatcher(path.matcher("/api/**"), path.matcher("/v3/api-docs/**"));
     }
 
     /**
@@ -78,25 +167,5 @@ public class SecurityConfig {
             }
             filterChain.doFilter(request, response);
         }
-    }
-
-    /**
-     * TẠM THỜI tới Task 3.1: user HTTP Basic từ {@code spring.security.user.*}. Khai báo thay auto-config của Boot để
-     * thiếu mật khẩu thì dừng khởi động, không để Boot sinh mật khẩu ngẫu nhiên và in ra log (OWASP A02/A09).
-     */
-    @Bean
-    UserDetailsService apiUserDetailsService(SecurityProperties securityProperties) {
-        SecurityProperties.User user = securityProperties.getUser();
-        if (user.isPasswordGenerated()) {
-            throw new IllegalStateException("API_USER_PASSWORD must be set (spring.security.user.password)");
-        }
-        // Giá trị đã hash sẵn có tiền tố {id} (vd {bcrypt}$2a$...) dùng nguyên như Boot mặc định, không encode lần 2
-        String password = ENCODED_PASSWORD.matcher(user.getPassword()).matches()
-                ? user.getPassword()
-                : PasswordEncoderFactories.createDelegatingPasswordEncoder().encode(user.getPassword());
-        return new InMemoryUserDetailsManager(User.withUsername(user.getName())
-                .password(password)
-                .roles(user.getRoles().toArray(String[]::new))
-                .build());
     }
 }

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en"
+      xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{layout/base}">
+<head>
+    <title>Dashboard</title>
+</head>
+<body>
+<main layout:fragment="content">
+    <h1 class="h3 mb-3">Dashboard</h1>
+    <p class="lead">Welcome, <span th:text="${displayName}">user</span>!</p>
+
+    <div class="card shadow-sm">
+        <div class="card-body text-muted">
+            Engagement charts and the last updated time will appear here once metrics are collected.
+        </div>
+    </div>
+</main>
+</body>
+</html>

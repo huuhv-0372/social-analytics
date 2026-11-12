@@ -1,75 +1,56 @@
 package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.entity.User;
+import com.huuhv.socialanalytics.enums.Provider;
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.repository.UserRepository;
+import com.huuhv.socialanalytics.security.AppOAuth2User;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
-
-import java.util.Optional;
 
 /**
  * Xác định user đang đăng nhập từ SecurityContext. Không bao giờ tin userId do client gửi lên (OWASP A01).
- * <p>
- * TẠM THỜI (tới Epic 3): map principal của HTTP Basic sang {@link User} theo email = username.
- * User được tạo just-in-time bởi {@link #provisionCurrentUserIfMissing()} (gọi từ interceptor của {@code /api/**},
- * trước mọi transaction); {@link #getCurrentUser()} chỉ đọc. Task 3.4 thay bằng mapping từ OAuth2 principal + SocialAccount.
+ * <ul>
+ *     <li>Principal là {@link AppOAuth2User} (tạo lúc đăng nhập bởi {@link CustomOAuth2UserService}) → kiểm tra user
+ *     theo id lưu trong session còn tồn tại (1 query {@code existsById} theo khoá chính, không mở transaction) rồi
+ *     trả reference. User đã bị xoá / DB bị reset → 401: session cũ không được thao tác như owner (id có thể đã được
+ *     cấp cho user khác). Caller chỉ dùng {@code getId()} hoặc gán làm khoá ngoại — đọc field khác của proxy ngoài
+ *     transaction sẽ lỗi lazy-load.</li>
+ *     <li>Principal OAuth2 khác (session tạo trước khi có {@link AppOAuth2User}, test) → tra
+ *     {@code social_accounts} theo {@code registrationId} + id phía provider.</li>
+ * </ul>
+ * Kiểu xác thực khác, provider lạ hoặc tài khoản chưa được lưu đều bị từ chối (fail closed).
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class CurrentUserService {
 
     private final UserRepository userRepository;
-    private final UserProvisioningService userProvisioningService;
 
     /**
-     * @throws AuthenticationRequiredException khi request chưa đăng nhập hoặc user chưa được tạo (fail closed)
+     * @throws AuthenticationRequiredException khi request chưa đăng nhập OAuth2 hoặc tài khoản không có trong DB
      */
-    @Transactional(readOnly = true)
     public User getCurrentUser() {
-        String username = currentUsername().orElseThrow(AuthenticationRequiredException::new);
-        return userRepository.findByEmail(username).orElseThrow(AuthenticationRequiredException::new);
-    }
-
-    /**
-     * Tạo user cho principal hiện tại nếu chưa có; request ẩn danh thì bỏ qua (Service sẽ trả 401).
-     * <p>
-     * Phải gọi <b>ngoài</b> transaction: {@link UserProvisioningService} dùng {@code REQUIRES_NEW}, nếu chạy lồng trong
-     * transaction khác thì mỗi request giữ 2 connection cùng lúc và pool có thể deadlock khi tải cao.
-     */
-    public void provisionCurrentUserIfMissing() {
-        if (TransactionSynchronizationManager.isActualTransactionActive()) {
-            throw new IllegalStateException("User provisioning must run outside of a transaction");
-        }
-        currentUsername()
-                .filter(username -> userProvisioningService.findByEmail(username).isEmpty())
-                .ifPresent(this::provision);
-    }
-
-    private void provision(String username) {
-        try {
-            userProvisioningService.provision(username);
-        } catch (DataIntegrityViolationException e) {
-            // Request song song vừa tạo user cùng email (uk_users_email) → bản ghi đã tồn tại, coi như thành công
-            if (userProvisioningService.findByEmail(username).isEmpty()) {
-                throw e;
-            }
-        }
-    }
-
-    private static Optional<String> currentUsername() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null
-                || !authentication.isAuthenticated()
-                || authentication instanceof AnonymousAuthenticationToken) {
-            return Optional.empty();
+        if (!(authentication instanceof OAuth2AuthenticationToken token) || !token.isAuthenticated()) {
+            throw new AuthenticationRequiredException();
         }
-        return Optional.of(authentication.getName());
+        if (token.getPrincipal() instanceof AppOAuth2User principal) {
+            Long userId = principal.getUserId();
+            if (!userRepository.existsById(userId)) {
+                log.warn("Authenticated session refers to missing user {}, rejecting request", userId);
+                throw new AuthenticationRequiredException();
+            }
+            return userRepository.getReferenceById(userId);
+        }
+        Provider provider = Provider.fromRegistrationId(token.getAuthorizedClientRegistrationId())
+                .orElseThrow(AuthenticationRequiredException::new);
+        return userRepository.findBySocialAccount(provider, token.getName())
+                .orElseThrow(AuthenticationRequiredException::new);
     }
 }
