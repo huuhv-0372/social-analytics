@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.config;
+package com.huuhv.socialanalytics.security;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -19,7 +19,7 @@ import org.springframework.security.oauth2.client.web.OAuth2AuthorizedClientRepo
  * Không thay bằng {@code HttpSessionOAuth2AuthorizedClientRepository}: session lưu trong bảng {@code SPRING_SESSION}
  * nên token sẽ bị ghi xuống DB dạng rõ.
  */
-final class DiscardingOAuth2AuthorizedClientRepository implements OAuth2AuthorizedClientRepository {
+public final class DiscardingOAuth2AuthorizedClientRepository implements OAuth2AuthorizedClientRepository {
 
     @Override
     public <T extends OAuth2AuthorizedClient> T loadAuthorizedClient(String clientRegistrationId,

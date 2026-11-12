@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.config;
+package com.huuhv.socialanalytics.security;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;

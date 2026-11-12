@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.config;
+package com.huuhv.socialanalytics.security;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * tích hợp (cookie thật) nằm ở {@code SecurityConfigWebTest}. {@code CsrfFilter} chấp nhận request khi giá trị trả về
  * bằng token thật, nên "bị từ chối" = trả về giá trị khác token thật.
  */
-class CsrfHeaderOrFormTokenRequestHandlerTest {
+public class CsrfHeaderOrFormTokenRequestHandlerTest {
 
     private static final String HEADER = "X-XSRF-TOKEN";
     private static final String PARAMETER = "_csrf";
@@ -113,7 +113,7 @@ class CsrfHeaderOrFormTokenRequestHandlerTest {
      * Giá trị có đúng định dạng token đã mask (Base64 URL của {@code random ‖ random XOR token}, mỗi phần dài bằng
      * token) nhưng XOR ra toàn byte {@code 0xFF} — không phải UTF-8 hợp lệ. Dùng chung với {@code SecurityConfigWebTest}.
      */
-    static String maskedTokenDecodingToInvalidUtf8(CsrfToken source) {
+    public static String maskedTokenDecodingToInvalidUtf8(CsrfToken source) {
         int size = source.getToken().getBytes(StandardCharsets.UTF_8).length;
         byte[] bytes = new byte[size * 2];
         Arrays.fill(bytes, size, bytes.length, (byte) 0xFF);

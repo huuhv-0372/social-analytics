@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.service;
+package com.huuhv.socialanalytics.security;
 
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
@@ -11,8 +11,13 @@ import java.util.Objects;
 
 /**
  * Principal OAuth2 của app: thuộc tính từ provider + id nội bộ và tên hiển thị của {@code User} đã lưu lúc đăng nhập
- * ({@link CustomOAuth2UserService}). {@link CurrentUserService} lấy owner từ {@link #getUserId()}; layout lấy tên từ
- * {@link #getDisplayName()} — cùng giá trị đã chuẩn hoá và lưu ở {@code users.display_name}, không tính lại.
+ * ({@code service.CustomOAuth2UserService}). {@code service.CurrentUserService} lấy owner từ {@link #getUserId()};
+ * layout lấy tên từ {@link #getDisplayName()} — cùng giá trị đã chuẩn hoá và lưu ở {@code users.display_name}, không
+ * tính lại.
+ * <p>
+ * Đặt ở {@code security} (không ở {@code service}) để {@link SessionAttributeSerialization} whitelist được class này
+ * mà không phụ thuộc ngược vào {@code service}. Đổi tên/package class = session cũ không đọc được → user phải đăng
+ * nhập lại (fail closed, không 500).
  * <p>
  * {@code userId} do server gán sau khi lưu DB, nằm trong session phía server — client không sửa được (OWASP A01).
  * Lưu trong session nên phải {@link java.io.Serializable} (kế thừa từ {@link DefaultOAuth2User}).

@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.config;
+package com.huuhv.socialanalytics.security;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -14,7 +14,7 @@ import java.io.IOException;
  * xác thực ra client (OWASP A10). Không gửi {@code WWW-Authenticate}: app chỉ đăng nhập bằng OAuth2 trên trình duyệt,
  * challenge Basic sẽ khiến trình duyệt hiện hộp thoại đăng nhập không dùng được.
  */
-class ApiAuthenticationEntryPoint implements AuthenticationEntryPoint {
+public class ApiAuthenticationEntryPoint implements AuthenticationEntryPoint {
 
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response, AuthenticationException authException)

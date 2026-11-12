@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.config;
+package com.huuhv.socialanalytics.security;
 
 import com.huuhv.socialanalytics.util.LogSanitizer;
 import jakarta.servlet.ServletException;
@@ -27,13 +27,13 @@ import java.io.IOException;
  * DB) có thể không serialize được hoặc bị bộ lọc deserialize chặn, và trang login không đọc nó (chỉ hiện thông báo chung).
  */
 @Slf4j
-class OAuth2LoginResultHandler implements AuthenticationSuccessHandler, AuthenticationFailureHandler {
+public class OAuth2LoginResultHandler implements AuthenticationSuccessHandler, AuthenticationFailureHandler {
 
     private final SimpleUrlAuthenticationSuccessHandler successDelegate;
     private final RedirectStrategy redirectStrategy = new DefaultRedirectStrategy();
     private final String failureUrl;
 
-    OAuth2LoginResultHandler(String successUrl, String failureUrl) {
+    public OAuth2LoginResultHandler(String successUrl, String failureUrl) {
         this.successDelegate = new SimpleUrlAuthenticationSuccessHandler(successUrl);
         this.successDelegate.setAlwaysUseDefaultTargetUrl(true);
         this.failureUrl = failureUrl;

@@ -4,6 +4,7 @@ import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.enums.Provider;
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.repository.UserRepository;
+import com.huuhv.socialanalytics.security.AppOAuth2User;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
