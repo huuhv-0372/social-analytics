@@ -81,13 +81,23 @@ class SocialAccountRepositoryTest {
     }
 
     @Test
-    void findAllIdsReturnsEveryAccountInIdOrder() {
-        User other = userRepository.save(User.builder().displayName("Other").build());
-        SocialAccount second = socialAccountRepository.saveAndFlush(account(other, Provider.TWITTER, "2244994945"));
-        Long first = socialAccountRepository
+    void findAllIdsPutsLeastRecentlyUpdatedAccountsFirst() {
+        Long neverUpdatedFirst = socialAccountRepository
                 .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "1234567890").orElseThrow().getId();
+        User other = userRepository.save(User.builder().displayName("Other").build());
+        // Tạo theo thứ tự id tăng dần nhưng thời điểm cập nhật không theo id
+        Long neverUpdatedSecond = socialAccountRepository.saveAndFlush(account(other, Provider.TWITTER, "1")).getId();
+        Long updatedNewest = socialAccountRepository.saveAndFlush(account(other, Provider.FACEBOOK, "2")).getId();
+        Long updatedOldest = socialAccountRepository.saveAndFlush(account(owner, Provider.TWITTER, "3")).getId();
+        Long updatedOldestTie = socialAccountRepository.saveAndFlush(account(other, Provider.TWITTER, "4")).getId();
+        LocalDateTime oldest = LocalDateTime.of(2026, 11, 7, 1, 0);
+        socialAccountRepository.updateLastUpdatedAt(updatedNewest, oldest.plusHours(1));
+        socialAccountRepository.updateLastUpdatedAt(updatedOldest, oldest);
+        socialAccountRepository.updateLastUpdatedAt(updatedOldestTie, oldest);
 
-        assertThat(socialAccountRepository.findAllIds()).contains(first, second.getId()).isSorted();
+        // NULL (chưa từng cập nhật) trước, rồi cũ → mới; trùng thời điểm thì theo id
+        assertThat(socialAccountRepository.findAllIdsStalestFirst()).containsExactly(
+                neverUpdatedFirst, neverUpdatedSecond, updatedOldest, updatedOldestTie, updatedNewest);
     }
 
     @Test

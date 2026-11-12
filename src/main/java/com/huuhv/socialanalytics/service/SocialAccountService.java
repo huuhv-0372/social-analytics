@@ -86,10 +86,10 @@ public class SocialAccountService {
         return account.getUser();
     }
 
-    /** Id mọi tài khoản — danh sách việc của job crawl metrics. */
+    /** Id mọi tài khoản — danh sách việc của job crawl metrics, tài khoản lâu chưa cập nhật nhất trước. */
     @Transactional(readOnly = true)
     public List<Long> findAllAccountIds() {
-        return socialAccountRepository.findAllIds();
+        return socialAccountRepository.findAllIdsStalestFirst();
     }
 
     /**

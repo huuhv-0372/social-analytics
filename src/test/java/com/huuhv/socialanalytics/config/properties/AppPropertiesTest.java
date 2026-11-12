@@ -2,10 +2,15 @@ package com.huuhv.socialanalytics.config.properties;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.ConfigurableEnvironment;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.util.unit.DataSize;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -90,7 +95,7 @@ class AppPropertiesTest {
     @Test
     void bindsSocialCrawlerExecutorSettings() {
         contextRunner.run(context -> assertThat(context.getBean(AppProperties.class).async().socialCrawler())
-                .isEqualTo(new AppProperties.SocialCrawler(4, 8, 100, Duration.ofSeconds(30))));
+                .isEqualTo(new AppProperties.SocialCrawler(8, 8, 100, Duration.ofSeconds(30))));
         contextRunner
                 .withPropertyValues("app.async.social-crawler.core-pool-size=1",
                         "app.async.social-crawler.max-pool-size=2",
@@ -120,13 +125,17 @@ class AppPropertiesTest {
     @Test
     void bindsUpdateMetricsJobSettings() {
         contextRunner.run(context -> assertThat(context.getBean(AppProperties.class).jobs().updateMetrics())
-                .isEqualTo(new AppProperties.UpdateMetrics(100, Duration.ofMinutes(50))));
+                .isEqualTo(new AppProperties.UpdateMetrics(100, Duration.ofMinutes(50), Duration.ofMinutes(55),
+                        Duration.ofMinutes(5))));
         contextRunner
-                .withPropertyValues("app.jobs.update-metrics.batch-size=20", "app.jobs.update-metrics.timeout=5m",
+                .withPropertyValues("app.jobs.update-metrics.batch-size=20", "app.jobs.update-metrics.timeout=4m",
+                        "app.jobs.update-metrics.lock-at-most-for=270s",
+                        "app.jobs.update-metrics.lock-at-least-for=1m",
                         // Cron đọc bằng placeholder trong @Scheduled — key lạ trong nhóm không làm hỏng binding
                         "app.jobs.update-metrics.cron=0 */5 * * * *")
                 .run(context -> assertThat(context.getBean(AppProperties.class).jobs().updateMetrics())
-                        .isEqualTo(new AppProperties.UpdateMetrics(20, Duration.ofMinutes(5))));
+                        .isEqualTo(new AppProperties.UpdateMetrics(20, Duration.ofMinutes(4), Duration.ofSeconds(270),
+                                Duration.ofMinutes(1))));
     }
 
     @Test
@@ -141,6 +150,25 @@ class AppPropertiesTest {
         contextRunner
                 .withPropertyValues("app.jobs.update-metrics.timeout=0s")
                 .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void failsStartupWhenJobLockDurationsAreInconsistent() {
+        // Khoá hết hạn trước khi job hết thời lượng → instance khác chạy chồng
+        contextRunner
+                .withPropertyValues("app.jobs.update-metrics.timeout=50m",
+                        "app.jobs.update-metrics.lock-at-most-for=50m")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.jobs.update-metrics.lock-at-least-for=56m")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.jobs.update-metrics.lock-at-least-for=-1s")
+                .run(context -> assertThat(context).hasFailed());
+        // Không giữ khoá tối thiểu là hợp lệ (chạy 1 instance)
+        contextRunner
+                .withPropertyValues("app.jobs.update-metrics.lock-at-least-for=0s")
+                .run(context -> assertThat(context).hasNotFailed());
     }
 
     @Test
@@ -213,6 +241,41 @@ class AppPropertiesTest {
         contextRunner
                 .withPropertyValues("app.oauth2.connect-timeout=-1s")
                 .run(context -> assertThat(context).hasFailed());
+    }
+
+    /** Giá trị thật trong application.yml / application-dev.yml phải bind + validate được (sai định dạng → app không chạy). */
+    @Test
+    void applicationYmlAndDevProfileBindValidSettings() {
+        contextRunner
+                .withInitializer(context -> loadYaml(context.getEnvironment(), "application.yml"))
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    AppProperties properties = context.getBean(AppProperties.class);
+                    assertThat(properties.jobs().updateMetrics().lockAtMostFor()).isEqualTo(Duration.ofMinutes(55));
+                    assertThat(properties.async().socialCrawler().corePoolSize()).isEqualTo(8);
+                });
+        contextRunner
+                .withInitializer(context -> {
+                    // Profile dev ghi đè application.yml → nạp trước để có độ ưu tiên cao hơn
+                    loadYaml(context.getEnvironment(), "application-dev.yml");
+                    loadYaml(context.getEnvironment(), "application.yml");
+                })
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    AppProperties.UpdateMetrics updateMetrics =
+                            context.getBean(AppProperties.class).jobs().updateMetrics();
+                    assertThat(updateMetrics.timeout()).isEqualTo(Duration.ofMinutes(4));
+                    assertThat(updateMetrics.lockAtMostFor()).isEqualTo(Duration.ofSeconds(270));
+                });
+    }
+
+    private static void loadYaml(ConfigurableEnvironment environment, String name) {
+        try {
+            new YamlPropertySourceLoader().load(name, new ClassPathResource(name))
+                    .forEach(source -> environment.getPropertySources().addLast(source));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     @Configuration(proxyBeanMethods = false)

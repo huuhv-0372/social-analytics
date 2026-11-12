@@ -7,6 +7,9 @@ import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.service.AccountMetricsCrawler;
 import com.huuhv.socialanalytics.service.CrawlResult;
 import com.huuhv.socialanalytics.service.SocialAccountService;
+import net.javacrumbs.shedlock.core.DefaultLockingTaskExecutor;
+import net.javacrumbs.shedlock.core.LockConfiguration;
+import net.javacrumbs.shedlock.core.LockProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,7 +28,9 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -46,7 +51,19 @@ class UpdateSocialMetricsJobTest {
     @Mock
     private AccountMetricsCrawler accountMetricsCrawler;
 
+    private static final Duration LOCK_AT_MOST_FOR = Duration.ofMinutes(55);
+    private static final Duration LOCK_AT_LEAST_FOR = Duration.ofMinutes(5);
+
     private UpdateSocialMetricsJob job;
+
+    private final AtomicReference<LockConfiguration> requestedLock = new AtomicReference<>();
+    private final AtomicBoolean unlocked = new AtomicBoolean();
+
+    /** Mặc định luôn giành được khoá (1 instance) — ghi lại cấu hình khoá và việc nhả khoá. */
+    private LockProvider lockProvider = configuration -> {
+        requestedLock.set(configuration);
+        return Optional.of(() -> unlocked.set(true));
+    };
 
     @BeforeEach
     void setUp() {
@@ -209,10 +226,48 @@ class UpdateSocialMetricsJobTest {
         assertThat(job.runOnce()).isEqualTo(new UpdateSocialMetricsJob.Summary(0, 0, 0, 0, 0));
     }
 
+    @Test
+    void scheduledRunHoldsJobLockWithConfiguredDurations() {
+        when(socialAccountService.findAllAccountIds()).thenReturn(List.of(1L));
+        when(accountMetricsCrawler.crawl(eq(1L), any())).thenReturn(done(CrawlResult.succeeded(1L, 3)));
+
+        assertThat(job.runExclusively()).contains(new UpdateSocialMetricsJob.Summary(1, 1, 0, 0, 3));
+
+        LockConfiguration lock = requestedLock.get();
+        assertThat(lock.getName()).isEqualTo(UpdateSocialMetricsJob.LOCK_NAME);
+        assertThat(lock.getLockAtMostFor()).isEqualTo(LOCK_AT_MOST_FOR);
+        assertThat(lock.getLockAtLeastFor()).isEqualTo(LOCK_AT_LEAST_FOR);
+        assertThat(unlocked).isTrue();
+    }
+
+    @Test
+    void scheduledRunIsSkippedWhileAnotherInstanceHoldsTheLock() {
+        lockProvider = configuration -> Optional.empty();
+
+        job.updateSocialMetricsJob();
+
+        assertThat(job.runExclusively()).isEmpty();
+        verifyNoInteractions(socialAccountService, accountMetricsCrawler);
+    }
+
+    @Test
+    void lockFailureSkipsRunWithoutStoppingScheduler() {
+        // Không lấy được khoá (mất kết nối DB) → không chạy (fail closed), không ném ra scheduler
+        lockProvider = configuration -> {
+            throw new DataAccessResourceFailureException("db down");
+        };
+
+        assertThat(job.runExclusively()).isEmpty();
+        verifyNoInteractions(socialAccountService, accountMetricsCrawler);
+    }
+
     private UpdateSocialMetricsJob jobWithTimeout(Duration timeout) {
-        AppProperties properties = new AppProperties(null, null, null, null, null,
-                new AppProperties.Jobs(new AppProperties.UpdateMetrics(100, timeout)));
-        return new UpdateSocialMetricsJob(socialAccountService, accountMetricsCrawler, properties, Clock.systemUTC());
+        AppProperties properties = new AppProperties(null, null, null, null, null, new AppProperties.Jobs(
+                new AppProperties.UpdateMetrics(100, timeout, LOCK_AT_MOST_FOR, LOCK_AT_LEAST_FOR)));
+        // Đọc lockProvider lúc gọi → test đổi được hành vi khoá sau khi tạo job
+        LockProvider delegating = configuration -> lockProvider.lock(configuration);
+        return new UpdateSocialMetricsJob(socialAccountService, accountMetricsCrawler, properties, Clock.systemUTC(),
+                new DefaultLockingTaskExecutor(delegating));
     }
 
     private static CompletableFuture<CrawlResult> done(CrawlResult result) {

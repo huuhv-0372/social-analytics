@@ -6,6 +6,8 @@ import com.huuhv.socialanalytics.service.CrawlResult;
 import com.huuhv.socialanalytics.service.SocialAccountService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.core.LockConfiguration;
+import net.javacrumbs.shedlock.core.LockingTaskExecutor;
 import org.slf4j.MDC;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -15,6 +17,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -33,10 +36,16 @@ import java.util.concurrent.TimeoutException;
  * <li>Hạn chót = lúc bắt đầu + {@code app.jobs.update-metrics.timeout}, áp dụng cho cả lúc gửi task lẫn lúc chờ. Quá
  * hạn: tài khoản chưa gửi không được gửi nữa, tài khoản chưa xong tính {@code FAILED}; task đang chạy nhận cùng hạn
  * chót nên dừng ở bước kế tiếp và bỏ kết quả (không ghi DB). Executor chờ khi hàng đợi đầy, không bắt thread
- * scheduler chạy crawl thay → thời lượng lần chạy không vượt quá hạn chót đáng kể.</li>
+ * scheduler chạy crawl thay → thời lượng lần chạy không vượt quá hạn chót đáng kể. Task được gửi theo thứ tự tài
+ * khoản lâu chưa cập nhật nhất trước ({@code last_updated_at}, chưa từng cập nhật đứng đầu) → tài khoản bị bỏ vì quá
+ * hạn ở lần này được làm đầu tiên ở lần sau, không tài khoản nào bị bỏ mãi.</li>
  * <li>Không chồng lần chạy: task của lần trước chưa kết thúc hẳn (vd đang dở 1 lời gọi API sau khi quá hạn) → lần
- * chạy này bỏ qua. Lịch {@code @Scheduled} chạy tuần tự trên thread scheduler; chạy 1 instance — nhiều instance cần
- * khoá phân tán (vd ShedLock), ngoài phạm vi.</li>
+ * chạy này bỏ qua. Lịch {@code @Scheduled} chạy tuần tự trên thread scheduler.</li>
+ * <li>Nhiều instance: lần chạy theo lịch chỉ thực hiện khi giành được khoá chung {@value #LOCK_NAME} (ShedLock trên
+ * MySQL, {@code config/SchedulerLockConfig}) — instance khác cùng lịch bỏ qua. Khoá giữ tối đa
+ * {@code lock-at-most-for} (instance chết thì khoá tự hết hạn trước lần chạy sau) và tối thiểu
+ * {@code lock-at-least-for} (đồng hồ lệch vài giây không làm instance khác chạy lại). Lỗi lấy khoá (mất kết nối DB) →
+ * không chạy (fail closed), lịch sau thử lại. {@link #runOnce()} gọi trực tiếp (test) không lấy khoá.</li>
  * </ul>
  */
 @Slf4j
@@ -46,12 +55,16 @@ public class UpdateSocialMetricsJob {
 
     static final String MDC_JOB_ID = "jobId";
 
+    /** Tên khoá trong bảng {@code scheduler_locks} — đổi tên = khoá mới (không chặn được instance chạy bản cũ). */
+    static final String LOCK_NAME = "updateSocialMetricsJob";
+
     private static final Summary EMPTY = new Summary(0, 0, 0, 0, 0);
 
     private final SocialAccountService socialAccountService;
     private final AccountMetricsCrawler accountMetricsCrawler;
     private final AppProperties appProperties;
     private final Clock clock;
+    private final LockingTaskExecutor lockingTaskExecutor;
 
     /** Hoàn thành khi mọi task của lần chạy gần nhất đã thực sự kết thúc (kể cả task chạy quá hạn chót). */
     private volatile CompletableFuture<Void> previousRunTasks = CompletableFuture.completedFuture(null);
@@ -62,7 +75,34 @@ public class UpdateSocialMetricsJob {
 
     @Scheduled(cron = "${app.jobs.update-metrics.cron:0 0 * * * *}")
     public void updateSocialMetricsJob() {
-        runOnce();
+        runExclusively();
+    }
+
+    /**
+     * Chạy 1 lần nếu giành được khoá chung giữa các instance.
+     *
+     * @return tổng kết; rỗng khi instance khác đang giữ khoá hoặc không lấy được khoá (đã log)
+     */
+    Optional<Summary> runExclusively() {
+        AppProperties.UpdateMetrics settings = appProperties.jobs().updateMetrics();
+        LockConfiguration lockConfiguration = new LockConfiguration(clock.instant(), LOCK_NAME,
+                settings.lockAtMostFor(), settings.lockAtLeastFor());
+        LockingTaskExecutor.TaskWithResult<Summary> task = this::runOnce;
+        try {
+            LockingTaskExecutor.TaskResult<Summary> result = lockingTaskExecutor.executeWithLock(task, lockConfiguration);
+            if (!result.wasExecuted()) {
+                log.info("Update social metrics skipped: another instance holds the job lock");
+                return Optional.empty();
+            }
+            return Optional.ofNullable(result.getResult());
+        } catch (Error e) {
+            throw e;
+        } catch (Throwable e) {
+            // runOnce tự xử lý lỗi của nó → lỗi tới đây là lỗi lấy/nhả khoá (vd mất kết nối DB): không chạy (fail
+            // closed), scheduler vẫn chạy lần kế tiếp
+            log.error("Update social metrics skipped: job lock could not be acquired", e);
+            return Optional.empty();
+        }
     }
 
     /**

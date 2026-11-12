@@ -1,8 +1,8 @@
 package com.huuhv.socialanalytics.config;
 
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
+import com.huuhv.socialanalytics.security.StaleSessionLogout;
 import com.huuhv.socialanalytics.service.CurrentUserService;
-import com.huuhv.socialanalytics.util.StaleSessionLogout;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;

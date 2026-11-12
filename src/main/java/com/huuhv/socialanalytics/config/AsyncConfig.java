@@ -37,6 +37,8 @@ public class AsyncConfig {
         executor.setCorePoolSize(settings.corePoolSize());
         executor.setMaxPoolSize(settings.maxPoolSize());
         executor.setQueueCapacity(settings.queueCapacity());
+        // Job chạy mỗi giờ: core thread rảnh quá keep-alive (60s) tự dừng, không giữ 8 thread ngồi không cả giờ
+        executor.setAllowCoreThreadTimeOut(true);
         executor.setThreadNamePrefix(SOCIAL_CRAWLER_THREAD_PREFIX);
         // Hàng đợi đầy + đủ max thread → thread gửi task chờ tới khi có chỗ (không mất task, không tự chạy task);
         // executor đã tắt → TaskRejectedException

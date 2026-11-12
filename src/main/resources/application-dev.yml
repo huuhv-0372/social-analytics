@@ -22,6 +22,10 @@ app:
       cron: "0 */5 * * * *"
       # Nhỏ hơn chu kỳ 5 phút ở trên (mặc định 50m dành cho cron mỗi giờ)
       timeout: 4m
+      # timeout < lock-at-most-for (4m30s — Duration của Boot không nhận "4m30s") < chu kỳ 5 phút;
+      # lock-at-least-for không vượt lock-at-most-for
+      lock-at-most-for: 270s
+      lock-at-least-for: 1m
 
 logging:
   level:

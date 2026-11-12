@@ -20,9 +20,16 @@ public interface SocialAccountRepository extends JpaRepository<SocialAccount, Lo
     Optional<SocialAccount> findWithUserByProviderAndProviderUserId(@Param("provider") Provider provider,
                                                                   @Param("providerUserId") String providerUserId);
 
-    /** Id mọi tài khoản cho job crawl — chỉ nạp id, mỗi task tự đọc tài khoản trong transaction riêng. */
-    @Query("SELECT sa.id FROM SocialAccount sa ORDER BY sa.id")
-    List<Long> findAllIds();
+    /**
+     * Id mọi tài khoản cho job crawl — chỉ nạp id, mỗi task tự đọc tài khoản trong transaction riêng.
+     * <p>
+     * Thứ tự = thứ tự job gửi task: tài khoản lâu chưa cập nhật nhất trước (chưa từng cập nhật — {@code NULL} — đứng
+     * đầu), trùng thời điểm thì theo id. Lần chạy quá hạn bỏ các tài khoản cuối danh sách; sort theo id thì lần nào
+     * cũng bỏ đúng nhóm id lớn (tài khoản mới đăng nhập không bao giờ được cập nhật), sort theo
+     * {@code last_updated_at} thì nhóm bị bỏ lần này lên đầu lần sau.
+     */
+    @Query("SELECT sa.id FROM SocialAccount sa ORDER BY sa.lastUpdatedAt ASC NULLS FIRST, sa.id ASC")
+    List<Long> findAllIdsStalestFirst();
 
     /**
      * Ghi thời điểm crawl thành công (UTC). UPDATE trực tiếp 1 cột: không đụng token và không đổi {@code updated_at}

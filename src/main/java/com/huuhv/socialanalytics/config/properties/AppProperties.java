@@ -127,11 +127,16 @@ public record AppProperties(
     /**
      * Executor {@code socialCrawlerExecutor} crawl metrics song song theo tài khoản. Số thread và hàng đợi luôn có
      * giới hạn (OWASP A06 — giới hạn tài nguyên).
+     * <p>
+     * {@code ThreadPoolExecutor} chỉ tạo thêm thread vượt {@code corePoolSize} khi hàng đợi đã <b>đầy</b>: với core 4,
+     * max 8, queue 100 thì tới 104 task vẫn chỉ 4 thread chạy. Số việc chạy song song thực tế ≈ {@code corePoolSize} →
+     * mặc định đặt core = max; core thread tự dừng khi rảnh ({@code allowCoreThreadTimeOut}) nên không giữ thread
+     * giữa 2 lần chạy job.
      *
      * @param awaitTermination thời gian tối đa chờ task đang chạy hoàn tất khi tắt app
      */
     public record SocialCrawler(
-            @Positive @Max(64) @DefaultValue("4") int corePoolSize,
+            @Positive @Max(64) @DefaultValue("8") int corePoolSize,
             @Positive @Max(64) @DefaultValue("8") int maxPoolSize,
             @PositiveOrZero @Max(10000) @DefaultValue("100") int queueCapacity,
             @NotNull @DefaultValue("30s") Duration awaitTermination) {
@@ -168,14 +173,33 @@ public record AppProperties(
      * @param timeout   thời lượng tối đa của 1 lần chạy, tính từ lúc bắt đầu (gồm cả lúc gửi task). Quá hạn: tài khoản
      *                  chưa xong tính là lỗi, task còn chạy dừng ở bước kế tiếp và bỏ kết quả (không ghi DB). Phải
      *                  nhỏ hơn chu kỳ cron
+     * @param lockAtMostFor  thời hạn tối đa giữ khoá chung giữa các instance (ShedLock) — instance chết giữa chừng
+     *                       thì khoá tự hết hạn sau khoảng này. Phải lớn hơn {@code timeout} (job chưa xong không mất
+     *                       khoá) và nhỏ hơn chu kỳ cron (lần chạy sau không bị chặn bởi khoá của instance đã chết)
+     * @param lockAtLeastFor thời gian tối thiểu giữ khoá kể cả khi job xong sớm — đồng hồ các instance lệch nhau vài
+     *                       giây, nếu nhả khoá ngay thì instance kích hoạt muộn hơn vẫn lấy được khoá và chạy lần nữa.
+     *                       Không vượt {@code lockAtMostFor}
      */
     public record UpdateMetrics(
             @Positive @Max(100) @DefaultValue("100") int batchSize,
-            @NotNull @DefaultValue("50m") Duration timeout) {
+            @NotNull @DefaultValue("50m") Duration timeout,
+            @NotNull @DefaultValue("55m") Duration lockAtMostFor,
+            @NotNull @DefaultValue("5m") Duration lockAtLeastFor) {
 
         @AssertTrue(message = "app.jobs.update-metrics.timeout must be positive")
         public boolean isTimeoutPositive() {
             return timeout == null || (!timeout.isNegative() && !timeout.isZero());
+        }
+
+        @AssertTrue(message = "app.jobs.update-metrics.lock-at-most-for must be greater than timeout")
+        public boolean isLockAtMostForLongerThanTimeout() {
+            return timeout == null || lockAtMostFor == null || lockAtMostFor.compareTo(timeout) > 0;
+        }
+
+        @AssertTrue(message = "app.jobs.update-metrics.lock-at-least-for must be between 0 and lock-at-most-for")
+        public boolean isLockAtLeastForWithinLockAtMostFor() {
+            return lockAtLeastFor == null || lockAtMostFor == null
+                    || (!lockAtLeastFor.isNegative() && lockAtLeastFor.compareTo(lockAtMostFor) <= 0);
         }
     }
 }
