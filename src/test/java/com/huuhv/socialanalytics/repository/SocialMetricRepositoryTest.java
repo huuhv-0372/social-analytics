@@ -1,6 +1,7 @@
 package com.huuhv.socialanalytics.repository;
 
 import com.huuhv.socialanalytics.TestcontainersConfiguration;
+import com.huuhv.socialanalytics.dto.response.ProviderMetricTotals;
 import com.huuhv.socialanalytics.entity.Post;
 import com.huuhv.socialanalytics.entity.SocialMetric;
 import com.huuhv.socialanalytics.entity.User;
@@ -146,9 +147,70 @@ class SocialMetricRepositoryTest {
         assertThat(socialMetricRepository.count()).isEqualTo(3);
     }
 
+    @Test
+    void sumLatestByProviderAddsLatestSnapshotOfEachPostBeforeCutoff() {
+        Post secondTweet = savePost(owner, Provider.TWITTER, "tw-2");
+        Post facebookPost = savePost(owner, Provider.FACEBOOK, "fb-1");
+        saveSnapshot(secondTweet, BASE.plusMinutes(90), 100);
+        saveSnapshot(facebookPost, BASE.plusMinutes(30), 7);
+
+        // Snapshot đúng bằng mốc (BASE + 1h, likes 20) không được tính; tw-2 chưa có snapshot trước mốc
+        assertThat(socialMetricRepository.sumLatestByProvider(owner.getId(), BASE.plusHours(1)))
+                .containsExactlyInAnyOrder(
+                        new ProviderMetricTotals(Provider.TWITTER, 10L, 1L, 2L, 1000L),
+                        new ProviderMetricTotals(Provider.FACEBOOK, 7L, 0L, 1L, 1000L));
+        // fb-1 không có snapshot mới → giữ giá trị cũ (carry-forward); 2 tweet cộng lại
+        assertThat(socialMetricRepository.sumLatestByProvider(owner.getId(), BASE.plusHours(3)))
+                .containsExactlyInAnyOrder(
+                        new ProviderMetricTotals(Provider.TWITTER, 130L, 13L, 26L, 2000L),
+                        new ProviderMetricTotals(Provider.FACEBOOK, 7L, 0L, 1L, 1000L));
+    }
+
+    @Test
+    void sumLatestByProviderIsEmptyBeforeFirstSnapshot() {
+        assertThat(socialMetricRepository.sumLatestByProvider(owner.getId(), BASE)).isEmpty();
+    }
+
+    @Test
+    void sumLatestByProviderExcludesPostsOfOtherUsers() {
+        User other = userRepository.save(User.builder().email("other@example.com").displayName("Other").build());
+        saveSnapshot(savePost(other, Provider.TWITTER, "tw-1"), BASE, 5000);
+
+        assertThat(socialMetricRepository.sumLatestByProvider(owner.getId(), BASE.plusHours(3)))
+                .containsExactly(new ProviderMetricTotals(Provider.TWITTER, 30L, 3L, 6L, 1000L));
+        assertThat(socialMetricRepository.sumLatestByProvider(other.getId(), BASE.plusHours(3)))
+                .containsExactly(new ProviderMetricTotals(Provider.TWITTER, 5000L, 500L, 1000L, 1000L));
+    }
+
+    @Test
+    void sumLatestByProviderCountsOneSnapshotPerPostWhenCollectedAtTies() {
+        // Cùng collectedAt với snapshot 30 likes → lấy bản id lớn hơn, không cộng cả 2
+        saveSnapshot(BASE.plusHours(2), 35);
+
+        assertThat(socialMetricRepository.sumLatestByProvider(owner.getId(), BASE.plusHours(3)))
+                .extracting(ProviderMetricTotals::likes)
+                .containsExactly(35L);
+    }
+
+    private Post savePost(User user, Provider provider, String externalId) {
+        String url = provider == Provider.FACEBOOK
+                ? "https://facebook.com/posts/" + externalId
+                : "https://x.com/owner/status/" + externalId;
+        return postRepository.save(Post.builder()
+                .user(user)
+                .provider(provider)
+                .externalId(externalId)
+                .url(url)
+                .build());
+    }
+
     private SocialMetric saveSnapshot(LocalDateTime collectedAt, long likes) {
+        return saveSnapshot(post, collectedAt, likes);
+    }
+
+    private SocialMetric saveSnapshot(Post target, LocalDateTime collectedAt, long likes) {
         return socialMetricRepository.save(SocialMetric.builder()
-                .post(post)
+                .post(target)
                 .likes(likes)
                 .shares(likes / 10)
                 .comments(likes / 5)

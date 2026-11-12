@@ -246,6 +246,7 @@ Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); ch�
 | POST | `/api/import-posts` | Import bài viết từ file `.xlsx` (multipart, field `file`) — xem bên dưới |
 | GET | `/api/import-posts/template` | Tải file `.xlsx` mẫu (header + dữ liệu giả + sheet hướng dẫn) |
 | GET | `/api/export-report` | Tải báo cáo `.xlsx`: mỗi bài viết 1 dòng kèm snapshot metric mới nhất — xem bên dưới |
+| GET | `/api/chart-data?days=7` | Dữ liệu biểu đồ dashboard: metric theo provider, theo ngày (`days` 1–30, mặc định 7) — xem bên dưới |
 
 Ví dụ:
 
@@ -304,6 +305,27 @@ curl -b "SESSION=$SESSION_ID; XSRF-TOKEN=$XSRF" -X POST http://localhost:8080/ap
 ```bash
 curl -OJ -b "SESSION=$SESSION_ID" http://localhost:8080/api/export-report
 ```
+
+### Dữ liệu biểu đồ
+
+`GET /api/chart-data?days=7` trả metric của user đang đăng nhập, tổng hợp theo provider và theo ngày (`days` ngoài 1–30 → 400):
+
+```json
+{
+  "zone": "Asia/Ho_Chi_Minh",
+  "labels": ["2026-11-06", "2026-11-07"],
+  "series": [
+    {"provider": "FACEBOOK", "likes": [null, 120], "shares": [null, 8], "comments": [null, 15], "followers": [null, 3400]},
+    {"provider": "TWITTER", "likes": [40, 55], "shares": [2, 3], "comments": [5, 6], "followers": [900, 910]}
+  ],
+  "lastUpdatedAt": "2026-11-07T03:00:05Z",
+  "importStatistics": {"totalImports": 3, "totalRows": 25, "successRows": 20, "failedRows": 5, "lastImportAt": "2026-11-06T18:15:00Z"}
+}
+```
+
+- Ngày tính theo múi giờ server (`zone`). Giá trị 1 ngày = tổng **snapshot mới nhất của từng bài tính tới hết ngày đó** — snapshot là số tích luỹ nên không cộng mọi lần crawl; bài không được crawl trong ngày giữ giá trị trước đó.
+- `null` = provider chưa có bài nào có snapshot tới ngày đó (khác 0). Mỗi provider luôn có 1 phần tử trong `series`.
+- `lastUpdatedAt` / `importStatistics` (`null` nếu chưa có) đi kèm để dashboard cập nhật mọi số liệu bằng 1 request khi nhận event WebSocket.
 
 ## WebSocket (realtime dashboard)
 

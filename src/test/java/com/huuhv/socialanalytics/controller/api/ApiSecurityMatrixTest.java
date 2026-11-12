@@ -2,6 +2,7 @@ package com.huuhv.socialanalytics.controller.api;
 
 import com.huuhv.socialanalytics.config.SecurityConfig;
 import com.huuhv.socialanalytics.config.WebConfig;
+import com.huuhv.socialanalytics.service.ChartDataService;
 import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.PostImportService;
@@ -46,7 +47,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * và {@code service/OwnershipIsolationTest}.
  */
 @WebMvcTest({PostApiController.class, SocialMetricApiController.class, PostImportApiController.class,
-        ReportApiController.class})
+        ReportApiController.class, ChartDataApiController.class})
 @Import({SecurityConfig.class, WebConfig.class})
 @ActiveProfiles("test")
 class ApiSecurityMatrixTest {
@@ -72,6 +73,9 @@ class ApiSecurityMatrixTest {
     private PostReportService postReportService;
 
     @MockitoBean
+    private ChartDataService chartDataService;
+
+    @MockitoBean
     private CustomOAuth2UserService customOAuth2UserService;
 
     // StaleSessionFilter (SecurityConfig) kiểm tra user của session qua service này; mock trả null = user hợp lệ
@@ -80,7 +84,7 @@ class ApiSecurityMatrixTest {
 
     @AfterEach
     void serviceIsNeverReached() {
-        verifyNoInteractions(postService, socialMetricService, postImportService, postReportService);
+        verifyNoInteractions(postService, socialMetricService, postImportService, postReportService, chartDataService);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -126,7 +130,8 @@ class ApiSecurityMatrixTest {
                 endpoint("GET /api/metrics/latest", () -> get("/api/metrics/latest").param("postId", "10")),
                 endpoint("GET /api/metrics/{id}", () -> get("/api/metrics/5")),
                 endpoint("GET /api/import-posts/template", () -> get("/api/import-posts/template")),
-                endpoint("GET /api/export-report", () -> get("/api/export-report"))), writeEndpoints());
+                endpoint("GET /api/export-report", () -> get("/api/export-report")),
+                endpoint("GET /api/chart-data", () -> get("/api/chart-data"))), writeEndpoints());
     }
 
     static Stream<Arguments> writeEndpoints() {

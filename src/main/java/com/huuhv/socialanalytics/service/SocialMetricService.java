@@ -2,6 +2,7 @@ package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.dto.request.SocialMetricRequest;
 import com.huuhv.socialanalytics.dto.response.PageResponse;
+import com.huuhv.socialanalytics.dto.response.ProviderMetricTotals;
 import com.huuhv.socialanalytics.dto.response.SocialMetricResponse;
 import com.huuhv.socialanalytics.entity.Post;
 import com.huuhv.socialanalytics.entity.SocialMetric;
@@ -116,6 +117,15 @@ public class SocialMetricService {
         int saved = socialMetricRepository.insertAll(snapshots);
         socialAccountService.markMetricsUpdated(accountId, updatedAtUtc);
         return saved;
+    }
+
+    /**
+     * Tổng metric theo provider của các bài thuộc {@code userId} tại mốc {@code beforeUtc} (giờ UTC) — xem
+     * {@link SocialMetricRepository#sumLatestByProvider}. Caller chịu trách nhiệm {@code userId} là owner đang đăng nhập.
+     */
+    @Transactional(readOnly = true)
+    public List<ProviderMetricTotals> sumLatestByProvider(Long userId, LocalDateTime beforeUtc) {
+        return socialMetricRepository.sumLatestByProvider(userId, beforeUtc);
     }
 
     @Transactional
