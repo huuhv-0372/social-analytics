@@ -6,6 +6,10 @@
 spring:
   artemis:
     mode: ${ARTEMIS_MODE:embedded}
+    embedded:
+      # Bật/tắt broker embedded phải đi cùng mode: ARTEMIS_MODE=native thì đặt thêm ARTEMIS_EMBEDDED_ENABLED=false.
+      # Lệch nhau (native + embedded bật) → app dừng khởi động với thông báo rõ (config/ArtemisEmbeddedConfig).
+      enabled: ${ARTEMIS_EMBEDDED_ENABLED:true}
 
 # Dev chạy HTTP localhost → cookie session không đặt Secure (production giữ mặc định true)
 server:

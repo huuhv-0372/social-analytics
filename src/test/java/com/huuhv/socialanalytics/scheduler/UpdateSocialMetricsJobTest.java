@@ -263,7 +263,7 @@ class UpdateSocialMetricsJobTest {
 
     private UpdateSocialMetricsJob jobWithTimeout(Duration timeout) {
         AppProperties properties = new AppProperties(null, null, null, null, null, new AppProperties.Jobs(
-                new AppProperties.UpdateMetrics(100, timeout, LOCK_AT_MOST_FOR, LOCK_AT_LEAST_FOR)), null);
+                new AppProperties.UpdateMetrics(100, timeout, LOCK_AT_MOST_FOR, LOCK_AT_LEAST_FOR), null), null);
         // Đọc lockProvider lúc gọi → test đổi được hành vi khoá sau khi tạo job
         LockProvider delegating = configuration -> lockProvider.lock(configuration);
         return new UpdateSocialMetricsJob(socialAccountService, accountMetricsCrawler, properties, Clock.systemUTC(),

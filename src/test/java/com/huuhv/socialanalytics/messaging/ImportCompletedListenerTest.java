@@ -78,8 +78,22 @@ class ImportCompletedListenerTest {
     }
 
     static Stream<ImportCompletedMessage> invalidMessages() {
-        return Stream.of(message(null, 3L), message(0L, 3L), message(-5L, 3L), message(12L, null),
-                message(12L, 0L));
+        return Stream.of(message(null, 3L), message(0L, 3L), message(-5L, 3L));
+    }
+
+    @ParameterizedTest
+    @MethodSource("messagesWithInvalidUserId")
+    void messageWithValidImportIdButInvalidUserIdIsStillApplied(ImportCompletedMessage message) {
+        // Owner lấy từ DB, userId của payload chỉ để đối chiếu → không bỏ message (bỏ thì import kẹt PENDING)
+        when(importStatisticsService.applyImport(12L, message.userId())).thenReturn(ApplyResult.APPLIED);
+
+        listener.onImportCompleted(message);
+
+        verify(importStatisticsService).applyImport(12L, message.userId());
+    }
+
+    static Stream<ImportCompletedMessage> messagesWithInvalidUserId() {
+        return Stream.of(message(12L, null), message(12L, 0L), message(12L, -1L));
     }
 
     @Test

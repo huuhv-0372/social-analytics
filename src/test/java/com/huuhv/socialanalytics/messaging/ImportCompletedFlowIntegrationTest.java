@@ -11,6 +11,7 @@ import com.huuhv.socialanalytics.repository.ImportHistoryRepository;
 import com.huuhv.socialanalytics.repository.PostRepository;
 import com.huuhv.socialanalytics.repository.UserImportStatisticRepository;
 import com.huuhv.socialanalytics.repository.UserRepository;
+import com.huuhv.socialanalytics.scheduler.ResendImportCompletedJob;
 import com.huuhv.socialanalytics.service.ImportHistoryService;
 import com.huuhv.socialanalytics.service.ImportStatisticsService;
 import com.huuhv.socialanalytics.service.PostUpsertService;
@@ -27,6 +28,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -72,6 +75,9 @@ class ImportCompletedFlowIntegrationTest {
 
     @Autowired
     private UserImportStatisticRepository userImportStatisticRepository;
+
+    @Autowired
+    private ResendImportCompletedJob resendImportCompletedJob;
 
     @MockitoSpyBean
     private ImportStatisticsService importStatisticsService;
@@ -150,6 +156,29 @@ class ImportCompletedFlowIntegrationTest {
         verify(importStatisticsService, timeout(WAIT_MS)).applyImport(Long.MAX_VALUE, owner.getId());
         verify(importStatisticsService, times(1)).applyImport(anyLong(), any());
         assertThat(userImportStatisticRepository.findById(owner.getId())).isEmpty();
+    }
+
+    @Test
+    void lostMessageIsResentByJobAndCountedOnce() {
+        // Mô phỏng message bị mất (broker chết lúc publish): lịch sử PENDING đã ghi nhưng không có message nào,
+        // lần ghi cuối đã quá min-age (10 phút)
+        long importId = transactionTemplate.execute(status -> {
+            ImportHistory history = importHistoryRepository.save(ImportHistory.builder().user(owner)
+                    .totalRows(4).createdRows(2).updatedRows(1).failedRows(1).status(ImportStatus.PENDING).build());
+            importHistoryRepository.touchPending(history.getId(), LocalDateTime.now(ZoneOffset.UTC).minusHours(1));
+            return history.getId();
+        });
+
+        assertThat(resendImportCompletedJob.runOnce()).isEqualTo(new ResendImportCompletedJob.Summary(1, 1, 0));
+
+        awaitProcessed(importId);
+        await().atMost(WAIT).untilAsserted(() ->
+                assertThat(userImportStatisticRepository.findById(owner.getId())).get()
+                        .extracting(UserImportStatistic::getTotalImports, UserImportStatistic::getSuccessRows,
+                                UserImportStatistic::getFailedRows)
+                        .containsExactly(1L, 3L, 1L));
+        // Đã PROCESSED → lần chạy sau không gửi lại
+        assertThat(resendImportCompletedJob.runOnce()).isEqualTo(new ResendImportCompletedJob.Summary(0, 0, 0));
     }
 
     private void awaitProcessed(long importId) {

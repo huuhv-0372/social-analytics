@@ -4,6 +4,8 @@ import com.huuhv.socialanalytics.config.properties.AppProperties;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.impl.ConfigurationImpl;
 import org.springframework.boot.artemis.autoconfigure.ArtemisConfigurationCustomizer;
+import org.springframework.boot.artemis.autoconfigure.ArtemisMode;
+import org.springframework.boot.artemis.autoconfigure.ArtemisProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
@@ -24,8 +26,12 @@ import java.util.Properties;
  * compose nạp qua {@code artemis run --properties} ({@code classpath:artemis/broker.properties}) — retry + DLQ của
  * queue {@code import-completed} chỉ khai báo ở 1 nơi.
  * <p>
- * Boot chỉ gọi {@link ArtemisConfigurationCustomizer} khi tự chạy broker trong JVM ({@code spring.artemis.mode=embedded});
- * với {@code native}, bean này không làm gì (file chỉ được đọc khi customizer chạy).
+ * Boot gọi {@link ArtemisConfigurationCustomizer} mỗi khi tạo broker trong JVM. Lưu ý: Boot tạo broker này dựa trên
+ * {@code spring.artemis.embedded.enabled} (mặc định {@code true}) và việc có {@code artemis-jakarta-server} trên
+ * classpath — <b>không</b> xét {@code spring.artemis.mode}. Vì vậy {@code application.yml} (production, native) đặt
+ * {@code embedded.enabled=false}; dev/test bật lại. Customizer kiểm tra thêm: broker embedded chạy trong khi
+ * {@code mode=native} (vd chỉ đổi {@code ARTEMIS_MODE} mà quên {@code ARTEMIS_EMBEDDED_ENABLED}) → dừng khởi động với
+ * thông báo rõ, thay vì lặng lẽ chạy thêm 1 broker không ai dùng.
  * <p>
  * Nạp lần lượt các file trong {@code app.jms.embedded-broker-properties}, file sau ghi đè khoá trùng của file trước
  * (test thêm file rút ngắn độ trễ giao lại). Parser của Artemis không ném lỗi khi gặp khoá sai mà chỉ ghi vào
@@ -37,9 +43,24 @@ public class ArtemisEmbeddedConfig {
 
     @Bean
     ArtemisConfigurationCustomizer brokerPropertiesCustomizer(AppProperties appProperties,
+                                                              ArtemisProperties artemisProperties,
                                                               ResourceLoader resourceLoader) {
         List<String> locations = appProperties.jms().embeddedBrokerProperties();
-        return configuration -> applyBrokerProperties(configuration, loadProperties(locations, resourceLoader));
+        return configuration -> {
+            requireEmbeddedMode(artemisProperties.getMode());
+            applyBrokerProperties(configuration, loadProperties(locations, resourceLoader));
+        };
+    }
+
+    /**
+     * Broker embedded chỉ hợp lệ khi app thực sự dùng nó. {@code mode} rỗng = Boot tự chọn (có broker embedded thì
+     * dùng embedded) → hợp lệ.
+     */
+    static void requireEmbeddedMode(ArtemisMode mode) {
+        if (mode == ArtemisMode.NATIVE) {
+            throw new IllegalStateException("Embedded Artemis broker is enabled but spring.artemis.mode=native: set"
+                    + " spring.artemis.embedded.enabled=false (dev profile: ARTEMIS_EMBEDDED_ENABLED=false)");
+        }
     }
 
     /** Gộp các file theo thứ tự — khoá trùng lấy giá trị của file sau. File không tồn tại → lỗi. */

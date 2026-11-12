@@ -1,7 +1,6 @@
 package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.dto.response.ImportCounts;
-import com.huuhv.socialanalytics.repository.ImportHistoryRepository;
 import com.huuhv.socialanalytics.repository.UserImportStatisticRepository;
 import com.huuhv.socialanalytics.service.ImportStatisticsService.ApplyResult;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,7 +38,7 @@ class ImportStatisticsServiceTest {
     private static final LocalDateTime IMPORTED_AT = LocalDateTime.of(2026, 11, 10, 3, 59, 58);
 
     @Mock
-    private ImportHistoryRepository importHistoryRepository;
+    private ImportHistoryService importHistoryService;
 
     @Mock
     private UserImportStatisticRepository userImportStatisticRepository;
@@ -48,7 +47,7 @@ class ImportStatisticsServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ImportStatisticsService(importHistoryRepository, userImportStatisticRepository, CLOCK);
+        service = new ImportStatisticsService(importHistoryService, userImportStatisticRepository, CLOCK);
     }
 
     @Test
@@ -58,25 +57,25 @@ class ImportStatisticsServiceTest {
         ApplyResult result = service.applyImport(IMPORT_ID, OWNER_ID);
 
         assertThat(result).isEqualTo(ApplyResult.APPLIED);
-        verify(importHistoryRepository).markProcessed(IMPORT_ID, NOW_UTC);
+        verify(importHistoryService).markProcessed(IMPORT_ID, NOW_UTC);
         verify(userImportStatisticRepository).addImport(OWNER_ID, 10, 8, 2, IMPORTED_AT, NOW_UTC);
     }
 
     @Test
     void duplicateMessageForProcessedImportDoesNotAddAgain() {
-        when(importHistoryRepository.markProcessed(IMPORT_ID, NOW_UTC)).thenReturn(0);
-        when(importHistoryRepository.existsById(IMPORT_ID)).thenReturn(true);
+        when(importHistoryService.markProcessed(IMPORT_ID, NOW_UTC)).thenReturn(false);
+        when(importHistoryService.exists(IMPORT_ID)).thenReturn(true);
 
         ApplyResult result = service.applyImport(IMPORT_ID, OWNER_ID);
 
         assertThat(result).isEqualTo(ApplyResult.ALREADY_PROCESSED);
-        verify(importHistoryRepository, never()).findCountsById(anyLong());
+        verify(importHistoryService, never()).findCounts(anyLong());
         verifyNothingAdded();
     }
 
     @Test
     void unknownImportIsIgnored() {
-        when(importHistoryRepository.existsById(IMPORT_ID)).thenReturn(false);
+        when(importHistoryService.exists(IMPORT_ID)).thenReturn(false);
 
         assertThat(service.applyImport(IMPORT_ID, OWNER_ID)).isEqualTo(ApplyResult.NOT_FOUND);
         verifyNothingAdded();
@@ -96,6 +95,14 @@ class ImportStatisticsServiceTest {
     }
 
     @Test
+    void messageWithoutUserIdIsStillAppliedToStoredOwner() {
+        givenPendingImport();
+
+        assertThat(service.applyImport(IMPORT_ID, null)).isEqualTo(ApplyResult.APPLIED);
+        verify(userImportStatisticRepository).addImport(OWNER_ID, 10, 8, 2, IMPORTED_AT, NOW_UTC);
+    }
+
+    @Test
     void databaseErrorPropagatesSoTransactionRollsBackAndMessageIsRedelivered() {
         givenPendingImport();
         doThrow(new QueryTimeoutException("lock wait timeout")).when(userImportStatisticRepository)
@@ -106,8 +113,8 @@ class ImportStatisticsServiceTest {
     }
 
     private void givenPendingImport() {
-        when(importHistoryRepository.markProcessed(IMPORT_ID, NOW_UTC)).thenReturn(1);
-        when(importHistoryRepository.findCountsById(IMPORT_ID))
+        when(importHistoryService.markProcessed(IMPORT_ID, NOW_UTC)).thenReturn(true);
+        when(importHistoryService.findCounts(IMPORT_ID))
                 .thenReturn(Optional.of(new ImportCounts(OWNER_ID, 10, 8, 2, IMPORTED_AT)));
     }
 

@@ -2,7 +2,6 @@ package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.dto.response.ImportCounts;
 import com.huuhv.socialanalytics.entity.UserImportStatistic;
-import com.huuhv.socialanalytics.repository.ImportHistoryRepository;
 import com.huuhv.socialanalytics.repository.UserImportStatisticRepository;
 import com.huuhv.socialanalytics.util.UtcDateTimes;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +23,8 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class ImportStatisticsService {
 
-    private final ImportHistoryRepository importHistoryRepository;
+    // Trạng thái import_histories chỉ đổi qua ImportHistoryService (quy tắc chuyển trạng thái nằm 1 chỗ)
+    private final ImportHistoryService importHistoryService;
     private final UserImportStatisticRepository userImportStatisticRepository;
     private final Clock clock;
 
@@ -45,11 +45,11 @@ public class ImportStatisticsService {
     @Transactional
     public ApplyResult applyImport(long importId, Long reportedUserId) {
         LocalDateTime now = UtcDateTimes.toUtc(clock.instant());
-        if (importHistoryRepository.markProcessed(importId, now) == 0) {
-            return importHistoryRepository.existsById(importId) ? ApplyResult.ALREADY_PROCESSED : ApplyResult.NOT_FOUND;
+        if (!importHistoryService.markProcessed(importId, now)) {
+            return importHistoryService.exists(importId) ? ApplyResult.ALREADY_PROCESSED : ApplyResult.NOT_FOUND;
         }
         // Dòng vừa UPDATE ở trên chắc chắn tồn tại và đang bị khoá bởi transaction này
-        ImportCounts counts = importHistoryRepository.findCountsById(importId).orElseThrow();
+        ImportCounts counts = importHistoryService.findCounts(importId).orElseThrow();
         if (!Objects.equals(counts.userId(), reportedUserId)) {
             log.warn("Import {} message reports user {} but history belongs to user {}; using stored owner",
                     importId, reportedUserId, counts.userId());

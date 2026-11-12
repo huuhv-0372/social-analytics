@@ -133,7 +133,7 @@ class UpdateSocialMetricsJobLockTest {
         private Instance(String lockedBy, Duration lockAtMostFor, Duration lockAtLeastFor) {
             LockProvider lockProvider = SchedulerLockConfig.lockProvider(dataSource, lockedBy);
             AppProperties properties = new AppProperties(null, null, null, null, null, new AppProperties.Jobs(
-                    new AppProperties.UpdateMetrics(100, TIMEOUT, lockAtMostFor, lockAtLeastFor)), null);
+                    new AppProperties.UpdateMetrics(100, TIMEOUT, lockAtMostFor, lockAtLeastFor), null), null);
             job = new UpdateSocialMetricsJob(accounts, crawler, properties, Clock.systemUTC(),
                     new DefaultLockingTaskExecutor(lockProvider));
         }

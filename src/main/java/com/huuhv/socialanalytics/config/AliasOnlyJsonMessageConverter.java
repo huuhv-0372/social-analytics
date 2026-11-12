@@ -1,5 +1,6 @@
 package com.huuhv.socialanalytics.config;
 
+import com.huuhv.socialanalytics.util.LogSanitizer;
 import jakarta.jms.JMSException;
 import jakarta.jms.Message;
 import org.springframework.jms.support.converter.JacksonJsonMessageConverter;
@@ -25,6 +26,8 @@ public class AliasOnlyJsonMessageConverter extends JacksonJsonMessageConverter {
 
     public static final String TYPE_ID_PROPERTY = "_type";
 
+    private static final int MAX_MESSAGE_ID_LENGTH = 100;
+
     private final Set<Class<?>> registeredTypes;
 
     public AliasOnlyJsonMessageConverter(JsonMapper jsonMapper, Map<String, Class<?>> typeIdMappings) {
@@ -35,6 +38,39 @@ public class AliasOnlyJsonMessageConverter extends JacksonJsonMessageConverter {
         // Mảng rỗng (khác null = tin mọi package): typeId không khớp alias nào → từ chối, không Class.forName
         setTrustedPackages();
         this.registeredTypes = Set.copyOf(typeIdMappings.values());
+    }
+
+    /**
+     * Lỗi chuyển đổi được ném lại với thông điệp <b>không chứa dữ liệu của message</b> (OWASP A05 — log injection).
+     * <p>
+     * Thông điệp gốc của Spring/Jackson nối nguyên giá trị do bên gửi đặt (vd {@code The class '<_type>' is not in the
+     * trusted packages}, đoạn JSON lỗi) — kể cả CR/LF. Listener container in exception này kèm stack trace ở mỗi lần
+     * giao lại, mà {@code %replace} trong {@code LOG_PATTERN} chỉ lọc {@code %msg}, không lọc {@code %ex} → bên gửi
+     * tạo được dòng log giả. Vì vậy bỏ exception gốc (cả cause, vì stack trace in cả thông điệp của cause), chỉ giữ tên
+     * loại lỗi + {@code JMSMessageID} đã lọc để đối chiếu với log broker.
+     */
+    @Override
+    public Object fromMessage(Message message) throws JMSException, MessageConversionException {
+        try {
+            return super.fromMessage(message);
+        } catch (RuntimeException e) {
+            throw new MessageConversionException("Cannot convert JMS message " + safeMessageId(message)
+                    + " (" + e.getClass().getSimpleName() + "; details omitted: they may contain sender data)");
+        }
+    }
+
+    private static String safeMessageId(Message message) {
+        try {
+            String id = message.getJMSMessageID();
+            if (id == null) {
+                return "<no id>";
+            }
+            // Do client phía gửi đặt → không tin cậy: bỏ CR/LF, giới hạn độ dài
+            String clean = LogSanitizer.stripLineBreaks(id);
+            return clean.length() <= MAX_MESSAGE_ID_LENGTH ? clean : clean.substring(0, MAX_MESSAGE_ID_LENGTH) + "...";
+        } catch (JMSException e) {
+            return "<unknown id>";
+        }
     }
 
     @Override

@@ -95,7 +95,11 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 
    Container `app` (cách A) mặc định chạy profile `dev` (`SPRING_PROFILES_ACTIVE` trong `.env`). Không bật `dev` thì Swagger UI bị tắt.
 
-   Profile `dev` chạy broker JMS **Artemis embedded** (trong JVM, không cần container `artemis`). Cách B muốn dùng broker của compose (xem message trên web console) thì đặt `ARTEMIS_MODE=native` trong `.env`; container `app` (cách A) luôn dùng broker của compose.
+   Profile `dev` chạy broker JMS **Artemis embedded** (trong JVM, không cần container `artemis`). Cách B muốn dùng broker của compose (xem message trên web console) thì đặt `ARTEMIS_MODE=native` **và** `ARTEMIS_EMBEDDED_ENABLED=false` trong `.env` (thiếu 1 trong 2 thì app dừng khởi động và báo cần đặt biến nào); container `app` (cách A) luôn dùng broker của compose.
+
+   > **Triển khai broker Artemis riêng (production):** retry + DLQ của queue `import-completed` cấu hình **trên broker**, không nằm trong app. Broker bắt buộc khởi động kèm file [`src/main/resources/artemis/broker.properties`](src/main/resources/artemis/broker.properties) (`artemis run --properties <đường dẫn file>`, như service `artemis` trong `docker-compose.yaml`), và tài khoản `ARTEMIS_USER` cần quyền `manage` để app tự kiểm tra cấu hình lúc khởi động. Thiếu file thì broker vẫn chạy nhưng message lỗi bị giao lại 10 lần liền rồi rơi vào queue `DLQ` chung không ai xử lý. Khi đó app log `ERROR Broker is not configured with artemis/broker.properties`. Nếu không kiểm tra được (broker chưa sẵn sàng, thiếu quyền), app log `WARN Could not verify broker retry/DLQ settings`.
+   >
+   > Lần import có message bị mất (broker chết đúng lúc gửi) được job `ResendImportCompletedJob` gửi lại sau khoảng 10 phút. Lần import đã vào DLQ (`status = DEAD_LETTERED`) không được tự động gửi lại: sau khi khắc phục nguyên nhân, chạy `UPDATE import_histories SET status = 'PENDING' WHERE status = 'DEAD_LETTERED'` thì job sẽ gửi lại, và mỗi lần import chỉ được cộng vào thống kê 1 lần.
 
    Flyway tự tạo bảng khi app khởi động.
 

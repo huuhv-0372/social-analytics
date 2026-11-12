@@ -13,9 +13,11 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Limit;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -99,6 +101,43 @@ class ImportHistoryRepositoryTest {
     }
 
     @Test
+    void findsOnlyPendingImportsNotTouchedSinceCutoffOldestFirst() {
+        Long recent = saveHistoryUpdatedAt(NOW.minusMinutes(1));
+        Long older = saveHistoryUpdatedAt(NOW.minusMinutes(30));
+        Long oldest = saveHistoryUpdatedAt(NOW.minusMinutes(60));
+        Long processed = saveHistoryUpdatedAt(NOW.minusMinutes(90));
+        importHistoryRepository.markProcessed(processed, NOW.minusMinutes(90));
+        Long deadLettered = saveHistoryUpdatedAt(NOW.minusMinutes(90));
+        importHistoryRepository.markDeadLettered(deadLettered, NOW.minusMinutes(90));
+
+        List<Long> ids = importHistoryRepository.findPendingIdsUpdatedBefore(NOW.minusMinutes(10), Limit.of(10));
+
+        // PROCESSED / DEAD_LETTERED / PENDING mới ghi không được gửi lại; lâu chưa thử nhất đứng trước
+        assertThat(ids).containsExactly(oldest, older).doesNotContain(recent);
+        assertThat(importHistoryRepository.findPendingIdsUpdatedBefore(NOW.minusMinutes(10), Limit.of(1)))
+                .containsExactly(oldest);
+    }
+
+    @Test
+    void touchPendingMovesUpdatedAtOnlyWhilePending() {
+        Long pending = saveHistoryUpdatedAt(NOW.minusMinutes(30));
+        Long processed = saveHistoryUpdatedAt(NOW.minusMinutes(30));
+        importHistoryRepository.markProcessed(processed, NOW.minusMinutes(20));
+
+        assertThat(importHistoryRepository.touchPending(pending, NOW)).isEqualTo(1);
+        assertThat(importHistoryRepository.touchPending(processed, NOW)).isZero();
+        assertThat(importHistoryRepository.touchPending(Long.MAX_VALUE, NOW)).isZero();
+
+        assertThat(reload(pending)).satisfies(history -> {
+            assertThat(history.getStatus()).isEqualTo(ImportStatus.PENDING);
+            assertThat(history.getUpdatedAt()).isEqualTo(NOW);
+        });
+        // Vừa gửi lại → chưa đủ min-age, lần chạy kế tiếp không gửi nữa
+        assertThat(importHistoryRepository.findPendingIdsUpdatedBefore(NOW.minusMinutes(10), Limit.of(10)))
+                .doesNotContain(pending);
+    }
+
+    @Test
     void findsCountsWithSuccessRowsAndOwner() {
         ImportHistory history = saveHistory(10, 6, 2, 2);
 
@@ -118,6 +157,13 @@ class ImportHistoryRepositoryTest {
     private ImportHistory reload(Long id) {
         entityManager.clear();
         return importHistoryRepository.findById(id).orElseThrow();
+    }
+
+    /** Import PENDING có {@code updated_at} cho trước (@PreUpdate không chạy với UPDATE JPQL → đặt bằng touchPending). */
+    private Long saveHistoryUpdatedAt(LocalDateTime updatedAt) {
+        Long id = saveHistory(1, 1, 0, 0).getId();
+        importHistoryRepository.touchPending(id, updatedAt);
+        return id;
     }
 
     private ImportHistory saveHistory(int total, int created, int updated, int failed) {

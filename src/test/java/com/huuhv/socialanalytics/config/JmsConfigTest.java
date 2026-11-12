@@ -44,6 +44,8 @@ class JmsConfigTest {
             assertThat(container.getMessageConverter()).isInstanceOf(AliasOnlyJsonMessageConverter.class);
             // Listener lỗi → rollback session → broker giao lại message (cơ sở cho retry + DLQ)
             assertThat(container.isSessionTransacted()).isTrue();
+            // Factory của app thay bean của Boot: vẫn nhận spring.jms.listener.* qua configurer, thêm ErrorHandler
+            assertThat(container.getErrorHandler()).isInstanceOf(JmsListenerErrorHandler.class);
         });
     }
 
@@ -59,7 +61,9 @@ class JmsConfigTest {
             });
 
             assertThatThrownBy(() -> jmsTemplate.receiveAndConvert(TEST_QUEUE))
-                    .isInstanceOf(MessageConversionException.class);
+                    .isInstanceOf(MessageConversionException.class)
+                    // Tên class do bên gửi đặt không lọt vào thông điệp lỗi (log injection)
+                    .satisfies(e -> assertThat(e.getMessage()).doesNotContain("java.util.HashMap"));
         });
     }
 

@@ -80,6 +80,33 @@ class AliasOnlyJsonMessageConverterTest {
     }
 
     @Test
+    void conversionErrorDoesNotEchoSenderControlledDataIntoException() throws Exception {
+        // _type do bên gửi đặt, chứa CR/LF để giả 1 dòng log — thông điệp gốc của Spring nối nguyên giá trị này
+        TextMessage message = mock(TextMessage.class);
+        when(message.getStringProperty(AliasOnlyJsonMessageConverter.TYPE_ID_PROPERTY))
+                .thenReturn("evil\r\n2026-11-12 INFO fake log line");
+        when(message.getJMSMessageID()).thenReturn("ID:abc\r\ninjected");
+
+        assertThatThrownBy(() -> converter.fromMessage(message))
+                .isInstanceOf(MessageConversionException.class)
+                .hasNoCause()
+                .hasMessageContaining("ID:abc")
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain("evil", "fake log line", "\r", "\n"));
+    }
+
+    @Test
+    void malformedJsonErrorDoesNotEchoBody() throws Exception {
+        TextMessage message = mock(TextMessage.class);
+        when(message.getStringProperty(AliasOnlyJsonMessageConverter.TYPE_ID_PROPERTY)).thenReturn(ALIAS);
+        when(message.getText()).thenReturn("{\"id\": secret-token-value");
+
+        assertThatThrownBy(() -> converter.fromMessage(message))
+                .isInstanceOf(MessageConversionException.class)
+                .hasNoCause()
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain("secret-token-value"));
+    }
+
+    @Test
     void rejectsMessageWithoutTypeId() throws Exception {
         TextMessage message = mock(TextMessage.class);
 

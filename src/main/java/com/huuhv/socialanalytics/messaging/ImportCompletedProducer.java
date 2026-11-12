@@ -41,8 +41,9 @@ public class ImportCompletedProducer {
         } catch (RuntimeException e) {
             // Dữ liệu import đã commit — ném lỗi lúc này chỉ làm request trả 500 dù import thành công. Broker lỗi
             // (JmsException) hay lỗi bất ngờ khác đều được xử lý như nhau: log kèm importId, lịch sử import giữ
-            // trạng thái PENDING để truy vết (chấp nhận mất message, chưa có outbox / gửi lại).
-            log.error("Failed to publish {} for import {}; import history stays PENDING",
+            // trạng thái PENDING → scheduler/ResendImportCompletedJob gửi lại sau app.jobs.resend-import-completed.min-age
+            // (bảng import_histories đóng vai outbox, listener idempotent nên gửi lại an toàn).
+            log.error("Failed to publish {} for import {}; import history stays PENDING and will be resent",
                     QueueNames.IMPORT_COMPLETED, event.importId(), e);
         }
     }
