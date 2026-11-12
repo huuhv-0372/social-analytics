@@ -5,6 +5,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.AppenderBase;
 import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.service.AccountMetricsCrawler;
+import com.huuhv.socialanalytics.service.DashboardEventService;
 import com.huuhv.socialanalytics.service.CrawlResult;
 import com.huuhv.socialanalytics.service.SocialAccountService;
 import net.javacrumbs.shedlock.core.DefaultLockingTaskExecutor;
@@ -51,6 +52,9 @@ class UpdateSocialMetricsJobTest {
     @Mock
     private AccountMetricsCrawler accountMetricsCrawler;
 
+    @Mock
+    private DashboardEventService dashboardEventService;
+
     private static final Duration LOCK_AT_MOST_FOR = Duration.ofMinutes(55);
     private static final Duration LOCK_AT_LEAST_FOR = Duration.ofMinutes(5);
 
@@ -83,6 +87,27 @@ class UpdateSocialMetricsJobTest {
         when(accountMetricsCrawler.crawl(eq(3L), any())).thenReturn(done(CrawlResult.succeeded(3L, 2)));
 
         assertThat(job.runOnce()).isEqualTo(new UpdateSocialMetricsJob.Summary(3, 2, 1, 0, 6));
+        // 1 event cho cả lần chạy, không phải mỗi tài khoản
+        verify(dashboardEventService, times(1)).metricsUpdated();
+    }
+
+    @Test
+    void succeededAccountWithoutPostsStillPublishesEventBecauseLastUpdatedTimeChanged() {
+        when(socialAccountService.findAllAccountIds()).thenReturn(List.of(1L));
+        when(accountMetricsCrawler.crawl(eq(1L), any())).thenReturn(done(CrawlResult.succeeded(1L, 0)));
+
+        assertThat(job.runOnce()).isEqualTo(new UpdateSocialMetricsJob.Summary(1, 1, 0, 0, 0));
+        verify(dashboardEventService).metricsUpdated();
+    }
+
+    @Test
+    void runWithoutAnySucceededAccountPublishesNoEvent() {
+        when(socialAccountService.findAllAccountIds()).thenReturn(List.of(1L, 2L));
+        when(accountMetricsCrawler.crawl(eq(1L), any())).thenReturn(done(CrawlResult.skipped(1L)));
+        when(accountMetricsCrawler.crawl(eq(2L), any())).thenReturn(done(CrawlResult.failed(2L)));
+
+        assertThat(job.runOnce()).isEqualTo(new UpdateSocialMetricsJob.Summary(2, 0, 1, 1, 0));
+        verifyNoInteractions(dashboardEventService);
     }
 
     @Test
@@ -149,6 +174,8 @@ class UpdateSocialMetricsJobTest {
         // Task quá hạn vẫn đang chạy → lần sau không chồng lên
         assertThat(job.runOnce()).isEqualTo(new UpdateSocialMetricsJob.Summary(0, 0, 0, 0, 0));
         verify(socialAccountService, times(1)).findAllAccountIds();
+        // Lần bị bỏ qua (và lần đầu không có tài khoản nào thành công) không phát event
+        verifyNoInteractions(dashboardEventService);
 
         lateTask.complete(CrawlResult.failed(1L));
         assertThat(job.runOnce()).isEqualTo(new UpdateSocialMetricsJob.Summary(1, 1, 0, 0, 2));
@@ -266,7 +293,8 @@ class UpdateSocialMetricsJobTest {
                 new AppProperties.UpdateMetrics(100, timeout, LOCK_AT_MOST_FOR, LOCK_AT_LEAST_FOR), null), null);
         // Đọc lockProvider lúc gọi → test đổi được hành vi khoá sau khi tạo job
         LockProvider delegating = configuration -> lockProvider.lock(configuration);
-        return new UpdateSocialMetricsJob(socialAccountService, accountMetricsCrawler, properties, Clock.systemUTC(),
+        return new UpdateSocialMetricsJob(socialAccountService, accountMetricsCrawler, dashboardEventService, properties,
+                Clock.systemUTC(),
                 new DefaultLockingTaskExecutor(delegating));
     }
 

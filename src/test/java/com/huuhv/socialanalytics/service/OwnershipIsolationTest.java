@@ -56,7 +56,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @ActiveProfiles("test")
 @Import({TestcontainersConfiguration.class, ClockConfig.class, CryptoConfig.class, SocialAccountService.class,
         CurrentUserService.class, PostService.class, SocialMetricService.class, DashboardService.class,
-        ImportStatisticsService.class, ImportHistoryService.class, ChartDataService.class})
+        ImportStatisticsService.class, ImportHistoryService.class, ChartDataService.class,
+        DashboardEventService.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class OwnershipIsolationTest {
 

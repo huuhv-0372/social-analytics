@@ -3,6 +3,7 @@ package com.huuhv.socialanalytics.scheduler;
 import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.service.AccountMetricsCrawler;
 import com.huuhv.socialanalytics.service.CrawlResult;
+import com.huuhv.socialanalytics.service.DashboardEventService;
 import com.huuhv.socialanalytics.service.SocialAccountService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -46,6 +47,8 @@ import java.util.concurrent.TimeoutException;
  * {@code lock-at-most-for} (instance chết thì khoá tự hết hạn trước lần chạy sau) và tối thiểu
  * {@code lock-at-least-for} (đồng hồ lệch vài giây không làm instance khác chạy lại). Lỗi lấy khoá (mất kết nối DB) →
  * không chạy (fail closed), lịch sau thử lại. {@link #runOnce()} gọi trực tiếp (test) không lấy khoá.</li>
+ * <li>Kết thúc với ít nhất 1 tài khoản thành công → 1 event {@code METRICS_UPDATED} cho dashboard realtime
+ * ({@link DashboardEventService}).</li>
  * </ul>
  */
 @Slf4j
@@ -62,6 +65,7 @@ public class UpdateSocialMetricsJob {
 
     private final SocialAccountService socialAccountService;
     private final AccountMetricsCrawler accountMetricsCrawler;
+    private final DashboardEventService dashboardEventService;
     private final AppProperties appProperties;
     private final Clock clock;
     private final LockingTaskExecutor lockingTaskExecutor;
@@ -134,6 +138,11 @@ public class UpdateSocialMetricsJob {
             log.info("Update social metrics finished in {} ms: {} succeeded, {} skipped, {} failed, {} snapshots",
                     Duration.between(startedAt, clock.instant()).toMillis(), summary.succeeded(), summary.skipped(),
                     summary.failed(), summary.snapshots());
+            // 1 event cho cả lần chạy (không phải mỗi tài khoản). Điều kiện là "có tài khoản thành công", không phải
+            // "có snapshot": tài khoản 0 bài vẫn đổi last_updated_at ("Last updated time" trên dashboard)
+            if (summary.succeeded() > 0) {
+                dashboardEventService.metricsUpdated();
+            }
             return summary;
         } catch (RuntimeException e) {
             // Xử lý tại đây để log còn jobId; scheduler vẫn chạy lần kế tiếp

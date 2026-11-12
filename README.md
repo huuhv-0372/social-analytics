@@ -181,7 +181,7 @@ src/main/resources/
 | `config/properties/AppProperties` | Bind cấu hình `app.*` (record + validation): `app.import.max-rows` / `max-uncompressed-size`, `app.export.max-rows` / `min-interval`, `app.token-encryption.key` |
 | `.env` | Giá trị bí mật cho môi trường local — copy từ `.env.example` |
 | `docker-compose.yaml` | MySQL 8.4 + ActiveMQ Artemis + app, và service `maven` (JDK 25) để chạy lệnh Maven |
-| `src/main/resources/artemis/broker.properties` | Retry + DLQ của queue `import-completed` (6 lần giao, 2s ×2, tối đa 30s ≈ 1 phút → `DLQ.import-completed`; DLQ giao lại vô hạn khi lỗi DB, 5s ×2 tối đa 5 phút) — nguồn duy nhất: broker Artemis của compose mount file này, broker embedded (dev/test) nạp từ classpath. Test ghi đè delay bằng `src/test/resources/artemis/broker-test.properties` |
+| `src/main/resources/artemis/broker.properties` | Retry + DLQ của queue `import-completed` (6 lần giao, 2s ×2, tối đa 30s ≈ 1 phút → `DLQ.import-completed`; DLQ giao lại vô hạn khi lỗi DB, 5s ×2 tối đa 5 phút) và address multicast `dashboard-events` (event realtime cho dashboard) — nguồn duy nhất: broker Artemis của compose mount file này, broker embedded (dev/test) nạp từ classpath. Test ghi đè delay bằng `src/test/resources/artemis/broker-test.properties` |
 | `Dockerfile` | Build multi-stage: JDK 25 build JAR → JRE 25 chạy app bằng user không phải root |
 
 ### Biến môi trường
@@ -328,6 +328,14 @@ curl -OJ -b "SESSION=$SESSION_ID" http://localhost:8080/api/export-report
 - `lastUpdatedAt` / `importStatistics` (`null` nếu chưa có) đi kèm để dashboard cập nhật mọi số liệu bằng 1 request khi nhận event WebSocket.
 
 ## WebSocket (realtime dashboard)
+
+**Luồng event:** job crawl metrics xong (ít nhất 1 tài khoản thành công) hoặc listener `IMPORT_COMPLETED` vừa cộng 1 lần import vào thống kê → event phát lên JMS topic `dashboard-events` **sau khi transaction commit** (rollback → không có event) → mỗi instance app nhận 1 bản và đẩy xuống client của mình trên `/topic/metrics`:
+
+```json
+{"type": "METRICS_UPDATED", "occurredAt": "2026-11-12T03:00:00Z"}
+```
+
+`type` là `METRICS_UPDATED` hoặc `IMPORT_PROCESSED`. Payload không chứa userId hay số liệu (mọi user đều nhận) — client nhận event rồi gọi lại `GET /api/chart-data` (chỉ trả dữ liệu của mình). Event chỉ là tín hiệu làm mới: gửi lỗi / instance đang tắt thì bỏ qua, không retry; client tải lại dữ liệu khi có event sau hoặc khi kết nối lại.
 
 - Endpoint STOMP `/ws` (SockJS), broker prefix `/topic`, app prefix `/app`. Client chỉ được `SUBSCRIBE /topic/metrics`; mọi `SEND` (kể cả vào `/topic/**`) và destination khác bị từ chối bằng ERROR frame `Access denied` rồi đóng kết nối.
 - Phải đăng nhập: handshake dùng session cookie `SESSION` của trình duyệt — chưa đăng nhập thì `/ws/**` trả 401 `ProblemDetail`.

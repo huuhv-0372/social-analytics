@@ -43,11 +43,15 @@ class ImportStatisticsServiceTest {
     @Mock
     private UserImportStatisticRepository userImportStatisticRepository;
 
+    @Mock
+    private DashboardEventService dashboardEventService;
+
     private ImportStatisticsService service;
 
     @BeforeEach
     void setUp() {
-        service = new ImportStatisticsService(importHistoryService, userImportStatisticRepository, CLOCK);
+        service = new ImportStatisticsService(importHistoryService, userImportStatisticRepository, dashboardEventService,
+                CLOCK);
     }
 
     @Test
@@ -59,6 +63,7 @@ class ImportStatisticsServiceTest {
         assertThat(result).isEqualTo(ApplyResult.APPLIED);
         verify(importHistoryService).markProcessed(IMPORT_ID, NOW_UTC);
         verify(userImportStatisticRepository).addImport(OWNER_ID, 10, 8, 2, IMPORTED_AT, NOW_UTC);
+        verify(dashboardEventService).importProcessed();
     }
 
     @Test
@@ -110,6 +115,7 @@ class ImportStatisticsServiceTest {
 
         assertThatThrownBy(() -> service.applyImport(IMPORT_ID, OWNER_ID))
                 .isInstanceOf(QueryTimeoutException.class);
+        verify(dashboardEventService, never()).importProcessed();
     }
 
     private void givenPendingImport() {
@@ -118,8 +124,10 @@ class ImportStatisticsServiceTest {
                 .thenReturn(Optional.of(new ImportCounts(OWNER_ID, 10, 8, 2, IMPORTED_AT)));
     }
 
+    /** Không cộng gì → cũng không báo dashboard đổi (message trùng / import lạ). */
     private void verifyNothingAdded() {
         verify(userImportStatisticRepository, never())
                 .addImport(anyLong(), anyInt(), anyInt(), anyInt(), any(), any());
+        verify(dashboardEventService, never()).importProcessed();
     }
 }
