@@ -1,6 +1,6 @@
 package com.huuhv.socialanalytics.exception;
 
-import com.huuhv.socialanalytics.util.StaleSessionLogout;
+import com.huuhv.socialanalytics.security.StaleSessionLogout;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;

@@ -20,6 +20,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -61,6 +62,8 @@ class AsyncConfigTest {
             assertThat(executor.getCorePoolSize()).isEqualTo(2);
             assertThat(executor.getMaxPoolSize()).isEqualTo(3);
             assertThat(executor.getQueueCapacity()).isEqualTo(5);
+            // Thread rảnh tự dừng giữa 2 lần chạy job (job mỗi giờ)
+            assertThat(executor.getThreadPoolExecutor().allowsCoreThreadTimeOut()).isTrue();
             assertThat(executor.getThreadNamePrefix()).isEqualTo("social-crawler-");
             assertThat(executor.getThreadPoolExecutor().getRejectedExecutionHandler())
                     .isInstanceOf(WaitForQueueSpacePolicy.class);
@@ -94,6 +97,46 @@ class AsyncConfigTest {
                     .doesNotContain("secret-access-token");
             assertThat(event.getThrowableProxy().getClassName()).isEqualTo(IllegalStateException.class.getName());
         });
+    }
+
+    /**
+     * Cấu hình mặc định phải chạy đủ {@code max-pool-size} việc cùng lúc ngay khi hàng đợi còn trống —
+     * {@code ThreadPoolExecutor} chỉ tạo thread vượt core khi queue đầy, nên core nhỏ hơn max sẽ chạy ít việc hơn.
+     */
+    @Test
+    void defaultSettingsRunMaxPoolSizeTasksInParallelWhileQueueHasRoom() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(PropertiesConfig.class, AsyncConfig.class)
+                .withPropertyValues("app.token-encryption.key=" + VALID_KEY)
+                .run(context -> {
+                    ThreadPoolTaskExecutor executor = context.getBean(
+                            AppProperties.SocialCrawler.EXECUTOR_BEAN_NAME, ThreadPoolTaskExecutor.class);
+                    int parallelism = executor.getMaxPoolSize();
+                    CountDownLatch started = new CountDownLatch(parallelism);
+                    CountDownLatch release = new CountDownLatch(1);
+                    try {
+                        for (int i = 0; i < parallelism; i++) {
+                            executor.execute(() -> {
+                                started.countDown();
+                                awaitQuietly(release);
+                            });
+                        }
+
+                        assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+                        assertThat(executor.getActiveCount()).isEqualTo(parallelism);
+                        assertThat(executor.getQueueSize()).isZero();
+                    } finally {
+                        release.countDown();
+                    }
+                });
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            latch.await(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     @Test

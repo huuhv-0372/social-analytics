@@ -49,9 +49,11 @@ spring:
           # Facebook có sẵn trong CommonOAuth2Provider (authorization/token/user-info URI, user-name-attribute=id).
           # Redirect URI mặc định {baseUrl}/login/oauth2/code/facebook — phải khai báo y hệt trên Facebook Developers.
           # Bắt buộc: thiếu biến môi trường thì app dừng khởi động. Không commit secret (OWASP A02/A04).
+          # Giữ dấu ":" cuối placeholder: thiếu biến → chuỗi rỗng → Boot (client-id) và OAuth2ClientConfig
+          # (client-secret) chặn lúc khởi động. Không có ":" thì Boot giữ nguyên chuỗi "${...}" → lọt kiểm tra.
           facebook:
-            client-id: ${FACEBOOK_CLIENT_ID}
-            client-secret: ${FACEBOOK_CLIENT_SECRET}
+            client-id: ${FACEBOOK_CLIENT_ID:}
+            client-secret: ${FACEBOOK_CLIENT_SECRET:}
             # Quyền tối thiểu để đăng nhập (OWASP A01 — least privilege)
             scope: public_profile,email
           # X (Twitter) không có trong CommonOAuth2Provider → khai báo thủ công (OAuth 2.0 Authorization Code + PKCE).
@@ -60,8 +62,8 @@ spring:
           twitter:
             provider: twitter
             client-name: X
-            client-id: ${TWITTER_CLIENT_ID}
-            client-secret: ${TWITTER_CLIENT_SECRET}
+            client-id: ${TWITTER_CLIENT_ID:}
+            client-secret: ${TWITTER_CLIENT_SECRET:}
             client-authentication-method: client_secret_basic
             authorization-grant-type: authorization_code
             redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
@@ -82,6 +84,16 @@ spring:
       mode: force
     scheduling:
       thread-name-prefix: scheduler-
+
+  # Session HTTP lưu MySQL (Spring Session JDBC, config/SessionConfig): nhiều instance sau load balancer dùng chung
+  # session (state/PKCE của OAuth2, SecurityContext), restart không đăng xuất user. Mỗi request đọc + ghi bảng session.
+  # Timeout + cookie lấy từ server.servlet.session.* bên dưới; cookie tên SESSION (không còn JSESSIONID).
+  session:
+    jdbc:
+      # Bảng do Flyway tạo (V3_1__spring_session.sql) — Spring Session không tự chạy script schema
+      initialize-schema: never
+      # Mặc định của Spring Session: mỗi phút xoá session hết hạn (mọi instance đều chạy, DELETE theo index EXPIRY_TIME)
+      cleanup-cron: "0 * * * * *"
 
   artemis:
     # native = kết nối broker Artemis riêng (production, docker compose). Dev/test dùng embedded (broker trong JVM,
@@ -117,8 +129,9 @@ server:
   forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:}
   servlet:
     session:
+      # Spring Session JDBC cũng dùng giá trị này (cột MAX_INACTIVE_INTERVAL) khi không đặt spring.session.timeout
       timeout: 30m
-      # Cookie session (OWASP A02): JS không đọc được, không gửi kèm request cross-site dạng POST
+      # Cookie session SESSION của Spring Session (OWASP A02): JS không đọc được, không gửi kèm request cross-site dạng POST
       cookie:
         http-only: true
         same-site: lax
@@ -175,7 +188,9 @@ app:
     # Thread pool socialCrawlerExecutor (AsyncConfig) crawl metrics song song theo tài khoản.
     # Đủ max-pool-size thread và queue đầy → thread gửi chờ tới khi queue có chỗ (WaitForQueueSpacePolicy), không bị bỏ.
     social-crawler:
-      core-pool-size: 4
+      # Số việc chạy song song thực tế = core-pool-size: thread vượt core chỉ được tạo khi queue đã đầy (vd core 4,
+      # queue 100 → tới 104 tài khoản vẫn chỉ 4 thread). Giữ core = max; thread rảnh quá 60s tự dừng giữa 2 lần chạy
+      core-pool-size: 8
       max-pool-size: 8
       queue-capacity: 100
       # Tắt app: chờ task đang chạy tối đa khoảng này
@@ -196,3 +211,9 @@ app:
       # Thời lượng tối đa 1 lần chạy, tính từ lúc bắt đầu (gồm cả lúc gửi task). Quá hạn: tài khoản chưa xong tính lỗi,
       # task còn chạy bỏ kết quả. Phải nhỏ hơn chu kỳ cron — đổi cron thì đổi cả timeout (xem application-dev.yml)
       timeout: 50m
+      # Khoá chung giữa các instance (ShedLock, bảng scheduler_locks): mỗi lịch chỉ 1 instance chạy job.
+      # lock-at-most-for: timeout < giá trị < chu kỳ cron — instance chết giữa chừng thì khoá hết hạn trước lần chạy sau.
+      # lock-at-least-for: giữ khoá tối thiểu kể cả khi job xong sớm, để instance có đồng hồ lệch vài giây không chạy lại.
+      # Đổi cron thì đổi cả 2 giá trị (xem application-dev.yml)
+      lock-at-most-for: 55m
+      lock-at-least-for: 5m

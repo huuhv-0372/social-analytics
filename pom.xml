@@ -20,6 +20,7 @@
         <springdoc.version>3.0.3</springdoc.version>
         <poi.version>5.4.1</poi.version>
         <bucket4j.version>8.21.0</bucket4j.version>
+        <shedlock.version>7.11.0</shedlock.version>
         <!-- Ghi đè 2.43.0 của BOM Spring Boot 4.0.7: broker embedded 2.43 không khởi động trên JDK 24+
              (AuditLogger gọi Subject.getSubject → UnsupportedOperationException). 2.44.0 chuyển sang SecurityManagerShim.
              Bỏ dòng này khi BOM của Boot đã >= 2.44 -->
@@ -77,6 +78,11 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-oauth2-client</artifactId>
         </dependency>
+        <!-- Session lưu MySQL (bảng SPRING_SESSION, Flyway V3_1): nhiều instance dùng chung, restart không mất đăng nhập -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-session-jdbc</artifactId>
+        </dependency>
 
         <!-- Messaging / Realtime / WebService -->
         <dependency>
@@ -110,6 +116,13 @@
             <groupId>com.bucket4j</groupId>
             <artifactId>bucket4j_jdk17-mysql</artifactId>
             <version>${bucket4j.version}</version>
+        </dependency>
+        <!-- Khoá job @Scheduled giữa các instance (bảng scheduler_locks, Flyway V4_1): mỗi lịch chỉ 1 instance chạy.
+             Dùng API LockingTaskExecutor của shedlock-core, không cần shedlock-spring (@SchedulerLock / AOP) -->
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-provider-jdbc-template</artifactId>
+            <version>${shedlock.version}</version>
         </dependency>
 
         <!-- API Docs -->

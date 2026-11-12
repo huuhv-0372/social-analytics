@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.util;
+package com.huuhv.socialanalytics.security;
 
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
