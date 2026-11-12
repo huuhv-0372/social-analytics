@@ -159,11 +159,24 @@ class SocialMetricRepositoryTest {
                 .containsExactlyInAnyOrder(
                         new ProviderMetricTotals(Provider.TWITTER, 10L, 1L, 2L, 1000L),
                         new ProviderMetricTotals(Provider.FACEBOOK, 7L, 0L, 1L, 1000L));
-        // fb-1 không có snapshot mới → giữ giá trị cũ (carry-forward); 2 tweet cộng lại
+        // fb-1 không có snapshot mới → giữ giá trị cũ (carry-forward); 2 tweet cộng likes/shares/comments,
+        // followers của cùng tác giả không cộng lặp
         assertThat(socialMetricRepository.sumLatestByProvider(owner.getId(), BASE.plusHours(3)))
                 .containsExactlyInAnyOrder(
-                        new ProviderMetricTotals(Provider.TWITTER, 130L, 13L, 26L, 2000L),
+                        new ProviderMetricTotals(Provider.TWITTER, 130L, 13L, 26L, 1000L),
                         new ProviderMetricTotals(Provider.FACEBOOK, 7L, 0L, 1L, 1000L));
+    }
+
+    @Test
+    void sumLatestByProviderTakesLargestFollowersInsteadOfAddingThemPerPost() {
+        Post secondTweet = savePost(owner, Provider.TWITTER, "tw-2");
+        // Snapshot mới nhất của tw-1 (BASE + 2h) có 1000 followers; tw-2 được crawl sau, tác giả đã có 1200
+        saveSnapshot(secondTweet, BASE.plusMinutes(150), 100, 1200);
+
+        assertThat(socialMetricRepository.sumLatestByProvider(owner.getId(), BASE.plusHours(3)))
+                .singleElement()
+                .extracting(ProviderMetricTotals::likes, ProviderMetricTotals::followers)
+                .containsExactly(130L, 1200L);
     }
 
     @Test
@@ -209,12 +222,16 @@ class SocialMetricRepositoryTest {
     }
 
     private SocialMetric saveSnapshot(Post target, LocalDateTime collectedAt, long likes) {
+        return saveSnapshot(target, collectedAt, likes, 1000);
+    }
+
+    private SocialMetric saveSnapshot(Post target, LocalDateTime collectedAt, long likes, long followers) {
         return socialMetricRepository.save(SocialMetric.builder()
                 .post(target)
                 .likes(likes)
                 .shares(likes / 10)
                 .comments(likes / 5)
-                .followers(1000)
+                .followers(followers)
                 .collectedAt(collectedAt)
                 .build());
     }

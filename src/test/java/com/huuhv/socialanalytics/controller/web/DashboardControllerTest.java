@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
 import org.springframework.security.oauth2.core.user.OAuth2User;
@@ -22,9 +23,11 @@ import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.nio.charset.StandardCharsets;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
@@ -44,6 +47,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import({SecurityConfig.class, WebConfig.class})
 @ActiveProfiles("test")
 class DashboardControllerTest {
+
+    /** {@code <script src="https://cdn.jsdelivr.net/npm/…" integrity="sha384-…" crossorigin="anonymous">} */
+    private static final Pattern CDN_SCRIPT = Pattern.compile(
+            "<script src=\"https://cdn\\.jsdelivr\\.net/npm/([^\"]+)\"\\s+integrity=\"sha384-[A-Za-z0-9+/=]{64}\"\\s+"
+                    + "crossorigin=\"anonymous\"></script>");
 
     private static final DashboardResponse EMPTY_DASHBOARD = new DashboardResponse(null, null);
 
@@ -90,7 +98,9 @@ class DashboardControllerTest {
                 .andExpect(content().string(containsString(">2026-11-07 10:00:05 +07:00</time>")))
                 // Giá trị máy đọc được (chuẩn HTML: offset dạng +07:00)
                 .andExpect(content().string(containsString("datetime=\"2026-11-07T10:00:05+07:00\"")))
-                .andExpect(content().string(not(containsString("Chưa cập nhật"))));
+                // Trạng thái "chưa có" vẫn render (JS bật/tắt bằng hidden khi có event) nhưng đang ẩn
+                .andExpect(content().string(containsString(
+                        "<span id=\"last-updated-empty\" class=\"text-muted\" hidden=\"hidden\">Chưa cập nhật</span>")));
     }
 
     @Test
@@ -100,8 +110,9 @@ class DashboardControllerTest {
         mockMvc.perform(get("/dashboard").with(oauth2Login()))
                 .andExpect(status().isOk())
                 .andExpect(model().attribute("lastUpdatedAt", nullValue()))
-                .andExpect(content().string(containsString("Chưa cập nhật")))
-                .andExpect(content().string(not(containsString("<time"))));
+                .andExpect(content().string(containsString(
+                        "<span id=\"last-updated-empty\" class=\"text-muted\">Chưa cập nhật</span>")))
+                .andExpect(content().string(containsString("<time id=\"last-updated-time\" hidden=\"hidden\"")));
     }
 
     @Test
@@ -119,7 +130,10 @@ class DashboardControllerTest {
                 .andExpect(content().string(containsString("id=\"stat-failed-rows\">50</div>")))
                 .andExpect(content().string(containsString("datetime=\"2026-11-07T09:30:15+07:00\"")))
                 .andExpect(content().string(containsString(">2026-11-07 09:30:15 +07:00</time>")))
-                .andExpect(content().string(not(containsString("Chưa có lần import nào"))))
+                .andExpect(content().string(containsString(
+                        "<div id=\"import-statistics-values\" class=\"row g-3 text-center\">")))
+                .andExpect(content().string(containsString(
+                        "<p id=\"import-statistics-empty\" class=\"mb-0 text-muted\" hidden=\"hidden\">")))
                 // Comment trong template là comment parser-level của Thymeleaf, không lọt ra HTML
                 .andExpect(content().string(not(containsString("IMPORT_COMPLETED"))));
     }
@@ -131,8 +145,46 @@ class DashboardControllerTest {
         mockMvc.perform(get("/dashboard").with(oauth2Login()))
                 .andExpect(status().isOk())
                 .andExpect(model().attribute("importStatistics", nullValue()))
-                .andExpect(content().string(containsString("Chưa có lần import nào")))
-                .andExpect(content().string(not(containsString("stat-total-imports"))));
+                .andExpect(content().string(containsString(
+                        "<p id=\"import-statistics-empty\" class=\"mb-0 text-muted\">Chưa có lần import nào</p>")))
+                .andExpect(content().string(containsString(
+                        "<div id=\"import-statistics-values\" class=\"row g-3 text-center\" hidden=\"hidden\">")));
+    }
+
+    @Test
+    void pageWiresChartAndRealtimeScriptsWithContextRelativeUrls() throws Exception {
+        String html = mockMvc.perform(get("/app/dashboard").contextPath("/app").with(oauth2Login()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        // URL cho dashboard.js theo context path (không hardcode domain / đường dẫn tuyệt đối)
+        assertThat(html).contains("data-chart-data-url=\"/app/api/chart-data\"", "data-ws-url=\"/app/ws\"",
+                "data-login-url=\"/app/login\"", "<canvas id=\"metrics-chart\"",
+                "<script src=\"/app/js/csrf.js\"></script>", "<script src=\"/app/js/dashboard.js\"></script>");
+        // Thư viện CDN pin version + SRI + crossorigin
+        assertThat(CDN_SCRIPT.matcher(html).results().map(match -> match.group(1)))
+                .containsExactlyInAnyOrder("bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js",
+                        "chart.js@4.5.1/dist/chart.umd.min.js", "sockjs-client@1.6.1/dist/sockjs.min.js",
+                        "@stomp/stompjs@7.3.0/bundles/stomp.umd.min.js");
+        // CSP không có 'unsafe-inline': mọi <script> đều là file (không có script inline), không có style inline
+        assertThat(html).doesNotContainPattern("<script(?![^>]*\\ssrc=)").doesNotContain("style=\"");
+        // dashboard.js chạy sau csrf.js (dùng csrfHeaders() cho frame CONNECT)
+        assertThat(html.indexOf("/js/csrf.js")).isLessThan(html.indexOf("/js/dashboard.js"));
+        // Comment parser-level của Thymeleaf không lọt ra HTML
+        assertThat(html).doesNotContain("bật/tắt bằng thuộc tính");
+    }
+
+    @Test
+    void dashboardScriptNeverWritesHtmlFromServerData() throws Exception {
+        String script = new ClassPathResource("static/js/dashboard.js").getContentAsString(StandardCharsets.UTF_8);
+
+        // Dữ liệu API / payload WebSocket chỉ được ghi bằng textContent (OWASP A05 — XSS)
+        assertThat(script.lines().filter(line -> !line.trim().startsWith("//")))
+                .noneMatch(line -> line.contains("innerHTML") || line.contains("outerHTML")
+                        || line.contains("insertAdjacentHTML") || line.contains("document.write"))
+                .noneMatch(line -> line.contains("eval(") || line.contains("new Function"));
+        // Chart tạo 1 lần, cập nhật bằng chart.update()
+        assertThat(script).containsOnlyOnce("new window.Chart(").contains("chart.update()");
     }
 
     @Test

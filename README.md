@@ -11,9 +11,9 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 | CRUD bài viết & metrics | REST API `/api/posts`, `/api/metrics` + Swagger UI | 1 | ✅ |
 | Import / Export Excel | Upload danh sách bài viết (`/api/import-posts`), xuất báo cáo (`/api/export-report`) bằng Apache POI + Reflection | 2 | ✅ |
 | Social Login | Đăng nhập Facebook & Twitter/X qua OAuth2, bảo vệ CSRF | 3 | ✅ |
-| Background job | `updateSocialMetricsJob` chạy mỗi giờ, crawl metrics (mock API) đa luồng | 4 | ⏳ |
+| Background job | `updateSocialMetricsJob` chạy mỗi giờ, crawl metrics (mock API) đa luồng | 4 | ✅ |
 | JMS | Import xong → message `IMPORT_COMPLETED` → listener cập nhật thống kê (hiển thị trên dashboard), có retry + DLQ | 5 | ✅ |
-| Dashboard realtime | Chart.js cập nhật qua WebSocket (STOMP + SockJS), API `/api/chart-data` | 6 | ⏳ |
+| Dashboard realtime | Chart.js cập nhật qua WebSocket (STOMP + SockJS), API `/api/chart-data` | 6 | ✅ |
 | SOAP WebService | Gọi WebService tỷ giá mock (Spring-WS), hiển thị trên dashboard | 7 | ⏳ |
 
 ## Tech Stack
@@ -323,7 +323,7 @@ curl -OJ -b "SESSION=$SESSION_ID" http://localhost:8080/api/export-report
 }
 ```
 
-- Ngày tính theo múi giờ server (`zone`). Giá trị 1 ngày = tổng **snapshot mới nhất của từng bài tính tới hết ngày đó** — snapshot là số tích luỹ nên không cộng mọi lần crawl; bài không được crawl trong ngày giữ giá trị trước đó.
+- Ngày tính theo múi giờ server (`zone`). Mỗi bài lấy **snapshot mới nhất tính tới hết ngày đó** — snapshot là số tích luỹ nên không cộng mọi lần crawl; bài không được crawl trong ngày giữ giá trị trước đó. `likes`/`shares`/`comments` = tổng các bài; `followers` = **lớn nhất** trong các bài (là số người theo dõi tác giả, cộng theo bài sẽ đếm lặp).
 - `null` = provider chưa có bài nào có snapshot tới ngày đó (khác 0). Mỗi provider luôn có 1 phần tử trong `series`.
 - `lastUpdatedAt` / `importStatistics` (`null` nếu chưa có) đi kèm để dashboard cập nhật mọi số liệu bằng 1 request khi nhận event WebSocket.
 
@@ -336,6 +336,10 @@ curl -OJ -b "SESSION=$SESSION_ID" http://localhost:8080/api/export-report
 ```
 
 `type` là `METRICS_UPDATED` hoặc `IMPORT_PROCESSED`. Payload không chứa userId hay số liệu (mọi user đều nhận) — client nhận event rồi gọi lại `GET /api/chart-data` (chỉ trả dữ liệu của mình). Event chỉ là tín hiệu làm mới: gửi lỗi / instance đang tắt thì bỏ qua, không retry; client tải lại dữ liệu khi có event sau hoặc khi kết nối lại.
+
+**Trên `/dashboard`:** biểu đồ đường Chart.js theo provider/ngày (chọn metric và 7/14/30 ngày), "Last updated time" và thống kê import tự cập nhật không cần tải lại trang; badge góc phải cho biết trạng thái kết nối (`Live` / `Reconnecting…`). Nhận event → chờ 0,5–3,5s (ngẫu nhiên, tránh mọi dashboard gọi API cùng lúc) → gọi lại `/api/chart-data`. Mất kết nối thì tự nối lại sau 5s và tải lại dữ liệu.
+
+**Kiểm tra thủ công** (chưa có test JS tự động): chạy profile `dev` (cron metrics 5 phút) → đăng nhập → mở `/dashboard` (badge `Live`) → import 1 file Excel ở tab khác: card thống kê đổi sau vài giây; chờ job chạy: biểu đồ + "Last updated time" đổi. DevTools → Console không có lỗi CSP; Network → WS: frame `CONNECT` có header `X-XSRF-TOKEN`.
 
 - Endpoint STOMP `/ws` (SockJS), broker prefix `/topic`, app prefix `/app`. Client chỉ được `SUBSCRIBE /topic/metrics`; mọi `SEND` (kể cả vào `/topic/**`) và destination khác bị từ chối bằng ERROR frame `Access denied` rồi đóng kết nối.
 - Phải đăng nhập: handshake dùng session cookie `SESSION` của trình duyệt — chưa đăng nhập thì `/ws/**` trả 401 `ProblemDetail`.

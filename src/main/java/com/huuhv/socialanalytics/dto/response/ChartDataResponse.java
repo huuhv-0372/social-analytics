@@ -23,8 +23,9 @@ public record ChartDataResponse(String zone, List<LocalDate> labels, List<Provid
                                 Instant lastUpdatedAt, ImportStatistics importStatistics) {
 
     /**
-     * Giá trị metric của 1 provider theo từng ngày trong {@code labels} (cùng độ dài, cùng thứ tự). Giá trị 1 ngày =
-     * tổng snapshot mới nhất của từng bài tính tới hết ngày đó (bài không được crawl trong ngày giữ giá trị trước đó);
+     * Giá trị metric của 1 provider theo từng ngày trong {@code labels} (cùng độ dài, cùng thứ tự). Mỗi bài lấy
+     * snapshot mới nhất tính tới hết ngày đó (bài không được crawl trong ngày giữ giá trị trước đó); likes / shares /
+     * comments = tổng các bài, followers = lớn nhất trong các bài (số người theo dõi tác giả, không cộng lặp);
      * {@code null} = chưa có bài nào của provider có snapshot tới ngày đó.
      */
     public record ProviderSeries(Provider provider, List<Long> likes, List<Long> shares, List<Long> comments,

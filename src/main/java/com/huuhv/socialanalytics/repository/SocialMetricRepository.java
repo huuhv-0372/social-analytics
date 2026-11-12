@@ -43,13 +43,17 @@ public interface SocialMetricRepository extends JpaRepository<SocialMetric, Long
      * mốc): mỗi bài lấy snapshot mới nhất có {@code collectedAt < before} (2 snapshot cùng thời điểm → id lớn hơn), bài
      * chưa có snapshot nào trước mốc bị bỏ qua. Provider không có bài nào có snapshot → không có dòng.
      * <p>
+     * likes / shares / comments là số của từng bài → cộng ({@code SUM}). followers là số người theo dõi <b>tác giả</b>
+     * (tài khoản), lặp lại trên mọi bài của tài khoản đó → lấy {@code MAX}, cộng sẽ đếm lặp theo số bài (mỗi user có tối
+     * đa 1 tài khoản mỗi provider).
+     * <p>
      * Hiệu năng giống {@code PostRepository.findReportRows}: subquery {@code ORDER BY collectedAt DESC, id DESC LIMIT 1}
      * đi lùi trên index {@code (post_id, collected_at)} từ mốc {@code before} → O(số bài), không phụ thuộc số snapshot.
      * Không dùng {@code NOT EXISTS} + điều kiện {@code OR} (MySQL không range-scan được).
      */
     @Query("""
             SELECT new com.huuhv.socialanalytics.dto.response.ProviderMetricTotals(
-                p.provider, SUM(m.likes), SUM(m.shares), SUM(m.comments), SUM(m.followers))
+                p.provider, SUM(m.likes), SUM(m.shares), SUM(m.comments), MAX(m.followers))
             FROM Post p
             JOIN SocialMetric m ON m.id = (
                 SELECT latest.id FROM SocialMetric latest

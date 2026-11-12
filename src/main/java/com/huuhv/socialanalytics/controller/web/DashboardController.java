@@ -8,8 +8,9 @@ import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 
 /**
- * Trang chính sau khi đăng nhập: "Last updated time" của metrics + thống kê import tổng hợp. Biểu đồ và cập nhật
- * realtime bổ sung ở giai đoạn 6.
+ * Trang chính sau khi đăng nhập: "Last updated time" của metrics + thống kê import tổng hợp render sẵn lúc tải trang.
+ * Biểu đồ và cập nhật realtime do {@code static/js/dashboard.js} làm phía trình duyệt ({@code GET /api/chart-data} +
+ * STOMP {@code /topic/metrics}) — controller không đổi.
  */
 @Controller
 @RequiredArgsConstructor
