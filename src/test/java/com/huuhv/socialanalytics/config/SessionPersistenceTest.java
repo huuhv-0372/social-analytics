@@ -1,9 +1,7 @@
 package com.huuhv.socialanalytics.config;
 
 import com.huuhv.socialanalytics.TestcontainersConfiguration;
-import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.repository.UserRepository;
-import com.huuhv.socialanalytics.security.AppOAuth2User;
 import com.huuhv.socialanalytics.security.DiscardingOAuth2AuthorizedClientRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,15 +9,11 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.security.core.authority.AuthorityUtils;
-import org.springframework.security.core.context.SecurityContextImpl;
-import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizedClientRepository;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.savedrequest.DefaultSavedRequest;
 import org.springframework.session.Session;
-import org.springframework.session.SessionRepository;
 import org.springframework.session.jdbc.JdbcIndexedSessionRepository;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -35,7 +29,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -158,23 +151,7 @@ class SessionPersistenceTest {
 
     /** Session đã đăng nhập do "instance khác" ghi thẳng vào DB; trả cookie {@code SESSION=...}. */
     private String authenticatedSession() {
-        User user = userRepository.save(User.builder().displayName("Session test").build());
-        AppOAuth2User principal = new AppOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
-                Map.of("id", "session-test-" + user.getId(), "name", "Session test"), "id", user.getId(),
-                "Session test");
-        String sessionId = saveSession(sessionRepository, HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY,
-                new SecurityContextImpl(new OAuth2AuthenticationToken(principal, principal.getAuthorities(), "facebook")));
-        // DefaultCookieSerializer mã hoá Base64 id session trong cookie
-        return SecurityConfig.SESSION_COOKIE_NAME + "="
-                + Base64.getEncoder().encodeToString(sessionId.getBytes(StandardCharsets.UTF_8));
-    }
-
-    /** Kiểu session của JdbcIndexedSessionRepository không public → thao tác qua interface. */
-    private static <S extends Session> String saveSession(SessionRepository<S> repository, String name, Object value) {
-        S session = repository.createSession();
-        session.setAttribute(name, value);
-        repository.save(session);
-        return session.getId();
+        return AuthenticatedSessions.create(userRepository, sessionRepository);
     }
 
     private static String decodeSessionId(String sessionCookie) {

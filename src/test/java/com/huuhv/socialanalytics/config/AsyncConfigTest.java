@@ -10,12 +10,16 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.autoconfigure.task.TaskSchedulingAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 import java.time.Duration;
 import java.util.List;
@@ -31,7 +35,9 @@ class AsyncConfigTest {
     // Base64 của 32 byte 0x01 — AppProperties bắt buộc có key hợp lệ
     private static final String VALID_KEY = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
 
+    // TaskSchedulingAutoConfiguration: cung cấp ThreadPoolTaskSchedulerBuilder cho bean taskScheduler của AsyncConfig
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(TaskSchedulingAutoConfiguration.class))
             .withUserConfiguration(PropertiesConfig.class, AsyncConfig.class, ProbeConfig.class)
             .withPropertyValues("app.token-encryption.key=" + VALID_KEY,
                     "app.async.social-crawler.core-pool-size=2",
@@ -106,6 +112,7 @@ class AsyncConfigTest {
     @Test
     void defaultSettingsRunMaxPoolSizeTasksInParallelWhileQueueHasRoom() {
         new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(TaskSchedulingAutoConfiguration.class))
                 .withUserConfiguration(PropertiesConfig.class, AsyncConfig.class)
                 .withPropertyValues("app.token-encryption.key=" + VALID_KEY)
                 .run(context -> {
@@ -139,6 +146,26 @@ class AsyncConfigTest {
         }
     }
 
+    /**
+     * {@code @EnableWebSocketMessageBroker} đăng ký thêm 1 {@code TaskScheduler} ({@code messageBrokerTaskScheduler}) làm
+     * Boot không tạo {@code taskScheduler}: {@code @Scheduled} vẫn phải chạy trên scheduler cấu hình bằng
+     * {@code spring.task.scheduling.*}, không rơi sang pool của broker.
+     */
+    @Test
+    void scheduledMethodsRunOnBootConfiguredSchedulerWhenBrokerSchedulerExists() {
+        contextRunner
+                .withUserConfiguration(BrokerSchedulerConfig.class, ScheduledProbeConfig.class)
+                .withPropertyValues("spring.task.scheduling.thread-name-prefix=scheduler-")
+                .run(context -> {
+                    assertThat(context.getBean("taskScheduler", ThreadPoolTaskScheduler.class).getThreadNamePrefix())
+                            .isEqualTo("scheduler-");
+
+                    String thread = context.getBean(ScheduledProbe.class).thread.get(5, TimeUnit.SECONDS);
+
+                    assertThat(thread).startsWith("scheduler-");
+                });
+    }
+
     @Test
     void failsStartupWhenCorePoolSizeExceedsMaxPoolSize() {
         contextRunner
@@ -157,6 +184,35 @@ class AsyncConfigTest {
         @Bean
         AsyncProbe asyncProbe() {
             return new AsyncProbe();
+        }
+    }
+
+    /** Giống bean do {@code @EnableWebSocketMessageBroker} đăng ký. */
+    @Configuration(proxyBeanMethods = false)
+    static class BrokerSchedulerConfig {
+        @Bean
+        ThreadPoolTaskScheduler messageBrokerTaskScheduler() {
+            ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+            scheduler.setThreadNamePrefix("MessageBroker-");
+            return scheduler;
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class ScheduledProbeConfig {
+        @Bean
+        ScheduledProbe scheduledProbe() {
+            return new ScheduledProbe();
+        }
+    }
+
+    static class ScheduledProbe {
+
+        final CompletableFuture<String> thread = new CompletableFuture<>();
+
+        @Scheduled(fixedDelay = 60_000)
+        public void run() {
+            thread.complete(Thread.currentThread().getName());
         }
     }
 

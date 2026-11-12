@@ -137,7 +137,7 @@ Kiến trúc 3 lớp (3-Tier), package gốc `com.huuhv.socialanalytics`:
 
 ```
 src/main/java/com/huuhv/socialanalytics/
-├── config/          # SecurityConfig, AsyncConfig, JmsConfig, WebSocketConfig, WebServiceConfig, OpenApiConfig, RateLimitConfig
+├── config/          # SecurityConfig, AsyncConfig, JmsConfig, WebSocketConfig, WebSocketSecurityConfig, WebServiceConfig, OpenApiConfig, RateLimitConfig
 │   └── properties/  # AppProperties (cấu hình app.*)
 ├── controller/
 │   ├── web/         # Controller Thymeleaf: /login, /dashboard, /posts ...
@@ -154,10 +154,10 @@ src/main/java/com/huuhv/socialanalytics/
 │   └── soap/        # Spring-WS client
 ├── scheduler/       # Background job (@Scheduled)
 ├── messaging/       # JMS producer, listener, tên queue
-├── websocket/       # Publisher gửi event STOMP
+├── websocket/       # Đường dẫn STOMP (StompDestinations), publisher gửi event
 ├── excel/           # Import/export Excel generic bằng Reflection
 ├── exception/       # ApiExceptionHandler, WebExceptionHandler + exception nghiệp vụ
-├── security/        # Entry point / handler 401-403, CSRF, kết quả đăng nhập OAuth2, principal, lọc deserialize session
+├── security/        # Entry point / handler 401-403 (HTTP + ERROR frame STOMP), CSRF, kết quả đăng nhập OAuth2, principal, lọc deserialize session
 └── util/
 
 src/main/resources/
@@ -223,7 +223,7 @@ Schema hiện tại (`V1__init_schema.sql` + `V1_1__rate_limit_buckets.sql` + `V
 
 ## REST API
 
-Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); chỉ `/login`, `/oauth2/**` và static resource là public. Gọi `/api/**` khi chưa đăng nhập trả 401 `ProblemDetail`; trang web chưa đăng nhập được redirect về `/login`. Chỉ đăng nhập bằng **Facebook hoặc X** (không có HTTP Basic / tài khoản mật khẩu); lần đăng nhập đầu tiên tạo user mới, các lần sau cập nhật access token. API dùng chung session cookie (`SESSION`, Spring Session lưu ở MySQL) của trình duyệt — Swagger UI tự gửi; với curl/Postman, copy cookie `SESSION` sau khi đăng nhập (DevTools → Application → Cookies). Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
+Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); chỉ `/login`, `/oauth2/**` và static resource là public. Gọi `/api/**` (và handshake WebSocket `/ws/**`) khi chưa đăng nhập trả 401 `ProblemDetail`; trang web chưa đăng nhập được redirect về `/login`. Chỉ đăng nhập bằng **Facebook hoặc X** (không có HTTP Basic / tài khoản mật khẩu); lần đăng nhập đầu tiên tạo user mới, các lần sau cập nhật access token. API dùng chung session cookie (`SESSION`, Spring Session lưu ở MySQL) của trình duyệt — Swagger UI tự gửi; với curl/Postman, copy cookie `SESSION` sau khi đăng nhập (DevTools → Application → Cookies). Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
 
 Đăng xuất: `POST /logout` (kèm CSRF) → redirect `/login?logout`, session bị huỷ. `GET /logout` không đăng xuất.
 
@@ -304,6 +304,14 @@ curl -b "SESSION=$SESSION_ID; XSRF-TOKEN=$XSRF" -X POST http://localhost:8080/ap
 ```bash
 curl -OJ -b "SESSION=$SESSION_ID" http://localhost:8080/api/export-report
 ```
+
+## WebSocket (realtime dashboard)
+
+- Endpoint STOMP `/ws` (SockJS), broker prefix `/topic`, app prefix `/app`. Client chỉ được `SUBSCRIBE /topic/metrics`; mọi `SEND` (kể cả vào `/topic/**`) và destination khác bị từ chối bằng ERROR frame `Access denied` rồi đóng kết nối.
+- Phải đăng nhập: handshake dùng session cookie `SESSION` của trình duyệt — chưa đăng nhập thì `/ws/**` trả 401 `ProblemDetail`.
+- **CSRF ở frame `CONNECT`:** header `X-XSRF-TOKEN` chứa token **đã mask** lấy từ `<meta name="_csrf">` (dùng `csrfHeaders()` của `static/js/csrf.js`), và handshake phải mang cookie `XSRF-TOKEN` (trình duyệt tự gửi). Token raw của cookie không được nhận ở đây. Request HTTP dưới `/ws/**` (POST của transport dự phòng SockJS) không kiểm CSRF — đây là ngoại lệ duy nhất, vì kết nối không qua được `CONNECT` thì không frame nào được xử lý.
+- Chạy nhiều instance sau load balancer: transport WebSocket không cần gì thêm; transport dự phòng của SockJS (xhr-streaming/polling) giữ session SockJS trong RAM nên cần **sticky session**. Transport iframe của SockJS không dùng được (`X-Frame-Options: DENY`).
+- Kết nối WebSocket không gia hạn session HTTP và không tự đóng khi logout / session hết hạn (Spring Session JDBC không phát sự kiện huỷ session) — payload trên topic không chứa dữ liệu riêng của user nên chấp nhận.
 
 ## Xử Lý Lỗi
 
