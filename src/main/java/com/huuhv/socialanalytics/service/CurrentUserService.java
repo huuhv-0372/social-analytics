@@ -4,6 +4,7 @@ import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.enums.Provider;
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.repository.UserRepository;
+import com.huuhv.socialanalytics.security.AppOAuth2User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;

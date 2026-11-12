@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.config;
+package com.huuhv.socialanalytics.security;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class OAuth2LoginResultHandlerTest {
 
     private final OAuth2LoginResultHandler handler =
-            new OAuth2LoginResultHandler(SecurityConfig.LOGIN_SUCCESS_URL, SecurityConfig.LOGIN_FAILURE_URL);
+            new OAuth2LoginResultHandler("/dashboard", "/login?error");
 
     @Test
     void successAlwaysRedirectsToDashboardIgnoringTargetParameter() throws Exception {

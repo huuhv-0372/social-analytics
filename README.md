@@ -151,6 +151,7 @@ src/main/java/com/huuhv/socialanalytics/
 ├── websocket/       # Publisher gửi event STOMP
 ├── excel/           # Import/export Excel generic bằng Reflection
 ├── exception/       # ApiExceptionHandler, WebExceptionHandler + exception nghiệp vụ
+├── security/        # Entry point / handler 401-403, CSRF, kết quả đăng nhập OAuth2, principal, lọc deserialize session
 └── util/
 
 src/main/resources/
@@ -214,7 +215,7 @@ Schema hiện tại (`V1__init_schema.sql` + `V1_1__rate_limit_buckets.sql` + `V
 
 ## REST API
 
-Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); chỉ `/login`, `/oauth2/**` và static resource là public. Gọi `/api/**` khi chưa đăng nhập trả 401 `ProblemDetail`; trang web chưa đăng nhập được redirect về `/login`. Chỉ đăng nhập bằng **Facebook hoặc X** (không có HTTP Basic / tài khoản mật khẩu); lần đăng nhập đầu tiên tạo user mới, các lần sau cập nhật access token. API dùng chung session cookie (`JSESSIONID`) của trình duyệt — Swagger UI tự gửi; với curl/Postman, copy cookie `JSESSIONID` sau khi đăng nhập (DevTools → Application → Cookies). Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
+Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); chỉ `/login`, `/oauth2/**` và static resource là public. Gọi `/api/**` khi chưa đăng nhập trả 401 `ProblemDetail`; trang web chưa đăng nhập được redirect về `/login`. Chỉ đăng nhập bằng **Facebook hoặc X** (không có HTTP Basic / tài khoản mật khẩu); lần đăng nhập đầu tiên tạo user mới, các lần sau cập nhật access token. API dùng chung session cookie (`SESSION`, Spring Session lưu ở MySQL) của trình duyệt — Swagger UI tự gửi; với curl/Postman, copy cookie `SESSION` sau khi đăng nhập (DevTools → Application → Cookies). Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
 
 Đăng xuất: `POST /logout` (kèm CSRF) → redirect `/login?logout`, session bị huỷ. `GET /logout` không đăng xuất.
 
@@ -241,15 +242,15 @@ Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); ch�
 Ví dụ:
 
 ```bash
-# 0. Đăng nhập Facebook/X trên trình duyệt, copy giá trị cookie JSESSIONID
-SESSION='<giá trị JSESSIONID>'
+# 0. Đăng nhập Facebook/X trên trình duyệt, copy giá trị cookie SESSION
+SESSION_ID='<giá trị cookie SESSION>'
 
 # 1. Request GET bất kỳ để nhận cookie XSRF-TOKEN
-curl -s -o /dev/null -c cookies.txt -b "JSESSIONID=$SESSION" http://localhost:8080/api/posts
+curl -s -o /dev/null -c cookies.txt -b "SESSION=$SESSION_ID" http://localhost:8080/api/posts
 XSRF=$(awk '$6 == "XSRF-TOKEN" {print $7}' cookies.txt)
 
 # 2. Gửi lại session + cookie XSRF-TOKEN + header X-XSRF-TOKEN
-curl -b "JSESSIONID=$SESSION; XSRF-TOKEN=$XSRF" -X POST http://localhost:8080/api/posts \
+curl -b "SESSION=$SESSION_ID; XSRF-TOKEN=$XSRF" -X POST http://localhost:8080/api/posts \
   -H "X-XSRF-TOKEN: $XSRF" \
   -H "Content-Type: application/json" \
   -d '{"provider":"FACEBOOK","externalId":"123","url":"https://www.facebook.com/page/posts/123","content":"Hello"}'
@@ -271,7 +272,7 @@ File `.xlsx`, sheet đầu tiên, dòng 1 là header (không phân biệt hoa th
 - Dòng lỗi trả về kèm số dòng, dòng hợp lệ vẫn được lưu. Bài đã có (cùng provider + External ID, không phân biệt hoa thường) được **cập nhật**.
 
 ```bash
-curl -b "JSESSIONID=$SESSION; XSRF-TOKEN=$XSRF" -X POST http://localhost:8080/api/import-posts \
+curl -b "SESSION=$SESSION_ID; XSRF-TOKEN=$XSRF" -X POST http://localhost:8080/api/import-posts \
   -H "X-XSRF-TOKEN: $XSRF" -F "file=@posts.xlsx"
 # {"totalRows":3,"created":1,"updated":1,"failed":1,"errors":[{"row":4,"column":"URL","message":"must not be blank"}]}
 ```
@@ -293,7 +294,7 @@ curl -b "JSESSIONID=$SESSION; XSRF-TOKEN=$XSRF" -X POST http://localhost:8080/ap
 - Chống Formula Injection: ô bắt đầu bằng `=`, `+`, `-`, `@`, tab, CR được đánh dấu *quote prefix* (như gõ `'` trong Excel) → Excel hiển thị nguyên văn, không chạy như công thức.
 
 ```bash
-curl -OJ -b "JSESSIONID=$SESSION" http://localhost:8080/api/export-report
+curl -OJ -b "SESSION=$SESSION_ID" http://localhost:8080/api/export-report
 ```
 
 ## Xử Lý Lỗi

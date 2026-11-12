@@ -1,4 +1,4 @@
-package com.huuhv.socialanalytics.config;
+package com.huuhv.socialanalytics.security;
 
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -22,11 +22,11 @@ import java.util.Objects;
  * Chỉ log method, đường dẫn (đã bỏ CR/LF) và user — không log token, cookie hay header.
  */
 @Slf4j
-class LoggingAccessDeniedHandler implements AccessDeniedHandler {
+public class LoggingAccessDeniedHandler implements AccessDeniedHandler {
 
     private final AccessDeniedHandler delegate;
 
-    LoggingAccessDeniedHandler(RequestMatcher restRequestMatcher) {
+    public LoggingAccessDeniedHandler(RequestMatcher restRequestMatcher) {
         LinkedHashMap<RequestMatcher, AccessDeniedHandler> handlers = new LinkedHashMap<>();
         handlers.put(restRequestMatcher, new ApiAccessDeniedHandler());
         this.delegate = new RequestMatcherDelegatingAccessDeniedHandler(handlers, new AccessDeniedHandlerImpl());

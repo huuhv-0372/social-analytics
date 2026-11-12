@@ -2,6 +2,7 @@ package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.enums.Provider;
+import com.huuhv.socialanalytics.security.AppOAuth2User;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.CannotAcquireLockException;

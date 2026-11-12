@@ -2,7 +2,7 @@ package com.huuhv.socialanalytics.controller.web;
 
 import com.huuhv.socialanalytics.config.SecurityConfig;
 import com.huuhv.socialanalytics.config.WebConfig;
-import com.huuhv.socialanalytics.service.AppOAuth2User;
+import com.huuhv.socialanalytics.security.AppOAuth2User;
 import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import org.junit.jupiter.api.Test;

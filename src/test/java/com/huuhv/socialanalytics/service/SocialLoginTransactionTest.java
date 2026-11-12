@@ -13,6 +13,7 @@ import com.huuhv.socialanalytics.exception.DuplicateResourceException;
 import com.huuhv.socialanalytics.repository.PostRepository;
 import com.huuhv.socialanalytics.repository.SocialAccountRepository;
 import com.huuhv.socialanalytics.repository.UserRepository;
+import com.huuhv.socialanalytics.security.AppOAuth2User;
 import com.huuhv.socialanalytics.util.AesGcmCipher;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
