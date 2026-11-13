@@ -36,7 +36,16 @@ public class CurrentUserService {
      * @throws AuthenticationRequiredException khi request chưa đăng nhập OAuth2 hoặc tài khoản không có trong DB
      */
     public User getCurrentUser() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return getUser(SecurityContextHolder.getContext().getAuthentication());
+    }
+
+    /**
+     * Như {@link #getCurrentUser()} nhưng với {@link Authentication} truyền vào — dùng ở nơi không có
+     * {@code SecurityContext} của request (vd frame STOMP CONNECT, principal lấy từ phiên WebSocket).
+     *
+     * @throws AuthenticationRequiredException khi không phải đăng nhập OAuth2 hoặc tài khoản không có trong DB
+     */
+    public User getUser(Authentication authentication) {
         if (!(authentication instanceof OAuth2AuthenticationToken token) || !token.isAuthenticated()) {
             throw new AuthenticationRequiredException();
         }

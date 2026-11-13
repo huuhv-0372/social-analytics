@@ -7,7 +7,16 @@
     <title>Dashboard</title>
 </head>
 <body>
-<main layout:fragment="content">
+<!--/* Trang render sẵn số liệu lúc tải (server-side); static/js/dashboard.js gọi GET /api/chart-data để vẽ biểu đồ và
+     tự gọi lại khi nhận event STOMP riêng của user (job metrics / import xong). URL và đích STOMP truyền qua data-*
+     (theo context path / hằng số StompDestinations, không hardcode trong JS). Mốc thời gian là Instant, hiển thị theo
+     múi giờ server (zone). Cả 2 trạng thái có/không có dữ liệu luôn được render, bật/tắt bằng thuộc tính
+     hidden → JS chỉ đổi textContent + hidden, không dựng HTML. Comment parser-level: không gửi ra HTML */-->
+<main layout:fragment="content" id="dashboard"
+      th:data-chart-data-url="@{/api/chart-data}"
+      th:data-ws-url="@{/ws}"
+      th:data-metrics-destination="${metricsDestination}"
+      th:data-login-url="@{/login}">
     <h1 class="h3 mb-3">Dashboard</h1>
     <p class="lead">Welcome, <span th:text="${displayName}">user</span>!</p>
 
@@ -15,53 +24,85 @@
         <div class="card-body">
             <h2 class="h6 text-muted mb-1">Last updated time</h2>
             <p class="fs-5 mb-0" id="last-updated-at">
-                <time th:if="${lastUpdatedAt != null}"
-                      th:datetime="${#temporals.format(lastUpdatedAt, 'yyyy-MM-dd''T''HH:mm:ssXXX')}"
-                      th:text="${#temporals.format(lastUpdatedAt, 'yyyy-MM-dd HH:mm:ss xxx')}">2026-01-01 00:00:00 +07:00</time>
-                <span th:if="${lastUpdatedAt == null}" class="text-muted">Chưa cập nhật</span>
+                <time id="last-updated-time" th:hidden="${lastUpdatedAt == null}"
+                      th:datetime="${lastUpdatedAt != null ? #temporals.format(lastUpdatedAt.atZone(zone), 'yyyy-MM-dd''T''HH:mm:ssXXX') : null}"
+                      th:text="${lastUpdatedAt != null ? #temporals.format(lastUpdatedAt.atZone(zone), 'yyyy-MM-dd HH:mm:ss xxx') : ''}">2026-01-01 00:00:00 +07:00</time>
+                <span id="last-updated-empty" class="text-muted" th:hidden="${lastUpdatedAt != null}">Chưa cập nhật</span>
             </p>
         </div>
     </div>
 
-    <!--/* Thống kê import: listener IMPORT_COMPLETED cập nhật bất đồng bộ (vài giây sau khi import); tải lại trang để
-         xem số mới — cập nhật realtime ở giai đoạn 6. Comment parser-level: không gửi ra HTML */-->
     <div class="card shadow-sm mb-3" id="import-statistics">
         <div class="card-body">
             <h2 class="h6 text-muted mb-3">Import statistics</h2>
-            <div th:if="${importStatistics != null}" class="row g-3 text-center">
+            <div id="import-statistics-values" class="row g-3 text-center" th:hidden="${importStatistics == null}">
                 <div class="col-6 col-md-3">
                     <div class="fs-4 fw-semibold" id="stat-total-imports"
-                         th:text="${#numbers.formatInteger(importStatistics.totalImports, 1, 'COMMA')}">0</div>
+                         th:text="${importStatistics != null ? #numbers.formatInteger(importStatistics.totalImports, 1, 'COMMA') : '0'}">0</div>
                     <div class="small text-muted">Imports</div>
                 </div>
                 <div class="col-6 col-md-3">
                     <div class="fs-4 fw-semibold text-success" id="stat-success-rows"
-                         th:text="${#numbers.formatInteger(importStatistics.successRows, 1, 'COMMA')}">0</div>
+                         th:text="${importStatistics != null ? #numbers.formatInteger(importStatistics.successRows, 1, 'COMMA') : '0'}">0</div>
                     <div class="small text-muted">Rows imported</div>
                 </div>
                 <div class="col-6 col-md-3">
                     <div class="fs-4 fw-semibold text-danger" id="stat-failed-rows"
-                         th:text="${#numbers.formatInteger(importStatistics.failedRows, 1, 'COMMA')}">0</div>
+                         th:text="${importStatistics != null ? #numbers.formatInteger(importStatistics.failedRows, 1, 'COMMA') : '0'}">0</div>
                     <div class="small text-muted">Failed rows</div>
                 </div>
                 <div class="col-6 col-md-3">
                     <div class="fs-6 fw-semibold mt-md-2">
                         <time id="stat-last-import-at"
-                              th:datetime="${#temporals.format(importStatistics.lastImportAt, 'yyyy-MM-dd''T''HH:mm:ssXXX')}"
-                              th:text="${#temporals.format(importStatistics.lastImportAt, 'yyyy-MM-dd HH:mm:ss xxx')}">2026-01-01 00:00:00 +07:00</time>
+                              th:datetime="${importStatistics != null ? #temporals.format(importStatistics.lastImportAt.atZone(zone), 'yyyy-MM-dd''T''HH:mm:ssXXX') : null}"
+                              th:text="${importStatistics != null ? #temporals.format(importStatistics.lastImportAt.atZone(zone), 'yyyy-MM-dd HH:mm:ss xxx') : ''}">2026-01-01 00:00:00 +07:00</time>
                     </div>
                     <div class="small text-muted">Last import</div>
                 </div>
             </div>
-            <p th:if="${importStatistics == null}" class="mb-0 text-muted">Chưa có lần import nào</p>
+            <p id="import-statistics-empty" class="mb-0 text-muted" th:hidden="${importStatistics != null}">Chưa có lần import nào</p>
         </div>
     </div>
 
-    <div class="card shadow-sm">
-        <div class="card-body text-muted">
-            Engagement charts will appear here once metrics are collected.
+    <div class="card shadow-sm" id="engagement">
+        <div class="card-body">
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                <h2 class="h6 text-muted mb-0 me-auto">Engagement</h2>
+                <span id="realtime-status" class="badge text-bg-secondary" role="status">Connecting…</span>
+                <select id="metric-select" class="form-select form-select-sm w-auto" aria-label="Metric">
+                    <option value="likes" selected>Likes</option>
+                    <option value="shares">Shares</option>
+                    <option value="comments">Comments</option>
+                    <option value="followers">Followers</option>
+                </select>
+                <select id="days-select" class="form-select form-select-sm w-auto" aria-label="Period">
+                    <option value="7" selected>7 days</option>
+                    <option value="14">14 days</option>
+                    <option value="30">30 days</option>
+                </select>
+            </div>
+            <div id="dashboard-error" class="alert alert-warning py-2" role="alert" hidden></div>
+            <p id="chart-empty" class="text-muted mb-0" hidden>Chưa có dữ liệu metrics — biểu đồ sẽ hiện sau lần cập nhật đầu tiên.</p>
+            <div id="chart-container" hidden>
+                <canvas id="metrics-chart" role="img" aria-label="Engagement by provider per day"></canvas>
+            </div>
         </div>
     </div>
 </main>
+
+<!--/* Thư viện pin version + SRI (sha384 tính từ file đã tải, đối chiếu hash sha256 của jsDelivr API). CSP cho phép
+     https://cdn.jsdelivr.net; cả 3 file không dùng eval. Chạy sau csrf.js của layout (dashboard.js dùng csrfHeaders). */-->
+<th:block layout:fragment="scripts">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
+            integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ"
+            crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"
+            integrity="sha384-svdnwiXBL+Js+yUneJSRFy24NgGiOfDM/vkQl/vCeVrcbYD6yW8EwPr1FnxTEZsR"
+            crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.3.0/bundles/stomp.umd.min.js"
+            integrity="sha384-KkPQpaFjaz1MHqHBmeMM+CCG394NFgCN2Rhe/3Mqnb6/acgNnoWTF54PGijUKRjf"
+            crossorigin="anonymous"></script>
+    <script th:src="@{/js/dashboard.js}"></script>
+</th:block>
 </body>
 </html>

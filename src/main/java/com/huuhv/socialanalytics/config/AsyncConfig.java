@@ -2,12 +2,15 @@ package com.huuhv.socialanalytics.config;
 
 import com.huuhv.socialanalytics.config.properties.AppProperties;
 import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
+import org.springframework.boot.task.ThreadPoolTaskSchedulerBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 /**
  * Bật {@code @Async} / {@code @Scheduled} (đặt ở config riêng, không ở Application class) và khai báo thread pool
@@ -20,7 +23,8 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
  *     <li>Không override {@code getAsyncExecutor()}: {@code @Async} không ghi tên vẫn chạy trên
  *     {@code applicationTaskExecutor} của Boot (giữ lại nhờ {@code spring.task.execution.mode=force}, vì khai báo
  *     executor riêng làm Boot bỏ executor mặc định).</li>
- *     <li>Thread scheduler do Boot tạo ({@code spring.task.scheduling.*}).</li>
+ *     <li>Scheduler cho {@code @Scheduled}: bean {@code taskScheduler} khai báo tại đây (xem {@link #taskScheduler}),
+ *     vẫn dựng từ {@code spring.task.scheduling.*} của Boot.</li>
  * </ul>
  */
 @Configuration(proxyBeanMethods = false)
@@ -48,6 +52,21 @@ public class AsyncConfig {
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationMillis(settings.awaitTermination().toMillis());
         return executor;
+    }
+
+    /**
+     * Scheduler chạy {@code @Scheduled} (job metrics, gửi lại IMPORT_COMPLETED) và task định kỳ của Spring Session.
+     * Phải khai báo tường minh: {@code @EnableWebSocketMessageBroker} ({@link WebSocketConfig}) đăng ký bean
+     * {@code TaskScheduler} {@code messageBrokerTaskScheduler}, làm cấu hình scheduler của Boot
+     * ({@code @ConditionalOnMissingBean(TaskScheduler.class)}) không tạo {@code taskScheduler} — {@code @Scheduled} sẽ
+     * lặng lẽ chạy trên pool {@code MessageBroker-} của broker (bỏ qua {@code spring.task.scheduling.*}, dừng theo vòng
+     * đời broker). Tên bean {@code taskScheduler} là tên {@code ScheduledAnnotationBeanPostProcessor} chọn khi context
+     * có nhiều {@code TaskScheduler}. Không {@code @Primary}: cấu hình WebSocket lấy scheduler của nó theo tên tham số,
+     * primary sẽ đè lên.
+     */
+    @Bean(name = ScheduledAnnotationBeanPostProcessor.DEFAULT_TASK_SCHEDULER_BEAN_NAME)
+    ThreadPoolTaskScheduler taskScheduler(ThreadPoolTaskSchedulerBuilder builder) {
+        return builder.build();
     }
 
     /** Exception thoát khỏi method {@code @Async void} → log (xem {@link LoggingAsyncUncaughtExceptionHandler}). */

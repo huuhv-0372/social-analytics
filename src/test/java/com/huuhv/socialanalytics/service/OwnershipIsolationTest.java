@@ -5,8 +5,11 @@ import com.huuhv.socialanalytics.config.ClockConfig;
 import com.huuhv.socialanalytics.config.CryptoConfig;
 import com.huuhv.socialanalytics.dto.request.PostRequest;
 import com.huuhv.socialanalytics.dto.request.SocialMetricRequest;
+import com.huuhv.socialanalytics.dto.response.ChartDataResponse;
+import com.huuhv.socialanalytics.dto.response.ChartDataResponse.ProviderSeries;
 import com.huuhv.socialanalytics.dto.response.PostResponse;
 import com.huuhv.socialanalytics.dto.response.SocialMetricResponse;
+import com.huuhv.socialanalytics.entity.SocialAccount;
 import com.huuhv.socialanalytics.enums.Provider;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
 import com.huuhv.socialanalytics.repository.PostRepository;
@@ -36,6 +39,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -52,7 +56,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @ActiveProfiles("test")
 @Import({TestcontainersConfiguration.class, ClockConfig.class, CryptoConfig.class, SocialAccountService.class,
         CurrentUserService.class, PostService.class, SocialMetricService.class, DashboardService.class,
-        ImportStatisticsService.class, ImportHistoryService.class})
+        ImportStatisticsService.class, ImportHistoryService.class, ChartDataService.class,
+        DashboardEventService.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class OwnershipIsolationTest {
 
@@ -69,6 +74,9 @@ class OwnershipIsolationTest {
 
     @Autowired
     private DashboardService dashboardService;
+
+    @Autowired
+    private ChartDataService chartDataService;
 
     @Autowired
     private SocialMetricRepository socialMetricRepository;
@@ -176,6 +184,38 @@ class OwnershipIsolationTest {
 
         authenticate(owner);
         assertThat(dashboardService.getDashboard().importStatistics().totalRows()).isEqualTo(10);
+    }
+
+    @Test
+    void otherUserDoesNotSeeChartDataOfOwner() {
+        SocialAccount ownersAccount = socialAccountRepository
+                .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "111").orElseThrow();
+        socialAccountService.markMetricsUpdated(ownersAccount.getId(), LocalDateTime.of(2026, 11, 7, 3, 0));
+        transactionTemplate.executeWithoutResult(status -> userImportStatisticRepository.addImport(
+                ownersAccount.getUser().getId(), 10, 8, 2, LocalDateTime.of(2026, 11, 7, 3, 0),
+                LocalDateTime.of(2026, 11, 7, 3, 0, 1)));
+
+        ChartDataResponse attackersView = chartDataService.getChartData(ChartDataService.MAX_DAYS);
+
+        // Snapshot của owner (2026-01-01) nằm trước mọi mốc ngày nhưng không được cộng cho user khác
+        assertThat(attackersView.series()).isNotEmpty().allSatisfy(series -> {
+            assertThat(series.likes()).hasSize(ChartDataService.MAX_DAYS).containsOnlyNulls();
+            assertThat(series.shares()).containsOnlyNulls();
+            assertThat(series.comments()).containsOnlyNulls();
+            assertThat(series.followers()).containsOnlyNulls();
+        });
+        assertThat(attackersView.lastUpdatedAt()).isNull();
+        assertThat(attackersView.importStatistics()).isNull();
+
+        authenticate(owner);
+        ChartDataResponse ownersView = chartDataService.getChartData(1);
+        assertThat(ownersView.series())
+                .filteredOn(series -> series.provider() == Provider.FACEBOOK)
+                .singleElement()
+                .extracting(ProviderSeries::likes)
+                .isEqualTo(List.of(10L));
+        assertThat(ownersView.lastUpdatedAt()).isNotNull();
+        assertThat(ownersView.importStatistics().totalRows()).isEqualTo(10);
     }
 
     @Test

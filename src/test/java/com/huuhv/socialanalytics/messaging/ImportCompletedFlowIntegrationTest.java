@@ -5,6 +5,7 @@ import com.huuhv.socialanalytics.dto.request.PostRequest;
 import com.huuhv.socialanalytics.entity.ImportHistory;
 import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.entity.UserImportStatistic;
+import com.huuhv.socialanalytics.enums.DashboardEventType;
 import com.huuhv.socialanalytics.enums.ImportStatus;
 import com.huuhv.socialanalytics.enums.Provider;
 import com.huuhv.socialanalytics.repository.ImportHistoryRepository;
@@ -15,6 +16,7 @@ import com.huuhv.socialanalytics.scheduler.ResendImportCompletedJob;
 import com.huuhv.socialanalytics.service.ImportHistoryService;
 import com.huuhv.socialanalytics.service.ImportStatisticsService;
 import com.huuhv.socialanalytics.service.PostUpsertService;
+import com.huuhv.socialanalytics.websocket.DashboardEventBroadcaster;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,6 +38,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -87,10 +91,16 @@ class ImportCompletedFlowIntegrationTest {
     @MockitoSpyBean
     private ImportHistoryService importHistoryService;
 
+    // Cùng bộ spy với ImportCompletedDlqIntegrationTest / DashboardEventFanOutIntegrationTest (dùng chung context)
+    @MockitoSpyBean
+    private DashboardEventBroadcaster dashboardEventBroadcaster;
+
     private User owner;
+    private Instant testStartedAt;
 
     @BeforeEach
     void setUp() {
+        testStartedAt = Instant.now();
         owner = userRepository.save(User.builder().displayName("Importer").build());
     }
 
@@ -118,6 +128,9 @@ class ImportCompletedFlowIntegrationTest {
             assertThat(history.getProcessedAt()).isNotNull();
         });
         verify(importStatisticsService).applyImport(importId, owner.getId());
+        // Sau khi thống kê commit: event IMPORT_PROCESSED chỉ cho owner, đi qua JMS topic tới WebSocket của instance này
+        verify(dashboardEventBroadcaster, timeout(WAIT_MS))
+                .sendToUsers(eq(DashboardEventType.IMPORT_PROCESSED), occurredInThisTest(), eq(List.of(owner.getId())));
     }
 
     @Test
@@ -134,6 +147,8 @@ class ImportCompletedFlowIntegrationTest {
         assertThat(userImportStatisticRepository.findById(owner.getId())).get()
                 .extracting(UserImportStatistic::getTotalImports, UserImportStatistic::getTotalRows)
                 .containsExactly(1L, 1L);
+        // Message trùng không cộng gì → không có event thứ 2
+        verify(dashboardEventBroadcaster, after(1_000).times(1)).sendToUsers(any(), occurredInThisTest(), any());
     }
 
     @Test
@@ -144,6 +159,7 @@ class ImportCompletedFlowIntegrationTest {
         });
 
         verify(importStatisticsService, after(1_500).never()).applyImport(anyLong(), any());
+        verify(dashboardEventBroadcaster, never()).sendToUsers(any(), occurredInThisTest(), any());
         assertThat(importHistoryRepository.count()).isZero();
         assertThat(userImportStatisticRepository.findById(owner.getId())).isEmpty();
     }
@@ -179,6 +195,14 @@ class ImportCompletedFlowIntegrationTest {
                         .containsExactly(1L, 3L, 1L));
         // Đã PROCESSED → lần chạy sau không gửi lại
         assertThat(resendImportCompletedJob.runOnce()).isEqualTo(new ResendImportCompletedJob.Summary(0, 0, 0));
+    }
+
+    /**
+     * Event của test trước có thể tới spy sau khi test đó kết thúc (gửi sau commit, đi qua JMS) — {@code occurredAt}
+     * được gán trong transaction, trước lúc test trước thấy dữ liệu đã commit, nên luôn sớm hơn lúc test này bắt đầu.
+     */
+    private Instant occurredInThisTest() {
+        return argThat(occurredAt -> occurredAt != null && !occurredAt.isBefore(testStartedAt));
     }
 
     private void awaitProcessed(long importId) {
