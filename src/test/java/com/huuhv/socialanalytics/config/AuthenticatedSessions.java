@@ -16,9 +16,10 @@ import java.util.Map;
 
 /**
  * Test trên Tomcat thật: tạo session đã đăng nhập OAuth2 ghi thẳng vào bảng session (như "instance khác" ghi) thay vì
- * chạy luồng OAuth2 với provider thật.
+ * chạy luồng OAuth2 với provider thật. Dùng chung cho các test trên Tomcat thật ({@code SessionPersistenceTest},
+ * {@code WebSocketSecurityIntegrationTest}, {@code EndToEndFlowTest}).
  */
-final class AuthenticatedSessions {
+public final class AuthenticatedSessions {
 
     private AuthenticatedSessions() {
     }
@@ -29,11 +30,11 @@ final class AuthenticatedSessions {
      * @param cookie cookie {@code SESSION=...} gửi kèm request
      * @param userId id user nội bộ (tên principal STOMP)
      */
-    record LoggedInSession(String cookie, long userId) {
+    public record LoggedInSession(String cookie, long userId) {
     }
 
     /** Tạo user mới + session đăng nhập của user đó. */
-    static LoggedInSession create(UserRepository userRepository, SessionRepository<? extends Session> sessionRepository) {
+    public static LoggedInSession create(UserRepository userRepository, SessionRepository<? extends Session> sessionRepository) {
         User user = userRepository.save(User.builder().displayName("Session test").build());
         AppOAuth2User principal = new AppOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
                 Map.of("id", "session-test-" + user.getId(), "name", "Session test"), "id", user.getId(),

@@ -129,6 +129,8 @@ docker compose up -d --build app     # Build lại image và chạy app sau khi 
 docker compose down                  # Dừng tất cả (thêm -v để xoá cả dữ liệu MySQL/Artemis)
 ```
 
+Integration test end-to-end `EndToEndFlowTest` chạy app trên Tomcat thật (cổng ngẫu nhiên) và đi qua toàn bộ luồng như người dùng: dashboard + tỷ giá SOAP → import Excel bài viết → JMS → thống kê → event WebSocket → job crawl metrics → import Excel metric → biểu đồ `/api/chart-data` → export 2 file Excel và đọc lại; user thứ 2 kiểm tra không nhận được event/dữ liệu của người khác. Chạy riêng: `./mvnw test -Dtest=EndToEndFlowTest` (cần Docker).
+
 Test repository (`@DataJpaTest`) chạy trên MySQL riêng do **Testcontainers** tạo (`TestcontainersConfiguration`, image `mysql:8.4`) — cần Docker đang chạy, không đọc/ghi vào DB dev. Container được tạo 1 lần và dùng chung cho các test class cùng cấu hình.
 
 ## Project Structure
