@@ -46,6 +46,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.unit.DataSize;
+import org.mockito.Mockito;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -240,13 +241,13 @@ class OwnershipIsolationTest {
      */
     @Test
     void otherUserCannotImportMetricsIntoOwnersPost() {
-        AppProperties properties = new AppProperties(new AppProperties.ImportSettings(10, DataSize.ofMegabytes(1)),
+        AppProperties properties = new AppProperties(new AppProperties.ImportSettings(10, DataSize.ofMegabytes(1), Duration.ZERO),
                 new AppProperties.ExportSettings(100, Duration.ZERO), null, null, null, null, null, null);
         SocialMetricImportService importService;
         try (ValidatorFactory validatorFactory = Validation.buildDefaultValidatorFactory()) {
             importService = new SocialMetricImportService(new ExcelImportSupport(new GenericExcelImporter(),
                     validatorFactory.getValidator(), properties), postService, socialMetricService,
-                    currentUserService, Clock.systemUTC());
+                    currentUserService, Mockito.mock(UserRateLimiter.class), properties, Clock.systemUTC());
             byte[] file = TestWorkbooks.xlsx(
                     new Object[]{"Provider", "External ID", "Likes", "Shares", "Comments", "Followers", "Collected At"},
                     new Object[]{"FACEBOOK", "fb-1", 999, 0, 0, 0, LocalDateTime.of(2026, 1, 2, 0, 0)});

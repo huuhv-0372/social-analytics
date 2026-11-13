@@ -1,5 +1,6 @@
 package com.huuhv.socialanalytics.service;
 
+import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.dto.request.PostImportRow;
 import com.huuhv.socialanalytics.dto.request.PostRequest;
 import com.huuhv.socialanalytics.dto.response.ImportResultResponse;
@@ -8,6 +9,7 @@ import com.huuhv.socialanalytics.excel.ExcelReadResult;
 import com.huuhv.socialanalytics.excel.ExcelRow;
 import com.huuhv.socialanalytics.excel.ExcelRowError;
 import com.huuhv.socialanalytics.exception.BadRequestException;
+import com.huuhv.socialanalytics.exception.TooManyRequestsException;
 import com.huuhv.socialanalytics.util.SocialUrlPolicy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,12 +31,17 @@ import java.util.Map;
  * <p>
  * Không có transaction bao cả method: parse + validate file chạy ngoài transaction ({@link ExcelImportSupport}), chỉ
  * bước ghi ({@link PostUpsertService#saveImport}) giữ connection DB.
+ * <p>
+ * Tần suất ({@code app.import.min-interval}, action {@value #RATE_LIMIT_ACTION} → 429) tính ngay trước bước ghi —
+ * mỗi lần ghi là 1 lần import (lịch sử + message JMS + thống kê); file bị từ chối cả file (sai định dạng, thiếu cột...)
+ * không tốn lượt, user sửa file rồi gửi lại ngay được.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class PostImportService {
 
+    static final String RATE_LIMIT_ACTION = "import-posts";
     // File mẫu (dữ liệu giả) — PostImportServiceTest đảm bảo file luôn import được, không lệch với PostImportRow
     private static final Resource TEMPLATE = new ClassPathResource("excel/posts-import-template.xlsx");
     private static final String PROVIDER_COLUMN = ExcelImportSupport.column(PostImportRow.class, "provider");
@@ -46,11 +53,14 @@ public class PostImportService {
     private final ExcelImportSupport excelImportSupport;
     private final PostUpsertService postUpsertService;
     private final CurrentUserService currentUserService;
+    private final UserRateLimiter userRateLimiter;
+    private final AppProperties appProperties;
     private final Clock clock;
 
     /**
      * @throws BadRequestException khi file rỗng, không phải .xlsx (đuôi hoặc nội dung), vượt dung lượng giải nén,
      *                             thiếu cột, không có dòng dữ liệu nào (chỉ có header) hoặc quá số dòng
+     * @throws TooManyRequestsException khi user vừa import bài viết trong vòng {@code app.import.min-interval}
      */
     public ImportResultResponse importPosts(MultipartFile file) {
         // Fail closed: kiểm tra owner trước khi parse (POI). Request ẩn danh đã bị SecurityConfig chặn từ filter chain,
@@ -65,6 +75,8 @@ public class PostImportService {
 
         List<ExcelRowError> errors = new ArrayList<>();
         List<PostRequest> validRows = validate(result.rows(), errors);
+        // Chặn tần suất ghi (OWASP A06): mỗi lần ghi tạo 1 lịch sử import + 1 message JMS, kể cả khi mọi dòng lỗi
+        userRateLimiter.acquire(RATE_LIMIT_ACTION, owner.getId(), appProperties.importSettings().minInterval());
         PostUpsertService.Result counts = postUpsertService.saveImport(owner, validRows, result.totalRows());
 
         int created = counts.created();

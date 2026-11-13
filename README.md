@@ -104,7 +104,7 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
    java -jar target/social-analytics-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev
    ```
 
-   JAR là file executable của Spring Boot (đã gồm mọi dependency, template, migration Flyway, `broker.properties`, file Excel mẫu). Chạy lệnh `java -jar` **tại thư mục gốc dự án** để app đọc được `.env` (`spring.config.import: optional:file:.env`) — chạy ở thư mục khác thì truyền biến môi trường trực tiếp. Không có `--spring.profiles.active=dev` là cấu hình production: Swagger tắt, endpoint SOAP mock tắt, broker Artemis phải là `native` (`docker compose up -d artemis`), cookie session `Secure` (cần HTTPS — chạy thử trên HTTP thì đặt `SESSION_COOKIE_SECURE=false`), dashboard hiện "Không lấy được tỷ giá" nếu không đặt `SOAP_MOCK_ENDPOINT_ENABLED=true` hoặc `SOAP_EXCHANGE_RATE_URL` tới dịch vụ SOAP khác.
+   JAR là file executable của Spring Boot (đã gồm mọi dependency, template, migration Flyway, `broker.properties`, file Excel mẫu). Chạy lệnh `java -jar` **tại thư mục gốc dự án** để app đọc được `.env` (`spring.config.import: optional:file:.env`) — chạy ở thư mục khác thì truyền biến môi trường trực tiếp. Không có `--spring.profiles.active=dev` là cấu hình production: Swagger tắt, endpoint SOAP mock tắt, broker Artemis phải là `native` (`docker compose up -d artemis`), cookie session `Secure` (cần HTTPS — chạy thử trên HTTP thì đặt `SESSION_COOKIE_SECURE=false`), tỷ giá **tắt** (dashboard hiện "Không lấy được tỷ giá") cho tới khi đặt `SOAP_EXCHANGE_RATE_URL` — tới dịch vụ SOAP khác, hoặc `http://localhost:8080/services` kèm `SOAP_MOCK_ENDPOINT_ENABLED=true` để dùng endpoint mock của chính app.
 
    Container `app` (cách A) mặc định chạy profile `dev` (`SPRING_PROFILES_ACTIVE` trong `.env`). Không bật `dev` thì Swagger UI bị tắt.
 
@@ -230,7 +230,7 @@ src/main/resources/
 | `config/OpenApiConfig` | Thông tin tài liệu OpenAPI (title, version); không khai security scheme — Swagger UI dùng session cookie sau khi đăng nhập OAuth2 |
 | `src/test/resources/application-test.yml` | Profile `test` chỉ dành cho test, không đóng gói vào JAR (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
 | `logback-spring.xml` | Log console + file theo ngày trong `logs/` (giữ 30 ngày), pattern kèm MDC `jobId` / `importId` |
-| `config/properties/AppProperties` | Bind cấu hình `app.*` (record + validation): `app.import.max-rows` / `max-uncompressed-size`, `app.export.max-rows` / `min-interval`, `app.token-encryption.key`, `app.async.social-crawler.*`, `app.jobs.*` (cron, timeout, khoá ShedLock), `app.oauth2.*` (timeout), `app.soap.exchange-rate.*` (URL, timeout, cặp tiền, cache) |
+| `config/properties/AppProperties` | Bind cấu hình `app.*` (record + validation): `app.import.max-rows` / `max-uncompressed-size` / `min-interval`, `app.export.max-rows` / `min-interval`, `app.token-encryption.key`, `app.async.social-crawler.*`, `app.jobs.*` (cron, timeout, khoá ShedLock), `app.oauth2.*` (timeout), `app.soap.exchange-rate.*` (URL, timeout, cặp tiền, cache, nạp sẵn lúc khởi động, giới hạn body endpoint mock) |
 | `.env` | Giá trị bí mật cho môi trường local — copy từ `.env.example` |
 | `docker-compose.yaml` | MySQL 8.4 + ActiveMQ Artemis + app, và service `maven` (JDK 25) để chạy lệnh Maven |
 | `src/main/resources/artemis/broker.properties` | Retry + DLQ của queue `import-completed` (6 lần giao, 2s ×2, tối đa 30s ≈ 1 phút → `DLQ.import-completed`; DLQ giao lại vô hạn khi lỗi DB, 5s ×2 tối đa 5 phút) và address multicast `dashboard-events` (event realtime cho dashboard) — nguồn duy nhất: broker Artemis của compose mount file này, broker embedded (dev/test) nạp từ classpath. Test ghi đè delay bằng `src/test/resources/artemis/broker-test.properties` |
@@ -256,7 +256,7 @@ src/main/resources/
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | ✅ | OAuth2 credentials (App ID / App Secret) từ Facebook Developers — xem Quick Start. Test dùng giá trị giả trong `application-test.yml` |
 | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | ✅ | OAuth 2.0 Client ID / Secret từ X Developer Portal — xem Quick Start. Test dùng giá trị giả |
 | `SOAP_MOCK_ENDPOINT_ENABLED` | — | Bật endpoint SOAP mock tỷ giá `/services/**` (public, không đăng nhập/CSRF — chỉ dữ liệu giả). Mặc định `false` (production); profile `dev` và container `app` của compose mặc định `true` |
-| `SOAP_EXCHANGE_RATE_URL` | — | Địa chỉ dịch vụ SOAP tỷ giá mà dashboard gọi (chỉ `http`/`https`). Mặc định `http://localhost:8080/services` = endpoint mock của chính app |
+| `SOAP_EXCHANGE_RATE_URL` | — | Địa chỉ dịch vụ SOAP tỷ giá mà dashboard gọi (chỉ `http`/`https`). Trống = **tắt** tỷ giá (không gọi SOAP). Production không có mặc định — endpoint mock tắt nên trỏ vào chính app chỉ bị chặn (CSRF); profile `dev` và container `app` của compose mặc định `http://localhost:8080/services` = endpoint mock của chính app |
 
 > Không commit bất kỳ secret nào. Nếu lỡ commit, **thu hồi/đổi secret ngay** — xem [SECURITY.md](.github/SECURITY.md).
 
@@ -340,6 +340,7 @@ File `.xlsx`, sheet đầu tiên, dòng 1 là header (không phân biệt hoa th
 | `FACEBOOK` / `TWITTER` | chữ, số, `_`, `-` (≤ 100) | https, đúng domain của provider | tuỳ chọn (≤ 5000) | tuỳ chọn — ô kiểu ngày hoặc `yyyy-MM-dd HH:mm:ss` |
 
 - Giới hạn: tối đa **5MB** (`spring.servlet.multipart.max-file-size`, vượt → 413) và **1000 dòng** (`app.import.max-rows`).
+- Mỗi user import cách nhau tối thiểu **10 giây** (`app.import.min-interval`, gọi sớm hơn → 429 kèm `Retry-After`; bucket riêng cho bài viết và metric). Chỉ tính lượt ở bước ghi: file bị từ chối cả file (sai định dạng, thiếu cột, không có dòng dữ liệu) không tốn lượt — sửa file rồi gửi lại ngay được.
 - Chỉ nhận `.xlsx` thật (kiểm tra cả nội dung); ô chứa công thức bị từ chối.
 - Ô ngày giờ trong Excel không có múi giờ → **Published At hiểu theo múi giờ của server** (biến `TZ` của JVM/container), cùng quy ước với file export; DB lưu giờ UTC.
 - Dòng lỗi trả về kèm số dòng, dòng hợp lệ vẫn được lưu. Bài đã có (cùng provider + External ID, không phân biệt hoa thường) được **cập nhật**.
@@ -380,10 +381,10 @@ File metric:
 
 | Provider | External ID | Likes | Shares | Comments | Followers | Collected At |
 |---|---|---|---|---|---|---|
-| `FACEBOOK` / `TWITTER` | bài viết **của bạn** (không phân biệt hoa thường) | số nguyên ≥ 0 | ≥ 0 | ≥ 0 | ≥ 0 | không ở tương lai — ô kiểu ngày hoặc `yyyy-MM-dd HH:mm:ss`, theo múi giờ server |
+| `FACEBOOK` / `TWITTER` | bài viết **của bạn** (không phân biệt hoa thường; chỉ chữ/số/`_`/`-` như External ID của bài) | số nguyên ≥ 0 | ≥ 0 | ≥ 0 | ≥ 0 | không ở tương lai — ô kiểu ngày hoặc `yyyy-MM-dd HH:mm:ss`, theo múi giờ server |
 
-- `POST /api/import-metrics`: mỗi dòng tạo 1 snapshot (snapshot là bản ghi theo thời gian, không cập nhật bản cũ). Bài không có trong các bài của bạn → lỗi `post not found`; trùng bài + Collected At trong file → lỗi ở dòng sau. Cùng giới hạn file / số dòng với import bài viết. Lưu xong → dashboard của bạn tự làm mới (event `METRICS_UPDATED`). Không tính vào "Import statistics" (thống kê đó chỉ cho import bài viết).
-- `GET /api/export-metrics?from=2026-11-01T00:00:00Z&to=2026-11-13T00:00:00Z` → `metrics-report-yyyyMMdd-HHmmss.xlsx`, cùng 7 cột → sửa rồi import lại được (import lại nguyên file sẽ tạo snapshot trùng). `from`/`to` tuỳ chọn, tính cả 2 đầu; tối đa 10000 dòng (vượt → 400, thu hẹp khoảng thời gian); tần suất như export báo cáo (bucket riêng).
+- `POST /api/import-metrics`: mỗi dòng tạo 1 snapshot (snapshot là bản ghi theo thời gian, không cập nhật bản cũ). Bài không có trong các bài của bạn → lỗi `post not found`; trùng bài + Collected At trong file → lỗi ở dòng sau; snapshot **đã có trong DB** (cùng bài, cùng Collected At tới mili giây — độ chính xác của ô Excel) → lỗi `snapshot already exists` ở cột Collected At, không ghi lại. Cùng giới hạn file / số dòng / tần suất với import bài viết (file không có snapshot nào cần ghi thì không tốn lượt). Lưu xong → dashboard của bạn tự làm mới (event `METRICS_UPDATED`). Không tính vào "Import statistics" (thống kê đó chỉ cho import bài viết).
+- `GET /api/export-metrics?from=2026-11-01T00:00:00Z&to=2026-11-13T00:00:00Z` → `metrics-report-yyyyMMdd-HHmmss.xlsx`, cùng 7 cột → sửa rồi import lại được (dòng không sửa Collected At bị báo `snapshot already exists`, không tạo trùng). `from`/`to` tuỳ chọn, tính cả 2 đầu; tối đa 10000 dòng (vượt → 400, thu hẹp khoảng thời gian — bị 400 **không** tốn lượt export, gửi lại ngay được); tần suất như export báo cáo (bucket riêng).
 
 ```bash
 curl -b "SESSION=$SESSION_ID; XSRF-TOKEN=$XSRF" -X POST http://localhost:8080/api/import-metrics \
@@ -439,10 +440,10 @@ curl -OJ -b "SESSION=$SESSION_ID" "http://localhost:8080/api/export-metrics?from
 App vừa **host** 1 endpoint SOAP mock (Spring-WS, contract-first từ `src/main/resources/xsd/exchange-rate.xsd`) vừa **gọi lại** nó bằng client `WebServiceGatewaySupport`. Class JAXB sinh tự động khi build (`./mvnw generate-sources` để sinh riêng) vào `target/generated-sources/jaxb` — không sửa tay, không commit.
 
 - Bật bằng `SOAP_MOCK_ENDPOINT_ENABLED=true` (profile `dev`, `test`, container `app` của compose đã bật). Tắt (mặc định production) thì `/services/**` thuộc chain bảo mật chính như mọi đường dẫn khác.
-- WSDL: `http://localhost:8080/services/exchangeRate.wsdl`. Endpoint public, stateless, không CSRF (chỉ trả dữ liệu giả, không có dữ liệu user) — ngoại lệ thứ 2 của deny-by-default, cạnh `/ws/**`.
+- WSDL: `http://localhost:8080/services/exchangeRate.wsdl`. Endpoint public, stateless, không CSRF (chỉ trả dữ liệu giả, không có dữ liệu user) — ngoại lệ thứ 2 của deny-by-default, cạnh `/ws/**`. Body request tối đa **16KB** (`app.soap.exchange-rate.mock-endpoint.max-request-size`, vượt → 413, kể cả request chunked): SAAJ đọc cả message vào bộ nhớ trước khi validate.
 - Tỷ giá giả: USD, EUR, GBP, JPY, VND; cùng 1 giờ cùng 1 số, mỗi giờ dao động ±0,5%. Cặp không hỗ trợ → SOAP Fault `Client` `Unsupported currency pair`; request sai XSD (mã tiền không phải 3 chữ in hoa...) → Fault `Client` `Validation error`; lỗi khác → Fault `Server` `Internal error`. Request có DOCTYPE / XML hỏng → 400 (chống XXE).
-- Client: URL `app.soap.exchange-rate.url`, connect timeout 2s / read timeout 3s, không theo redirect, validate response theo XSD + kiểm cặp tiền và `asOf`.
-- **Trên `/dashboard`:** card "Exchange rate" hiện `1 USD = … VND` (cặp tiền: `app.soap.exchange-rate.base-currency` / `quote-currency`) và thời điểm lấy theo múi giờ server. Tỷ giá được cache 10 phút (`cache-ttl`) mỗi instance; dịch vụ SOAP lỗi/timeout thì trang vẫn hiển thị bình thường — còn giá trị cũ thì hiện kèm nhãn **Dữ liệu cũ**, chưa từng lấy được thì hiện "Không lấy được tỷ giá"; sau 1 lần lỗi không gọi lại trong 1 phút (`retry-after-failure`) để trang không phải chờ timeout. Thử: chạy dev rồi đặt `SOAP_EXCHANGE_RATE_URL=http://localhost:9/services` (cổng không có dịch vụ) và khởi động lại → "Không lấy được tỷ giá".
+- Client: URL `app.soap.exchange-rate.url` (trống = tắt tỷ giá; production không có mặc định), connect timeout 2s / read timeout 3s, không theo redirect, validate response theo XSD + kiểm cặp tiền và `asOf`.
+- **Trên `/dashboard`:** card "Exchange rate" hiện `1 USD = … VND` (cặp tiền: `app.soap.exchange-rate.base-currency` / `quote-currency`) và thời điểm lấy theo múi giờ server. Tỷ giá được cache 10 phút (`cache-ttl`) mỗi instance; dịch vụ SOAP lỗi/timeout thì trang vẫn hiển thị bình thường — còn giá trị cũ thì hiện kèm nhãn **Dữ liệu cũ**, chưa từng lấy được thì hiện "Không lấy được tỷ giá"; sau 1 lần lỗi không gọi lại trong 1 phút (`retry-after-failure`) để trang không phải chờ timeout. Đang có request lấy tỷ giá thì request khác không chờ (dùng giá trị cũ, chưa có thì "Không lấy được tỷ giá"); app vừa sẵn sàng thì lấy sẵn 1 lần ở thread nền (`warm-up-on-startup`). Thử: chạy dev rồi đặt `SOAP_EXCHANGE_RATE_URL=http://localhost:9/services` (cổng không có dịch vụ) và khởi động lại → "Không lấy được tỷ giá".
 
 ```bash
 curl -s http://localhost:8080/services -H 'Content-Type: text/xml; charset=utf-8' -d '

@@ -10,6 +10,7 @@ import org.springframework.boot.webservices.client.WebServiceTemplateBuilder;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.ws.test.client.MockWebServiceServer;
 import org.springframework.xml.transform.StringSource;
+import org.springframework.util.unit.DataSize;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -54,7 +55,7 @@ class ExchangeRateSoapClientTest {
         AppProperties properties = new AppProperties(null, null, null, null, null, null, null,
                 new AppProperties.Soap(new AppProperties.ExchangeRate(url, Duration.ofSeconds(1), readTimeout,
                         "USD", "VND", Duration.ofMinutes(10), Duration.ofMinutes(1),
-                        new AppProperties.MockEndpoint(false))));
+                        new AppProperties.MockEndpoint(false, DataSize.ofKilobytes(16)), false)));
         try {
             return new WebServiceClientConfig().exchangeRateSoapClient(new WebServiceTemplateBuilder(), properties,
                     Clock.fixed(NOW, ZoneOffset.UTC));

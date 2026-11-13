@@ -35,6 +35,7 @@ import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import com.huuhv.socialanalytics.exception.TooManyRequestsException;
 
 import static com.huuhv.socialanalytics.excel.TestWorkbooks.xlsx;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -47,6 +48,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doThrow;
 
 @ExtendWith(MockitoExtension.class)
 class PostImportServiceTest {
@@ -66,6 +68,9 @@ class PostImportServiceTest {
     @Mock
     private ImportHistoryService importHistoryService;
 
+    @Mock
+    private UserRateLimiter userRateLimiter;
+
     private PostImportService postImportService;
 
     private final User owner = User.builder().id(OWNER_ID).email("owner@example.com").displayName("Owner").build();
@@ -78,17 +83,41 @@ class PostImportServiceTest {
     private PostImportService service(int maxRows) {
         Validator validator = VALIDATOR_FACTORY.getValidator();
         AppProperties properties = new AppProperties(
-                new AppProperties.ImportSettings(maxRows, DataSize.ofMegabytes(20)),
+                new AppProperties.ImportSettings(maxRows, DataSize.ofMegabytes(20), Duration.ZERO),
                 new AppProperties.ExportSettings(10000, Duration.ZERO),
                 // Service không dùng key mã hoá token / timeout OAuth2, thread pool, job, JMS
                 null, null, null, null, null, null);
         return new PostImportService(new ExcelImportSupport(new GenericExcelImporter(), validator, properties),
-                new PostUpsertService(postRepository, importHistoryService), currentUserService, CLOCK);
+                new PostUpsertService(postRepository, importHistoryService), currentUserService, userRateLimiter,
+                properties, CLOCK);
     }
 
     @AfterAll
     static void closeValidatorFactory() {
         VALIDATOR_FACTORY.close();
+    }
+
+    /** Import vượt tần suất → 429, không ghi bài / lịch sử import (không có message JMS). */
+    @Test
+    void rateLimitedImportWritesNothing() {
+        when(currentUserService.getCurrentUser()).thenReturn(owner);
+        doThrow(new TooManyRequestsException(Duration.ofSeconds(5)))
+                .when(userRateLimiter).acquire("import-posts", OWNER_ID, Duration.ZERO);
+        byte[] file = xlsx(HEADER, new Object[]{"FACEBOOK", "fb-1", "https://www.facebook.com/p/1", "a", null});
+
+        assertThatThrownBy(() -> postImportService.importPosts(upload(file)))
+                .isInstanceOf(TooManyRequestsException.class);
+        verifyNoInteractions(postRepository, importHistoryService);
+    }
+
+    /** File bị từ chối cả file (sai định dạng) không tốn lượt import — user sửa file rồi gửi lại ngay được. */
+    @Test
+    void rejectedFileDoesNotConsumeRateLimit() {
+        when(currentUserService.getCurrentUser()).thenReturn(owner);
+
+        assertThatThrownBy(() -> postImportService.importPosts(upload(xlsx(HEADER))))
+                .isInstanceOf(BadRequestException.class);
+        verifyNoInteractions(userRateLimiter);
     }
 
     @Test

@@ -30,6 +30,12 @@ public class ExchangeRateEndpoint {
 
     public static final String NAMESPACE = "urn:social-analytics:exchange-rate";
 
+    /**
+     * Tạo 1 lần (tìm implementation qua ServiceLoader mỗi lần gọi {@code newDefaultInstance}); factory không giữ trạng
+     * thái, dùng chung giữa các thread chỉ để tạo calendar mới.
+     */
+    private static final DatatypeFactory DATATYPE_FACTORY = DatatypeFactory.newDefaultInstance();
+
     private final MockExchangeRateService mockExchangeRateService;
 
     @PayloadRoot(namespace = NAMESPACE, localPart = "GetExchangeRateRequest")
@@ -40,8 +46,9 @@ public class ExchangeRateEndpoint {
         response.setBaseCurrency(quote.baseCurrency());
         response.setQuoteCurrency(quote.quoteCurrency());
         response.setRate(quote.rate());
-        // Instant.toString() là ISO-8601 UTC có "Z" → xs:dateTime luôn kèm múi giờ
-        response.setAsOf(DatatypeFactory.newDefaultInstance().newXMLGregorianCalendar(quote.asOf().toString()));
+        // Instant.toString() là ISO-8601 UTC có "Z" → xs:dateTime luôn kèm múi giờ, không thêm phần lẻ ".000" thừa
+        // (GregorianCalendar luôn mang mili giây) — giữ nguyên định dạng client đang nhận
+        response.setAsOf(DATATYPE_FACTORY.newXMLGregorianCalendar(quote.asOf().toString()));
         return response;
     }
 }

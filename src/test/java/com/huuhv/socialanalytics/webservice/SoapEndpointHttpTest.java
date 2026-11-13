@@ -15,6 +15,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.webservices.client.WebServiceTemplateBuilder;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.util.unit.DataSize;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -24,6 +25,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -108,6 +111,40 @@ class SoapEndpointHttpTest {
                 .doesNotContain("Servlet.service()");
     }
 
+    /**
+     * Endpoint public + SAAJ đọc cả message vào bộ nhớ trước khi validate → body vượt
+     * {@code mock-endpoint.max-request-size} (16KB) bị chặn 413 trước khi tới servlet, không lộ chi tiết.
+     */
+    @Test
+    void oversizedBodyIsRejectedBeforeParsing(CapturedOutput output) throws Exception {
+        String padding = "<!--" + "x".repeat(20 * 1024) + "-->";
+
+        HttpResponse<String> response = postSoap(envelope("", rateRequest("USD") + padding));
+
+        assertThat(response.statusCode()).isEqualTo(413);
+        assertThat(response.body()).isEmpty();
+        assertThat(output).contains("bytes exceeds 16384 bytes").doesNotContain("xxxxxxxxxx");
+    }
+
+    /** Không khai báo Content-Length (chunked) → bị chặn khi đang đọc, vẫn 413, không 500 / stack trace. */
+    @Test
+    void oversizedChunkedBodyIsRejectedWhileReading(CapturedOutput output) throws Exception {
+        byte[] xml = envelope("", rateRequest("USD") + "<!--" + "x".repeat(64 * 1024) + "-->")
+                .getBytes(StandardCharsets.UTF_8);
+        HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/services"))
+                .header("Content-Type", "text/xml; charset=utf-8")
+                .header("SOAPAction", "\"\"")
+                // ofInputStream không biết độ dài → HttpClient gửi chunked
+                .POST(HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(xml)))
+                .build();
+
+        HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+
+        assertThat(response.statusCode()).isEqualTo(413);
+        assertThat(response.body()).isEmpty();
+        assertThat(output).contains("Rejected request body: more than 16384 bytes");
+    }
+
     @Test
     void malformedXmlIsBadRequest() throws Exception {
         assertThat(postSoap("<soapenv:Envelope").statusCode()).isEqualTo(400);
@@ -119,7 +156,7 @@ class SoapEndpointHttpTest {
                 new AppProperties.Soap(new AppProperties.ExchangeRate(
                         URI.create("http://localhost:" + port + "/services"), Duration.ofSeconds(2),
                         Duration.ofSeconds(3), "USD", "VND", Duration.ofMinutes(10), Duration.ofMinutes(1),
-                        new AppProperties.MockEndpoint(true))));
+                        new AppProperties.MockEndpoint(true, DataSize.ofKilobytes(16)), false)));
 
         ExchangeRateQuote quote = new WebServiceClientConfig()
                 .exchangeRateSoapClient(new WebServiceTemplateBuilder(), properties, clock)

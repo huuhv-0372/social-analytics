@@ -184,6 +184,10 @@ app:
     max-rows: 1000
     # Tổng dung lượng sau giải nén của file .xlsx — chặn file nén cao (zip bomb) làm tràn heap
     max-uncompressed-size: 20MB
+    # Khoảng cách tối thiểu giữa 2 lần import của cùng 1 user, tính riêng cho bài viết và metric — gọi sớm hơn trả
+    # 429 (0 = tắt). Chỉ tính lượt ở bước ghi: file bị từ chối cả file (sai định dạng, thiếu cột...) và file metric
+    # không có snapshot nào cần ghi thì không tốn lượt
+    min-interval: 10s
   export:
     # Số dòng tối đa mỗi báo cáo export Excel — vượt thì trả 400
     max-rows: 10000
@@ -218,9 +222,11 @@ app:
       - classpath:artemis/broker.properties
   soap:
     exchange-rate:
-      # Endpoint SOAP tỷ giá mà client (client/soap/ExchangeRateSoapClient) gọi — mặc định là endpoint mock của chính
-      # app. Chỉ http/https, không chứa user:password. Container app của compose gọi chính nó qua localhost:8080.
-      url: ${SOAP_EXCHANGE_RATE_URL:http://localhost:8080/services}
+      # Endpoint SOAP tỷ giá mà client (client/soap/ExchangeRateSoapClient) gọi. Chỉ http/https, không chứa
+      # user:password. Trống = TẮT tỷ giá (không gọi SOAP, dashboard báo không có tỷ giá) — production không có mặc định
+      # trỏ vào chính app vì endpoint mock tắt: client sẽ bị chain chính chặn (CSRF) mỗi phút. Dev/test và container
+      # app của compose đặt url của endpoint mock (http://localhost:8080/services)
+      url: ${SOAP_EXCHANGE_RATE_URL:}
       # Timeout gọi SOAP (OWASP A10): dịch vụ treo không giữ thread request của dashboard lâu
       connect-timeout: 2s
       read-timeout: 3s
@@ -231,11 +237,15 @@ app:
       cache-ttl: 10m
       # Gọi lỗi → không thử lại trong khoảng này, dashboard hiện giá trị cũ (nếu có) mà không phải chờ timeout
       retry-after-failure: 1m
+      # Lấy sẵn tỷ giá ở thread nền khi app sẵn sàng → lần tải dashboard đầu tiên không phải chờ SOAP
+      warm-up-on-startup: true
       mock-endpoint:
         # Endpoint mock /services/** + WSDL: public (không đăng nhập, không CSRF — chỉ trả dữ liệu giả) nên mặc định
         # TẮT ở production. Dev/test bật; container app của compose đặt SOAP_MOCK_ENDPOINT_ENABLED=true.
-        # Tắt mà vẫn để url trỏ vào chính app → không lấy được tỷ giá
         enabled: ${SOAP_MOCK_ENDPOINT_ENABLED:false}
+        # Body tối đa của request /services/** (public): SAAJ đọc cả message vào bộ nhớ trước khi validate XSD →
+        # chặn request lớn trước (413). Request hợp lệ chỉ vài trăm byte
+        max-request-size: 16KB
   jobs:
     update-metrics:
       # Crawl metrics mọi tài khoản (UpdateSocialMetricsJob). Cron Spring 6 trường: giây phút giờ ngày tháng thứ.

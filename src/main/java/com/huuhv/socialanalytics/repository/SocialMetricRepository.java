@@ -65,6 +65,52 @@ public interface SocialMetricRepository extends JpaRepository<SocialMetric, Long
                                                Limit limit);
 
     /**
+     * Số snapshot {@link #findReportRows} sẽ trả về, đếm tối đa {@code maxCount} (dừng sớm, không sắp xếp): kiểm tra
+     * giới hạn dòng của export trước khi tính tần suất và trước câu query có filesort. Chi phí ≤ {@code maxCount} lần
+     * đọc index, không phụ thuộc tổng số snapshot của user. Cùng điều kiện lọc với {@link #findReportRows} — sửa 1 câu
+     * thì sửa cả 2.
+     */
+    @Query(value = """
+            SELECT COUNT(*) FROM (
+                SELECT 1 FROM social_metrics m
+                JOIN posts p ON p.id = m.post_id
+                WHERE p.user_id = :userId
+                  AND (:from IS NULL OR m.collected_at >= :from)
+                  AND (:to IS NULL OR m.collected_at <= :to)
+                LIMIT :maxCount
+            ) AS matched
+            """, nativeQuery = true)
+    long countReportRowsUpTo(@Param("userId") Long userId,
+                             @Param("from") LocalDateTime from,
+                             @Param("to") LocalDateTime to,
+                             @Param("maxCount") int maxCount);
+
+    /**
+     * Vị trí (đánh từ 1, theo thứ tự trong mảng) của các snapshot <b>đã có</b> trong DB, trong danh sách ứng viên
+     * {@code snapshotsJson} = mảng JSON {@code [{"postId": 1, "from": "yyyy-MM-dd HH:mm:ss.SSSSSS", "to": "..."}]} —
+     * snapshot trùng khi cùng bài và {@code collected_at} thuộc {@code [from, to)} (giờ UTC). 1 query cho cả danh sách:
+     * {@code JSON_TABLE} (MySQL 8) dựng bảng tạm, mỗi ứng viên 1 lần tra range trên
+     * {@code idx_social_metrics_post_collected (post_id, collected_at)}.
+     * <p>
+     * JSON do Service dựng từ id bài đã kiểm tra quyền sở hữu + giờ đã parse (không có chuỗi người dùng nhập) và vẫn
+     * truyền dạng tham số bind.
+     */
+    @Query(value = """
+            SELECT candidate.idx
+            FROM JSON_TABLE(:snapshotsJson, '$[*]' COLUMNS (
+                    idx FOR ORDINALITY,
+                    post_id BIGINT PATH '$.postId',
+                    collected_from DATETIME(6) PATH '$.from',
+                    collected_to DATETIME(6) PATH '$.to')) AS candidate
+            WHERE EXISTS (
+                SELECT 1 FROM social_metrics m
+                WHERE m.post_id = candidate.post_id
+                  AND m.collected_at >= candidate.collected_from
+                  AND m.collected_at < candidate.collected_to)
+            """, nativeQuery = true)
+    List<Number> findExistingSnapshotPositions(@Param("snapshotsJson") String snapshotsJson);
+
+    /**
      * Metric theo provider của các bài thuộc user tại <b>từng</b> mốc trong {@code dayEndsJson} — 1 query cho cả biểu đồ
      * (thay vì 1 query/ngày). Tại mỗi mốc (giờ UTC, không tính snapshot đúng bằng mốc), mỗi bài lấy snapshot mới nhất có
      * {@code collected_at < mốc} (2 snapshot cùng thời điểm → id lớn hơn); bài chưa có snapshot trước mốc bị bỏ qua

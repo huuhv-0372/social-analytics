@@ -21,7 +21,9 @@ import java.util.List;
 /**
  * Export snapshot metric của user đang đăng nhập ra .xlsx (model thứ 2 dùng chung exporter generic với báo cáo bài
  * viết). Cùng giới hạn với {@link PostReportService}: {@code app.export.max-rows} (vượt → 400) và tần suất
- * {@code app.export.min-interval} (bucket riêng, action {@value #RATE_LIMIT_ACTION} → 429).
+ * {@code app.export.min-interval} (bucket riêng, action {@value #RATE_LIMIT_ACTION} → 429). Khác báo cáo bài viết
+ * (số dòng = số bài, cố định), số snapshot tăng theo thời gian và phụ thuộc from/to → giới hạn dòng được kiểm tra bằng
+ * câu đếm rẻ <b>trước</b> khi tính tần suất: bị 400 vì khoảng quá rộng không tốn lượt export.
  * <p>
  * Cố ý không đặt {@code @Transactional}: dữ liệu đọc trong transaction read-only của
  * {@link SocialMetricService#findReportRows}, file được ghi sau đó (lúc controller stream response) nên không giữ
@@ -54,16 +56,22 @@ public class SocialMetricReportService {
         }
         User owner = currentUserService.getCurrentUser();
         AppProperties.ExportSettings settings = appProperties.exportSettings();
+        int maxRows = settings.maxRows();
+        LocalDateTime fromUtc = UtcDateTimes.toUtc(from);
+        LocalDateTime toUtc = UtcDateTimes.toUtc(to);
+        // Kiểm tra giới hạn dòng TRƯỚC khi tính tần suất: khoảng quá rộng → 400 mà không tốn lượt export, user thu hẹp
+        // from/to rồi gửi lại ngay không bị 429. Câu đếm rẻ (dừng ở maxRows + 1, không sắp xếp) nên không cần chặn
+        // tần suất; câu query có filesort bên dưới chỉ chạy khi số dòng nằm trong giới hạn.
+        if (socialMetricService.countReportRowsUpTo(owner.getId(), fromUtc, toUtc, maxRows + 1) > maxRows) {
+            throw tooManyRows(owner.getId(), maxRows);
+        }
         // Chặn tần suất trước khi chạy query + dựng file (OWASP A06)
         userRateLimiter.acquire(RATE_LIMIT_ACTION, owner.getId(), settings.minInterval());
-        int maxRows = settings.maxRows();
-        // Lấy dư 1 dòng để biết có vượt giới hạn hay không mà không cần thêm câu COUNT
-        List<SocialMetricReportRow> rows = socialMetricService.findReportRows(owner.getId(), UtcDateTimes.toUtc(from),
-                UtcDateTimes.toUtc(to), maxRows + 1);
+        // Vẫn lấy dư 1 dòng: snapshot mới có thể được ghi giữa câu đếm và câu này
+        List<SocialMetricReportRow> rows = socialMetricService.findReportRows(owner.getId(), fromUtc, toUtc,
+                maxRows + 1);
         if (rows.size() > maxRows) {
-            log.warn("User {} metrics export rejected: more than {} rows", owner.getId(), maxRows);
-            throw new BadRequestException("Report exceeds the maximum of " + maxRows
-                    + " rows — narrow the from/to range");
+            throw tooManyRows(owner.getId(), maxRows);
         }
 
         // DB lưu giờ UTC; ô Excel không có múi giờ → ghi theo múi giờ của server (file import hiểu cùng quy ước)
@@ -76,5 +84,11 @@ public class SocialMetricReportService {
             // Audit (OWASP A09): ai export, bao nhiêu dòng — ghi sau khi file đã ghi xong
             log.info("User {} exported metrics report: rows={}", ownerId, localRows.size());
         });
+    }
+
+    private static BadRequestException tooManyRows(Long ownerId, int maxRows) {
+        log.warn("User {} metrics export rejected: more than {} rows", ownerId, maxRows);
+        return new BadRequestException("Report exceeds the maximum of " + maxRows
+                + " rows — narrow the from/to range");
     }
 }

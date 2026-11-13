@@ -38,6 +38,10 @@ app:
       mock-endpoint:
         # Test chạy cả endpoint mock (chain bảo mật riêng /services/**) để kiểm tra như dev/compose
         enabled: true
+      # Như dev: client trỏ vào endpoint mock (test cần Tomcat thật thì tự đổi sang cổng ngẫu nhiên)
+      url: http://localhost:8080/services
+      # Context test không có server ở localhost:8080 → không gọi lúc khởi động (chỉ sinh log lỗi + backoff)
+      warm-up-on-startup: false
   jms:
     # File chính + file ghi đè của test (giao lại sau 100ms để test retry → DLQ không phải chờ vài giây)
     embedded-broker-properties:

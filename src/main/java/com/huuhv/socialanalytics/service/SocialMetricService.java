@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -39,8 +40,9 @@ public class SocialMetricService {
     private static final Set<String> SORTABLE_PROPERTIES = Set.of("collectedAt", "likes", "shares", "comments", "followers");
     private static final Sort DEFAULT_SORT = Sort.by(Sort.Direction.DESC, "collectedAt");
     private static final String RESOURCE = "Metric";
-    /** Định dạng DATETIME(6) MySQL đọc được trong JSON_TABLE. */
-    private static final DateTimeFormatter DAY_END_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+    /** Định dạng DATETIME(6) MySQL đọc được trong JSON_TABLE (mốc ngày của biểu đồ, khoảng thời gian snapshot). */
+    private static final DateTimeFormatter MYSQL_DATETIME_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
 
     private final SocialMetricRepository socialMetricRepository;
     private final PostService postService;
@@ -74,6 +76,10 @@ public class SocialMetricService {
         return SocialMetricResponse.from(findOwnedMetric(id));
     }
 
+    /**
+     * Thêm 1 snapshot cho bài của user hiện tại; dashboard của owner được báo làm mới ({@code METRICS_UPDATED}, gửi sau
+     * commit) như khi snapshot đến từ job crawl hay import Excel.
+     */
     @Transactional
     public SocialMetricResponse create(SocialMetricRequest request) {
         Post post = postService.getOwnedPost(request.postId());
@@ -85,17 +91,14 @@ public class SocialMetricService {
                 .followers(request.followers())
                 .collectedAt(UtcDateTimes.toUtc(request.collectedAt()))
                 .build());
+        dashboardEventService.metricsUpdated(Set.of(post.getUser().getId()));
         return SocialMetricResponse.from(saved);
     }
 
     /**
      * Lưu kết quả crawl của 1 tài khoản: snapshot mới cho từng bài + {@code last_updated_at} của tài khoản trong
      * <b>cùng 1 transaction</b> — lỗi giữa chừng thì không lưu gì, lần chạy sau làm lại (không có trạng thái nửa vời).
-     * <p>
-     * Bài bị xoá trong lúc crawl (API gọi ngoài transaction) được bỏ qua, không làm hỏng snapshot của các bài còn lại:
-     * bài còn tồn tại bị khoá chia sẻ trước khi ghi ({@link PostService#lockExistingIds}) nên không thể bị xoá xen giữa
-     * → INSERT không vi phạm khoá ngoại. Ghi bằng INSERT nhiều dòng ({@link SocialMetricRepository#insertAll}), không
-     * qua {@code saveAll} (1 câu INSERT/snapshot vì id {@code IDENTITY}).
+     * Bài bị xoá trong lúc crawl (API gọi ngoài transaction) được bỏ qua — xem {@link #insertForExistingPosts}.
      *
      * @param metrics      số liệu đã được validate (bài thuộc tài khoản, giá trị không âm)
      * @param collectedAt  thời điểm lấy số liệu, giờ UTC (như snapshot nhập qua API — {@link UtcDateTimes})
@@ -105,25 +108,15 @@ public class SocialMetricService {
     @Transactional
     public int recordSnapshots(Long accountId, List<CrawledMetric> metrics, LocalDateTime collectedAt,
                                LocalDateTime updatedAtUtc) {
-        Set<Long> existingPostIds = postService.lockExistingIds(metrics.stream().map(CrawledMetric::postId).toList());
-        List<SocialMetric> snapshots = metrics.stream()
-                .filter(metric -> existingPostIds.contains(metric.postId()))
-                .map(metric -> SocialMetric.builder()
-                        .post(postService.getReference(metric.postId()))
-                        .likes(metric.likes())
-                        .shares(metric.shares())
-                        .comments(metric.comments())
-                        .followers(metric.followers())
-                        .collectedAt(collectedAt)
-                        .build())
-                .toList();
-        if (snapshots.size() < metrics.size()) {
-            log.info("Account {}: skipped {} snapshots of posts deleted while crawling", accountId,
-                    metrics.size() - snapshots.size());
+        Inserted inserted = insertForExistingPosts(metrics.stream()
+                .map(metric -> new NewSnapshot(metric.postId(), metric.likes(), metric.shares(), metric.comments(),
+                        metric.followers(), collectedAt))
+                .toList());
+        if (inserted.skipped() > 0) {
+            log.info("Account {}: skipped {} snapshots of posts deleted while crawling", accountId, inserted.skipped());
         }
-        int saved = socialMetricRepository.insertAll(snapshots);
         socialAccountService.markMetricsUpdated(accountId, updatedAtUtc);
-        return saved;
+        return inserted.saved();
     }
 
     /**
@@ -131,10 +124,8 @@ public class SocialMetricService {
      * ({@code METRICS_UPDATED}, gửi sau commit — rollback thì không có event).
      * <p>
      * {@code postId} của mọi request phải là bài của owner, đã tra bằng {@link PostService#findOwnedPostRefs} (không từ
-     * client). Bài bị xoá giữa lúc đọc file và lúc ghi được bỏ qua: bài còn tồn tại bị khoá chia sẻ
-     * ({@link PostService#lockExistingIds}) nên không bị xoá xen giữa → INSERT không vi phạm khoá ngoại. Ghi bằng
-     * INSERT nhiều dòng ({@link SocialMetricRepository#insertAll}). Không đổi {@code social_accounts.last_updated_at}
-     * (mốc đó chỉ dành cho job crawl).
+     * client). Bài bị xoá giữa lúc đọc file và lúc ghi được bỏ qua — xem {@link #insertForExistingPosts}. Không đổi
+     * {@code social_accounts.last_updated_at} (mốc đó chỉ dành cho job crawl).
      *
      * @param snapshots request đã validate (cùng quy tắc với {@link #create})
      * @return số snapshot đã lưu
@@ -144,24 +135,15 @@ public class SocialMetricService {
         if (snapshots.isEmpty()) {
             return 0;
         }
-        Set<Long> existingPostIds = postService.lockExistingIds(
-                snapshots.stream().map(SocialMetricRequest::postId).distinct().toList());
-        List<SocialMetric> rows = snapshots.stream()
-                .filter(request -> existingPostIds.contains(request.postId()))
-                .map(request -> SocialMetric.builder()
-                        .post(postService.getReference(request.postId()))
-                        .likes(request.likes())
-                        .shares(request.shares())
-                        .comments(request.comments())
-                        .followers(request.followers())
-                        .collectedAt(UtcDateTimes.toUtc(request.collectedAt()))
-                        .build())
-                .toList();
-        if (rows.size() < snapshots.size()) {
+        Inserted inserted = insertForExistingPosts(snapshots.stream()
+                .map(request -> new NewSnapshot(request.postId(), request.likes(), request.shares(), request.comments(),
+                        request.followers(), UtcDateTimes.toUtc(request.collectedAt())))
+                .toList());
+        if (inserted.skipped() > 0) {
             log.info("User {}: skipped {} imported snapshots of posts deleted during import", ownerId,
-                    snapshots.size() - rows.size());
+                    inserted.skipped());
         }
-        int saved = socialMetricRepository.insertAll(rows);
+        int saved = inserted.saved();
         if (saved > 0) {
             dashboardEventService.metricsUpdated(Set.of(ownerId));
         }
@@ -181,6 +163,42 @@ public class SocialMetricService {
     }
 
     /**
+     * Số dòng {@link #findReportRows} sẽ trả về với cùng điều kiện, đếm tối đa {@code maxCount} — rẻ (không sắp xếp,
+     * dừng khi đủ) nên chạy được trước khi tính tần suất export. Xem {@link SocialMetricRepository#countReportRowsUpTo}.
+     */
+    @Transactional(readOnly = true)
+    public long countReportRowsUpTo(Long ownerId, LocalDateTime fromUtc, LocalDateTime toUtc, int maxCount) {
+        return socialMetricRepository.countReportRowsUpTo(ownerId, fromUtc, toUtc, maxCount);
+    }
+
+    /**
+     * Snapshot nào trong {@code snapshots} đã có trong DB: cùng bài và cùng {@code collectedAt} tới <b>mili giây</b>
+     * (ô ngày giờ Excel chỉ giữ tới mili giây, DB lưu micro giây — file export import lại vẫn được nhận ra là trùng).
+     * 1 query cho cả danh sách ({@link SocialMetricRepository#findExistingSnapshotPositions}).
+     *
+     * @param snapshots request đã validate, {@code postId} là bài của owner đã tra từ DB (không từ client)
+     * @return vị trí (từ 0) trong {@code snapshots} của các snapshot đã tồn tại
+     */
+    @Transactional(readOnly = true)
+    public Set<Integer> findExistingSnapshotIndexes(List<SocialMetricRequest> snapshots) {
+        if (snapshots.isEmpty()) {
+            return Set.of();
+        }
+        // Mảng JSON cho JSON_TABLE — chỉ có id bài (Long) và giờ do server định dạng, vẫn bind dạng tham số
+        String snapshotsJson = snapshots.stream()
+                .map(snapshot -> {
+                    LocalDateTime from = UtcDateTimes.toUtc(snapshot.collectedAt()).truncatedTo(ChronoUnit.MILLIS);
+                    return "{\"postId\":" + snapshot.postId()
+                            + ",\"from\":\"" + MYSQL_DATETIME_FORMAT.format(from)
+                            + "\",\"to\":\"" + MYSQL_DATETIME_FORMAT.format(from.plus(1, ChronoUnit.MILLIS)) + "\"}";
+                })
+                .collect(Collectors.joining(",", "[", "]"));
+        return socialMetricRepository.findExistingSnapshotPositions(snapshotsJson).stream()
+                .map(position -> position.intValue() - 1)
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
+    /**
      * Metric theo provider của các bài thuộc {@code userId} tại từng mốc (giờ UTC), 1 query cho mọi mốc — xem
      * {@link SocialMetricRepository#sumLatestByProviderPerDay}. Caller chịu trách nhiệm {@code userId} là owner đang
      * đăng nhập.
@@ -194,21 +212,67 @@ public class SocialMetricService {
         }
         // Mảng JSON cho JSON_TABLE, dựng từ LocalDateTime do server tính (không có input người dùng) và vẫn bind tham số
         String dayEndsJson = dayEndsUtc.stream()
-                .map(dayEnd -> '"' + DAY_END_FORMAT.format(dayEnd) + '"')
+                .map(dayEnd -> '"' + MYSQL_DATETIME_FORMAT.format(dayEnd) + '"')
                 .collect(Collectors.joining(",", "[", "]"));
         return socialMetricRepository.sumLatestByProviderPerDay(userId, dayEndsJson);
     }
 
+    /** Xoá 1 snapshot của user hiện tại; dashboard của owner được báo làm mới (sau commit) như khi thêm. */
     @Transactional
     public void delete(Long id) {
-        SocialMetric metric = findOwnedMetric(id);
+        Long userId = currentUserService.getCurrentUser().getId();
+        SocialMetric metric = findOwnedMetric(id, userId);
         socialMetricRepository.delete(metric);
+        dashboardEventService.metricsUpdated(Set.of(userId));
         log.info("Deleted metric {} of post {}", id, metric.getPost().getId());
     }
 
     private SocialMetric findOwnedMetric(Long id) {
-        Long userId = currentUserService.getCurrentUser().getId();
+        return findOwnedMetric(id, currentUserService.getCurrentUser().getId());
+    }
+
+    private SocialMetric findOwnedMetric(Long id, Long userId) {
         return socialMetricRepository.findByIdAndPostUserId(id, userId)
                 .orElseThrow(() -> new ResourceNotFoundException(RESOURCE));
+    }
+
+    /**
+     * Phần ghi dùng chung của job crawl ({@link #recordSnapshots}) và import Excel ({@link #importSnapshots}); gọi trong
+     * transaction của caller. Bài bị xoá trong lúc crawl/đọc file được bỏ qua, không làm hỏng snapshot của các bài còn
+     * lại: bài còn tồn tại bị khoá chia sẻ trước khi ghi ({@link PostService#lockExistingIds}) nên không thể bị xoá xen
+     * giữa → INSERT không vi phạm khoá ngoại. Ghi bằng INSERT nhiều dòng ({@link SocialMetricRepository#insertAll}),
+     * không qua {@code saveAll} (1 câu INSERT/snapshot vì id {@code IDENTITY}).
+     */
+    private Inserted insertForExistingPosts(List<NewSnapshot> snapshots) {
+        if (snapshots.isEmpty()) {
+            return new Inserted(0, 0);
+        }
+        Set<Long> existingPostIds = postService.lockExistingIds(
+                snapshots.stream().map(NewSnapshot::postId).distinct().toList());
+        List<SocialMetric> rows = snapshots.stream()
+                .filter(snapshot -> existingPostIds.contains(snapshot.postId()))
+                .map(snapshot -> SocialMetric.builder()
+                        .post(postService.getReference(snapshot.postId()))
+                        .likes(snapshot.likes())
+                        .shares(snapshot.shares())
+                        .comments(snapshot.comments())
+                        .followers(snapshot.followers())
+                        .collectedAt(snapshot.collectedAtUtc())
+                        .build())
+                .toList();
+        int saved = socialMetricRepository.insertAll(rows);
+        return new Inserted(saved, snapshots.size() - rows.size());
+    }
+
+    /** Snapshot chờ ghi, đã validate; {@code collectedAtUtc} là giờ UTC ({@link UtcDateTimes}). */
+    private record NewSnapshot(Long postId, long likes, long shares, long comments, long followers,
+                               LocalDateTime collectedAtUtc) {
+    }
+
+    /**
+     * @param saved   số snapshot thực sự đã lưu
+     * @param skipped số snapshot bỏ qua vì bài đã bị xoá
+     */
+    private record Inserted(int saved, int skipped) {
     }
 }

@@ -48,8 +48,10 @@ public record AppProperties(
      * Dịch vụ tỷ giá SOAP ({@code app.soap.exchange-rate.*}): client {@code ExchangeRateSoapClient} gọi {@code url};
      * endpoint mock của chính app ({@code webservice/ExchangeRateEndpoint}) chỉ chạy khi bật {@code mockEndpoint}.
      *
-     * @param url            địa chỉ endpoint SOAP (http/https, không chứa thông tin đăng nhập) — mặc định trỏ vào
-     *                       endpoint mock của chính app
+     * @param url            địa chỉ endpoint SOAP (http/https, không chứa thông tin đăng nhập); không đặt / trống =
+     *                       <b>tắt</b> tỷ giá (không gọi SOAP, dashboard báo không có tỷ giá). Không có mặc định trỏ
+     *                       vào chính app: production tắt endpoint mock, client gọi vào đó chỉ bị chain chính chặn
+     *                       (CSRF) — dev/test/compose tự đặt url của endpoint mock
      * @param connectTimeout timeout mở kết nối (OWASP A10 — dịch vụ ngoài treo không giữ thread request)
      * @param readTimeout    timeout chờ response
      * @param baseCurrency   cặp tỷ giá hiển thị trên dashboard: 1 {@code baseCurrency} = ? {@code quoteCurrency}
@@ -58,16 +60,24 @@ public record AppProperties(
      * @param retryAfterFailure sau 1 lần gọi lỗi, không gọi lại trong khoảng này (dashboard không phải chờ timeout
      *                       mỗi lần tải trang khi dịch vụ đang hỏng); {@code 0} = thử lại ngay lần sau
      * @param mockEndpoint   endpoint mock {@code /services/**} (public, không CSRF) — mặc định tắt
+     * @param warmUpOnStartup lấy sẵn tỷ giá (bất đồng bộ) khi app sẵn sàng, để lần tải dashboard đầu tiên không phải
+     *                       chờ SOAP; test tắt (không có server ở địa chỉ cấu hình)
      */
     public record ExchangeRate(
-            @NotNull @DefaultValue("http://localhost:8080/services") URI url,
+            URI url,
             @NotNull @DefaultValue("2s") Duration connectTimeout,
             @NotNull @DefaultValue("3s") Duration readTimeout,
             @NotNull @Pattern(regexp = "[A-Z]{3}") @DefaultValue("USD") String baseCurrency,
             @NotNull @Pattern(regexp = "[A-Z]{3}") @DefaultValue("VND") String quoteCurrency,
             @NotNull @DefaultValue("10m") Duration cacheTtl,
             @NotNull @DefaultValue("1m") Duration retryAfterFailure,
-            @Valid @DefaultValue MockEndpoint mockEndpoint) {
+            @Valid @DefaultValue MockEndpoint mockEndpoint,
+            @DefaultValue("true") boolean warmUpOnStartup) {
+
+        /** Có cấu hình url (giá trị trống bind thành {@code null} hoặc URI rỗng tuỳ converter — coi như không đặt). */
+        public boolean hasUrl() {
+            return url != null && !url.toString().isEmpty();
+        }
 
         @AssertTrue(message = "app.soap.exchange-rate.base-currency and quote-currency must differ")
         public boolean isCurrencyPairDistinct() {
@@ -84,8 +94,8 @@ public record AppProperties(
 
         @AssertTrue(message = "app.soap.exchange-rate.url must be an absolute http(s) URL with a host and no user info")
         public boolean isUrlValid() {
-            if (url == null) {
-                return true; // đã báo bởi @NotNull
+            if (!hasUrl()) {
+                return true; // không đặt = tắt tỷ giá
             }
             String scheme = url.getScheme();
             return ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
@@ -103,10 +113,24 @@ public record AppProperties(
     }
 
     /**
-     * @param enabled bật endpoint SOAP mock {@code /services/**} + WSDL. Endpoint public (không đăng nhập, không CSRF —
-     *                chỉ trả dữ liệu giả, không có dữ liệu user) nên mặc định tắt ở production; dev/test/compose bật
+     * @param enabled        bật endpoint SOAP mock {@code /services/**} + WSDL. Endpoint public (không đăng nhập, không
+     *                       CSRF — chỉ trả dữ liệu giả, không có dữ liệu user) nên mặc định tắt ở production;
+     *                       dev/test/compose bật
+     * @param maxRequestSize dung lượng body tối đa của request tới {@code /services/**} (OWASP A06): SAAJ đọc cả message
+     *                       vào bộ nhớ trước khi validate XSD, request ẩn danh lớn không được làm tràn heap. Request hợp
+     *                       lệ chỉ vài trăm byte
      */
-    public record MockEndpoint(@DefaultValue("false") boolean enabled) {
+    public record MockEndpoint(
+            @DefaultValue("false") boolean enabled,
+            @NotNull @DefaultValue(DEFAULT_MAX_REQUEST_SIZE) DataSize maxRequestSize) {
+
+        /** Mặc định của {@code max-request-size} — cũng dùng khi context không bind {@code app.*} (test slice). */
+        public static final String DEFAULT_MAX_REQUEST_SIZE = "16KB";
+
+        @AssertTrue(message = "app.soap.exchange-rate.mock-endpoint.max-request-size must be positive")
+        public boolean isMaxRequestSizePositive() {
+            return maxRequestSize == null || maxRequestSize.toBytes() > 0;
+        }
     }
 
     /**
@@ -169,10 +193,18 @@ public record AppProperties(
      * Giới hạn import Excel (OWASP A06). Dung lượng file nén giới hạn riêng qua {@code spring.servlet.multipart.*}.
      *
      * @param maxUncompressedSize tổng dung lượng sau giải nén của file .xlsx (chặn file nén cao làm tràn heap)
+     * @param minInterval         khoảng cách tối thiểu giữa 2 lần import có ghi dữ liệu của cùng 1 user (bucket riêng
+     *                            cho bài viết và metric; vi phạm → 429); {@code 0} = tắt
      */
     public record ImportSettings(
             @Positive @Max(10000) @DefaultValue("1000") int maxRows,
-            @NotNull @DefaultValue("20MB") DataSize maxUncompressedSize) {
+            @NotNull @DefaultValue("20MB") DataSize maxUncompressedSize,
+            @NotNull @DefaultValue("10s") Duration minInterval) {
+
+        @AssertTrue(message = "app.import.min-interval must not be negative")
+        public boolean isMinIntervalNotNegative() {
+            return minInterval == null || !minInterval.isNegative();
+        }
 
         @AssertTrue(message = "app.import.max-uncompressed-size must be positive")
         public boolean isMaxUncompressedSizePositive() {

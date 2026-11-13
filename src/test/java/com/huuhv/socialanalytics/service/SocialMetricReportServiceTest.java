@@ -34,6 +34,10 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 class SocialMetricReportServiceTest {
@@ -60,7 +64,7 @@ class SocialMetricReportServiceTest {
     @BeforeEach
     void setUp() {
         AppProperties properties = new AppProperties(
-                new AppProperties.ImportSettings(1000, DataSize.ofMegabytes(20)),
+                new AppProperties.ImportSettings(1000, DataSize.ofMegabytes(20), Duration.ZERO),
                 new AppProperties.ExportSettings(MAX_ROWS, MIN_INTERVAL),
                 null, null, null, null, null, null);
         service = new SocialMetricReportService(socialMetricService, currentUserService, userRateLimiter,
@@ -102,6 +106,7 @@ class SocialMetricReportServiceTest {
         service.exportMetrics(null, null);
 
         InOrder order = inOrder(userRateLimiter, socialMetricService);
+        order.verify(socialMetricService).countReportRowsUpTo(OWNER_ID, null, null, MAX_ROWS + 1);
         // Bucket riêng "export-metrics": export bài viết không làm chặn export metric và ngược lại
         order.verify(userRateLimiter).acquire("export-metrics", OWNER_ID, MIN_INTERVAL);
         order.verify(socialMetricService).findReportRows(OWNER_ID, null, null, MAX_ROWS + 1);
@@ -116,6 +121,7 @@ class SocialMetricReportServiceTest {
         verifyNoInteractions(currentUserService, userRateLimiter, socialMetricService);
     }
 
+    /** Snapshot mới được ghi giữa câu đếm và câu lấy dữ liệu → vẫn chặn theo số dòng thực lấy được. */
     @Test
     void rejectsExportOverRowLimit() {
         when(currentUserService.getCurrentUser()).thenReturn(owner);
@@ -136,7 +142,25 @@ class SocialMetricReportServiceTest {
 
         assertThatThrownBy(() -> service.exportMetrics(null, null))
                 .isInstanceOf(AuthenticationRequiredException.class);
-        assertThatThrownBy(() -> service.exportMetrics(null, null)).isInstanceOf(TooManyRequestsException.class);
         verifyNoInteractions(socialMetricService);
+        assertThatThrownBy(() -> service.exportMetrics(null, null)).isInstanceOf(TooManyRequestsException.class);
+        // Chỉ câu đếm rẻ chạy trước khi tính tần suất; query dữ liệu (filesort) không chạy
+        verify(socialMetricService, never()).findReportRows(any(), any(), any(), anyInt());
+    }
+
+    /**
+     * Khoảng quá rộng → 400 mà KHÔNG tốn lượt export: user thu hẹp from/to rồi gửi lại ngay không bị 429; query dữ
+     * liệu (có filesort) không chạy.
+     */
+    @Test
+    void rowLimitIsCheckedBeforeConsumingRateLimit() {
+        when(currentUserService.getCurrentUser()).thenReturn(owner);
+        when(socialMetricService.countReportRowsUpTo(OWNER_ID, null, null, MAX_ROWS + 1)).thenReturn(MAX_ROWS + 1L);
+
+        assertThatThrownBy(() -> service.exportMetrics(null, null))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageStartingWith("Report exceeds the maximum of 2 rows");
+        verifyNoInteractions(userRateLimiter);
+        verify(socialMetricService, never()).findReportRows(any(), any(), any(), anyInt());
     }
 }

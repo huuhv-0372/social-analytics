@@ -38,6 +38,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyString;
 
 @ExtendWith(MockitoExtension.class)
 class SocialMetricServiceTest {
@@ -165,6 +166,8 @@ class SocialMetricServiceTest {
         assertThat(response.postId()).isEqualTo(10L);
         assertThat(response.likes()).isEqualTo(100L);
         assertThat(response.collectedAt()).isEqualTo(NOW_INSTANT);
+        // Như job crawl / import Excel: dashboard của owner được báo làm mới
+        verify(dashboardEventService).metricsUpdated(Set.of(OWNER_ID));
     }
 
     @Test
@@ -188,6 +191,7 @@ class SocialMetricServiceTest {
         assertThatThrownBy(() -> socialMetricService.create(new SocialMetricRequest(99L, 1L, 1L, 1L, 1L, NOW_INSTANT)))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(socialMetricRepository, never()).save(any());
+        verifyNoInteractions(dashboardEventService);
     }
 
     @Test
@@ -198,6 +202,7 @@ class SocialMetricServiceTest {
         assertThatThrownBy(() -> socialMetricService.delete(5L))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(socialMetricRepository, never()).delete(any());
+        verifyNoInteractions(dashboardEventService);
     }
 
     @Test
@@ -209,6 +214,31 @@ class SocialMetricServiceTest {
         socialMetricService.delete(5L);
 
         verify(socialMetricRepository).delete(existing);
+        verify(dashboardEventService).metricsUpdated(Set.of(OWNER_ID));
+    }
+
+    /**
+     * Snapshot trùng = cùng bài + cùng collectedAt tới mili giây (độ chính xác ô Excel): khoảng [t, t + 1ms) giờ UTC,
+     * 1 query cho cả danh sách, vị trí trả về đổi từ 1-based (JSON_TABLE) sang 0-based.
+     */
+    @Test
+    void findExistingSnapshotIndexesQueriesMillisecondWindowsInUtcOnce() {
+        when(socialMetricRepository.findExistingSnapshotPositions(anyString())).thenReturn(List.of(2L));
+
+        Set<Integer> existing = socialMetricService.findExistingSnapshotIndexes(List.of(
+                new SocialMetricRequest(10L, 1L, 1L, 1L, 1L, NOW_INSTANT),
+                new SocialMetricRequest(11L, 1L, 1L, 1L, 1L, Instant.parse("2026-01-01T19:00:00.123456789+07:00"))));
+
+        assertThat(existing).containsExactly(1);
+        verify(socialMetricRepository).findExistingSnapshotPositions(
+                "[{\"postId\":10,\"from\":\"2026-01-01 12:00:00.000000\",\"to\":\"2026-01-01 12:00:00.001000\"},"
+                        + "{\"postId\":11,\"from\":\"2026-01-01 12:00:00.123000\",\"to\":\"2026-01-01 12:00:00.124000\"}]");
+    }
+
+    @Test
+    void findExistingSnapshotIndexesOfNothingDoesNotQuery() {
+        assertThat(socialMetricService.findExistingSnapshotIndexes(List.of())).isEmpty();
+        verifyNoInteractions(socialMetricRepository);
     }
 
     @Test
@@ -260,11 +290,11 @@ class SocialMetricServiceTest {
 
     @Test
     void recordSnapshotsWithoutMetricsStillMarksAccountUpdated() {
-        when(postService.lockExistingIds(List.of())).thenReturn(Set.of());
-
         assertThat(socialMetricService.recordSnapshots(7L, List.of(), NOW, NOW)).isZero();
 
         verify(socialAccountService).markMetricsUpdated(7L, NOW);
+        // Không có gì để ghi → không khoá bài, không INSERT rỗng
+        verifyNoInteractions(postService, socialMetricRepository);
     }
 
     @Test

@@ -309,7 +309,11 @@ class AppPropertiesTest {
     void bindsSoapExchangeRateSettings() {
         contextRunner.run(context -> {
             AppProperties.ExchangeRate exchangeRate = context.getBean(AppProperties.class).soap().exchangeRate();
-            assertThat(exchangeRate.url()).isEqualTo(URI.create("http://localhost:8080/services"));
+            // Không có mặc định trỏ vào chính app (endpoint mock tắt ở production) → không đặt = tắt tỷ giá
+            assertThat(exchangeRate.url()).isNull();
+            assertThat(exchangeRate.hasUrl()).isFalse();
+            assertThat(exchangeRate.warmUpOnStartup()).isTrue();
+            assertThat(exchangeRate.mockEndpoint().maxRequestSize()).isEqualTo(DataSize.ofKilobytes(16));
             assertThat(exchangeRate.connectTimeout()).isEqualTo(Duration.ofSeconds(2));
             assertThat(exchangeRate.readTimeout()).isEqualTo(Duration.ofSeconds(3));
             assertThat(exchangeRate.baseCurrency()).isEqualTo("USD");
@@ -326,10 +330,42 @@ class AppPropertiesTest {
                 .run(context -> {
                     AppProperties.ExchangeRate exchangeRate = context.getBean(AppProperties.class).soap().exchangeRate();
                     assertThat(exchangeRate.url()).isEqualTo(URI.create("https://rates.example.com/ws"));
+                    assertThat(exchangeRate.hasUrl()).isTrue();
                     assertThat(exchangeRate.connectTimeout()).isEqualTo(Duration.ofSeconds(1));
                     assertThat(exchangeRate.readTimeout()).isEqualTo(Duration.ofSeconds(4));
                     assertThat(exchangeRate.mockEndpoint().enabled()).isTrue();
                 });
+    }
+
+    /** {@code url: ${SOAP_EXCHANGE_RATE_URL:}} trong application.yml bind chuỗi rỗng → coi như không đặt, không lỗi. */
+    @Test
+    void emptySoapUrlDisablesExchangeRate() {
+        contextRunner
+                .withPropertyValues("app.soap.exchange-rate.url=")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(AppProperties.class).soap().exchangeRate().hasUrl()).isFalse();
+                });
+    }
+
+    @Test
+    void failsStartupWhenSoapMockMaxRequestSizeIsNotPositive() {
+        contextRunner
+                .withPropertyValues("app.soap.exchange-rate.mock-endpoint.max-request-size=0B")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void bindsImportMinIntervalAndRejectsNegative() {
+        contextRunner.run(context -> assertThat(context.getBean(AppProperties.class).importSettings().minInterval())
+                .isEqualTo(Duration.ofSeconds(10)));
+        contextRunner
+                .withPropertyValues("app.import.min-interval=0s")
+                .run(context -> assertThat(context.getBean(AppProperties.class).importSettings().minInterval())
+                        .isZero());
+        contextRunner
+                .withPropertyValues("app.import.min-interval=-1s")
+                .run(context -> assertThat(context).hasFailed());
     }
 
     @Test

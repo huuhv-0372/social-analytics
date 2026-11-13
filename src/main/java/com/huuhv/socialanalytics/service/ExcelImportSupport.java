@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -33,7 +34,8 @@ import java.util.stream.Collectors;
  *     <li>{@link #read}: kiểm tra file upload (OWASP A06 — đuôi {@code .xlsx} <b>và</b> magic bytes OOXML, giới hạn
  *     {@code app.import.*}) rồi đọc bằng {@link GenericExcelImporter}; lỗi cả file → {@link BadRequestException}.</li>
  *     <li>{@link #validate}: Bean Validation của DTO request (cùng bộ quy tắc với REST API) → lỗi theo dòng/cột Excel;
- *     cột đã lỗi chuyển kiểu không báo thêm vi phạm {@code @NotNull} trùng lặp.</li>
+ *     cột đã lỗi chuyển kiểu không báo thêm vi phạm {@code @NotNull} trùng lặp. Caller sắp lỗi của dòng bằng
+ *     {@link #byColumnOrder} sau khi thêm lỗi nghiệp vụ riêng.</li>
  * </ul>
  * Tên field DTO import phải trùng tên component của DTO request để map vi phạm về đúng cột.
  */
@@ -43,6 +45,8 @@ import java.util.stream.Collectors;
 public class ExcelImportSupport {
 
     private static final String XLSX_EXTENSION = ".xlsx";
+    /** Comparator thứ tự cột theo class DTO import (metadata cột đã cache ở {@link ExcelColumnMetadata}). */
+    private static final Map<Class<?>, Comparator<ExcelRowError>> COMPARATORS = new ConcurrentHashMap<>();
 
     private final GenericExcelImporter excelImporter;
     private final Validator validator;
@@ -77,7 +81,9 @@ public class ExcelImportSupport {
     }
 
     /**
-     * Lỗi chuyển kiểu của dòng + vi phạm Bean Validation của {@code request} (dựng từ dòng đó), theo thứ tự cột.
+     * Lỗi chuyển kiểu của dòng + vi phạm Bean Validation của {@code request} (dựng từ dòng đó). Danh sách
+     * <b>chưa sắp xếp</b> và sửa được: caller thêm lỗi nghiệp vụ riêng rồi sắp 1 lần bằng {@link #byColumnOrder}
+     * (chỉ khi dòng có lỗi — dòng hợp lệ không tốn công sắp).
      *
      * @param row     dòng đã đọc (DTO import + lỗi chuyển kiểu)
      * @param request DTO request tương ứng (vd {@code PostRequest}) — component trùng tên field của DTO import
@@ -95,7 +101,8 @@ public class ExcelImportSupport {
         Class<?> rowType = row.value().getClass();
         List<ExcelRowError> errors = new ArrayList<>(row.errors());
         // Cột đã lỗi chuyển kiểu có field = null → bỏ vi phạm @NotNull/@NotBlank trùng lặp của cột đó
-        Set<String> unreadableColumns = row.errors().stream().map(ExcelRowError::column).collect(Collectors.toSet());
+        Set<String> unreadableColumns = row.errors().isEmpty() ? Set.of()
+                : row.errors().stream().map(ExcelRowError::column).collect(Collectors.toSet());
         for (ConstraintViolation<Object> violation : validator.validate(request)) {
             String property = violation.getPropertyPath().toString();
             if (ignoredProperties.contains(property)) {
@@ -106,15 +113,20 @@ public class ExcelImportSupport {
                 errors.add(new ExcelRowError(row.rowNumber(), column, violation.getMessage()));
             }
         }
-        // Thứ tự vi phạm của Validator không cố định → sắp theo thứ tự cột
-        errors.sort(byColumnOrder(rowType));
         return errors;
     }
 
-    /** Lỗi theo thứ tự cột của {@code rowType}; lỗi không gắn được với cột nào ({@code column = null}) xếp cuối. */
+    /**
+     * Lỗi theo thứ tự cột của {@code rowType} (thứ tự vi phạm của Validator không cố định); lỗi không gắn được với cột
+     * nào ({@code column = null}) xếp cuối. Comparator dựng 1 lần cho mỗi class rồi dùng lại.
+     */
     public static Comparator<ExcelRowError> byColumnOrder(Class<?> rowType) {
+        return COMPARATORS.computeIfAbsent(rowType, ExcelImportSupport::columnOrderComparator);
+    }
+
+    private static Comparator<ExcelRowError> columnOrderComparator(Class<?> rowType) {
         Map<String, Integer> orderByColumn = ExcelColumnMetadata.of(rowType).stream()
-                .collect(Collectors.toMap(ColumnMeta::name, ColumnMeta::order));
+                .collect(Collectors.toUnmodifiableMap(ColumnMeta::name, ColumnMeta::order));
         return Comparator.comparing((ExcelRowError error) -> error.column() == null
                         ? null : orderByColumn.get(error.column()),
                 Comparator.nullsLast(Comparator.naturalOrder()));

@@ -45,6 +45,7 @@ public class PostService {
 
     private final PostRepository postRepository;
     private final CurrentUserService currentUserService;
+    private final DashboardEventService dashboardEventService;
 
     @Transactional(readOnly = true)
     public PageResponse<PostResponse> findAll(Pageable pageable) {
@@ -89,9 +90,12 @@ public class PostService {
     @Transactional
     public void delete(Long id) {
         Post post = getOwnedPost(id);
-        // Snapshot social_metrics bị xoá theo nhờ FK ON DELETE CASCADE
+        Long ownerId = post.getUser().getId();
+        // Snapshot social_metrics bị xoá theo nhờ FK ON DELETE CASCADE → số liệu biểu đồ đổi: báo dashboard của owner
+        // làm mới (gửi sau commit) như khi thêm/xoá snapshot
         postRepository.delete(post);
-        log.info("User {} deleted post {}", post.getUser().getId(), id);
+        dashboardEventService.metricsUpdated(Set.of(ownerId));
+        log.info("User {} deleted post {}", ownerId, id);
     }
 
     /**

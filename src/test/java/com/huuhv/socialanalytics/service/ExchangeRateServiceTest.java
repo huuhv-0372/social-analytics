@@ -21,12 +21,14 @@ import java.time.ZoneOffset;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import org.springframework.util.unit.DataSize;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
 class ExchangeRateServiceTest {
@@ -47,11 +49,71 @@ class ExchangeRateServiceTest {
 
     @BeforeEach
     void setUp() {
-        AppProperties properties = new AppProperties(null, null, null, null, null, null, null,
-                new AppProperties.Soap(new AppProperties.ExchangeRate(URI.create("http://localhost:8080/services"),
-                        Duration.ofSeconds(2), Duration.ofSeconds(3), "USD", "VND", CACHE_TTL, RETRY_AFTER_FAILURE,
-                        new AppProperties.MockEndpoint(false))));
-        service = new ExchangeRateService(client, properties, clock);
+        service = new ExchangeRateService(client, properties(URI.create("http://localhost:8080/services"), true),
+                clock);
+    }
+
+    private static AppProperties properties(URI url, boolean warmUpOnStartup) {
+        return new AppProperties(null, null, null, null, null, null, null,
+                new AppProperties.Soap(new AppProperties.ExchangeRate(url, Duration.ofSeconds(2),
+                        Duration.ofSeconds(3), "USD", "VND", CACHE_TTL, RETRY_AFTER_FAILURE,
+                        new AppProperties.MockEndpoint(false, DataSize.ofKilobytes(16)), warmUpOnStartup)));
+    }
+
+    /** Không cấu hình url = tắt tỷ giá: không gọi SOAP (production không có mặc định trỏ vào chính app). */
+    @Test
+    void disabledWithoutUrlNeverCallsSoap() {
+        ExchangeRateService disabled = new ExchangeRateService(client, properties(null, true), clock);
+
+        assertThat(disabled.getCurrentRate()).isNull();
+        disabled.warmUp();
+
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void warmUpFetchesOnceSoFirstPageLoadIsServedFromCache() {
+        when(client.getExchangeRate("USD", "VND")).thenReturn(QUOTE);
+
+        service.warmUp();
+        ExchangeRateResponse rate = service.getCurrentRate();
+
+        assertThat(rate.rate()).isEqualByComparingTo("25400.5");
+        verify(client, times(1)).getExchangeRate("USD", "VND");
+    }
+
+    @Test
+    void warmUpCanBeTurnedOff() {
+        new ExchangeRateService(client, properties(URI.create("http://localhost:8080/services"), false), clock)
+                .warmUp();
+
+        verifyNoInteractions(client);
+    }
+
+    /**
+     * Chưa có giá trị và đang có thread lấy lần đầu (SOAP chậm) → request khác trả ngay {@code null}, KHÔNG chờ khoá:
+     * chờ sẽ giữ thread Tomcat trong khi lời gọi SOAP tới endpoint mock của chính app cũng cần 1 thread rảnh.
+     */
+    @Test
+    void requestWithoutValueDoesNotWaitWhileFirstFetchIsInProgress() throws Exception {
+        CountDownLatch callStarted = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(client.getExchangeRate("USD", "VND")).thenAnswer(invocation -> {
+            callStarted.countDown();
+            release.await(5, TimeUnit.SECONDS);
+            return QUOTE;
+        });
+
+        CompletableFuture<ExchangeRateResponse> first = CompletableFuture.supplyAsync(service::getCurrentRate);
+        assertThat(callStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        // Chạy ở thread khác + timeout ngắn: nếu chờ khoá thì get() hết giờ trước khi release
+        ExchangeRateResponse meanwhile = CompletableFuture.supplyAsync(service::getCurrentRate)
+                .get(1, TimeUnit.SECONDS);
+        release.countDown();
+
+        assertThat(meanwhile).isNull();
+        assertThat(first.get(5, TimeUnit.SECONDS).rate()).isEqualByComparingTo("25400.5");
+        verify(client, times(1)).getExchangeRate("USD", "VND");
     }
 
     @Test

@@ -127,6 +127,47 @@ class SocialMetricRepositoryTest {
                 .extracting(SocialMetricReportRow::likes).containsExactly(7L, 10L);
     }
 
+    /** Đếm có chặn trên, cùng điều kiện lọc với findReportRows (user, 2 đầu khoảng tính cả) — chạy trên MySQL. */
+    @Test
+    void countReportRowsStopsAtMaxCountAndMatchesReportFilter() {
+        User other = userRepository.save(User.builder().email("other@example.com").displayName("Other").build());
+        Post othersPost = postRepository.save(Post.builder().user(other).provider(Provider.TWITTER)
+                .externalId("tw-1").url("https://x.com/other/status/1").build());
+        saveSnapshot(othersPost, BASE.plusHours(1), 999);
+        entityManager.flush();
+
+        assertThat(socialMetricRepository.countReportRowsUpTo(owner.getId(), null, null, 100)).isEqualTo(3);
+        // Dừng ở maxCount (service truyền max-rows + 1 để biết có vượt hay không)
+        assertThat(socialMetricRepository.countReportRowsUpTo(owner.getId(), null, null, 2)).isEqualTo(2);
+        assertThat(socialMetricRepository.countReportRowsUpTo(owner.getId(), BASE.plusHours(1), BASE.plusHours(2),
+                100)).isEqualTo(2);
+        assertThat(socialMetricRepository.countReportRowsUpTo(owner.getId(), BASE.plusHours(3), null, 100)).isZero();
+    }
+
+    /**
+     * Snapshot trùng = cùng bài + collected_at trong [from, to): DB lưu micro giây, file Excel chỉ có mili giây → khoảng
+     * 1ms vẫn nhận ra snapshot đã có. Bài khác / ngoài khoảng không tính.
+     */
+    @Test
+    void existingSnapshotPositionsMatchPostAndMillisecondWindow() {
+        saveSnapshot(BASE.plusMinutes(5).plusNanos(123_456_000), 1);
+        entityManager.flush();
+
+        List<Number> positions = socialMetricRepository.findExistingSnapshotPositions("["
+                + window(post.getId(), BASE.plusMinutes(5).plusNanos(123_000_000)) + ","
+                + window(post.getId(), BASE.plusMinutes(6)) + ","
+                + window(post.getId() + 1000, BASE) + ","
+                + window(post.getId(), BASE) + "]");
+
+        assertThat(positions).extracting(Number::intValue).containsExactlyInAnyOrder(1, 4);
+    }
+
+    private static String window(Long postId, LocalDateTime from) {
+        DateTimeFormatter format = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+        return "{\"postId\":" + postId + ",\"from\":\"" + format.format(from) + "\",\"to\":\""
+                + format.format(from.plusNanos(1_000_000)) + "\"}";
+    }
+
     @Test
     void findByIdAndPostUserIdReturnsEmptyForOtherUser() {
         SocialMetric metric = saveSnapshot(BASE.plusHours(3), 40);

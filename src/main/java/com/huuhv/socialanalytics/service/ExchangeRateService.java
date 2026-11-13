@@ -7,6 +7,9 @@ import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.dto.response.ExchangeRateResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -18,12 +21,17 @@ import java.util.concurrent.locks.ReentrantLock;
  * (dữ liệu chung cho mọi user, không thuộc về ai — không cần cache dùng chung giữa các instance).
  * <ul>
  *     <li>Còn trong {@code app.soap.exchange-rate.cache-ttl} → dùng lại, không gọi SOAP.</li>
- *     <li>Hết hạn → gọi lại; mỗi instance chỉ 1 lời gọi tại 1 thời điểm. Trong lúc đang gọi, request khác dùng ngay
- *     giá trị cũ (nếu có) thay vì chờ; chưa có giá trị nào thì chờ lời gọi đầu tiên (giới hạn bởi timeout).</li>
+ *     <li>Hết hạn → gọi lại; mỗi instance chỉ 1 lời gọi tại 1 thời điểm. Trong lúc đang gọi, request khác <b>không
+ *     chờ</b>: dùng ngay giá trị cũ, chưa có giá trị thì trả {@code null}. Chờ khoá sẽ giữ thread Tomcat, trong khi
+ *     lời gọi SOAP tới endpoint mock của chính app cũng cần 1 thread Tomcat rảnh — nhiều request cùng chờ (vd ngay sau
+ *     restart) làm lời gọi đó timeout và cả app nghẽn.</li>
+ *     <li>App sẵn sàng → lấy sẵn 1 lần ở thread nền ({@code warm-up-on-startup}) để request đầu tiên đã có giá
+ *     trị.</li>
  *     <li>Gọi lỗi (timeout, Fault, response sai...) → log WARN, giữ giá trị cũ và đánh dấu {@code stale}; không thử
  *     lại trong {@code retry-after-failure} để trang không phải chờ timeout mỗi lần tải.</li>
  * </ul>
  * Không bao giờ ném exception: dashboard luôn hiển thị được, phần tỷ giá báo không lấy được ({@code null}).
+ * Không cấu hình {@code app.soap.exchange-rate.url} = tắt tỷ giá: luôn {@code null}, không gọi SOAP.
  */
 @Slf4j
 @Service
@@ -47,17 +55,16 @@ public class ExchangeRateService {
      * @return tỷ giá (có thể là giá trị cũ, {@code stale = true}) hoặc {@code null} khi chưa từng lấy được
      */
     public ExchangeRateResponse getCurrentRate() {
+        if (!appProperties.soap().exchangeRate().hasUrl()) {
+            return null;
+        }
         CachedRate current = cached;
         if ((current != null && isFresh(current)) || isBackingOff()) {
             return toResponse(current);
         }
-        if (current != null) {
-            // Đã có giá trị: thread khác đang lấy thì không chờ, dùng giá trị hiện có
-            if (!refreshLock.tryLock()) {
-                return toResponse(current);
-            }
-        } else {
-            refreshLock.lock();
+        // Thread khác đang lấy → không chờ: dùng giá trị hiện có (null khi chưa có lần nào thành công)
+        if (!refreshLock.tryLock()) {
+            return toResponse(current);
         }
         try {
             // Kiểm tra lại: thread giữ khoá trước có thể vừa lấy xong / vừa lỗi
@@ -68,6 +75,24 @@ public class ExchangeRateService {
             return toResponse(refresh());
         } finally {
             refreshLock.unlock();
+        }
+    }
+
+    /**
+     * Lấy sẵn tỷ giá khi app vừa sẵn sàng (Tomcat đã nhận request — endpoint mock của chính app gọi được), ở thread
+     * của executor mặc định ({@code @Async}) để không làm chậm khởi động. Lỗi được xử lý như lần gọi thường (WARN +
+     * backoff).
+     */
+    @Async
+    @EventListener(ApplicationReadyEvent.class)
+    public void warmUp() {
+        AppProperties.ExchangeRate settings = appProperties.soap().exchangeRate();
+        if (!settings.hasUrl()) {
+            log.info("Exchange rate is disabled: app.soap.exchange-rate.url is not set");
+            return;
+        }
+        if (settings.warmUpOnStartup()) {
+            getCurrentRate();
         }
     }
 

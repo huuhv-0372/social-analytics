@@ -18,8 +18,9 @@ import java.time.Clock;
 /**
  * Client SOAP tỷ giá ({@link ExchangeRateSoapClient}) dựng từ {@link WebServiceTemplateBuilder} của Boot:
  * <ul>
- *     <li>URL lấy từ {@code app.soap.exchange-rate.url}; connect/read timeout từ cấu hình (OWASP A10), không theo
- *     redirect (không đi tới địa chỉ do server bên kia chỉ định).</li>
+ *     <li>URL lấy từ {@code app.soap.exchange-rate.url} (không đặt = tắt tỷ giá: client vẫn được tạo nhưng
+ *     {@code ExchangeRateService} không gọi); connect/read timeout từ cấu hình (OWASP A10), không theo redirect (không
+ *     đi tới địa chỉ do server bên kia chỉ định).</li>
  *     <li>Marshaller JAXB tắt DTD + external entity (chống XXE — OWASP A05) và validate theo
  *     {@code xsd/exchange-rate.xsd} cả request lẫn response (response là dữ liệu không tin cậy).</li>
  *     <li>Message SOAP tạo bằng SAAJ (factory mặc định của template) — SAAJ từ chối message có DOCTYPE.</li>
@@ -40,13 +41,15 @@ public class WebServiceClientConfig {
                 .withTimeouts(settings.connectTimeout(), settings.readTimeout())
                 .withRedirects(HttpRedirects.DONT_FOLLOW);
         ExchangeRateSoapClient client = new ExchangeRateSoapClient(clock);
-        client.setWebServiceTemplate(builder
+        WebServiceTemplateBuilder configured = builder
                 .httpMessageSenderFactory(WebServiceMessageSenderFactory.http(ClientHttpRequestFactoryBuilder.jdk(),
                         httpSettings))
                 .setMarshaller(marshaller)
-                .setUnmarshaller(marshaller)
-                .setDefaultUri(settings.url().toString())
-                .build());
+                .setUnmarshaller(marshaller);
+        if (settings.hasUrl()) {
+            configured = configured.setDefaultUri(settings.url().toString());
+        }
+        client.setWebServiceTemplate(configured.build());
         return client;
     }
 

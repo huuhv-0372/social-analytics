@@ -32,6 +32,8 @@ app:
       mock-endpoint:
         # Dev bật endpoint SOAP mock (http://localhost:8080/services/exchangeRate.wsdl) — dashboard gọi chính app
         enabled: ${SOAP_MOCK_ENDPOINT_ENABLED:true}
+      # Client gọi endpoint mock của chính app (production không có mặc định — trống = tắt tỷ giá)
+      url: ${SOAP_EXCHANGE_RATE_URL:http://localhost:8080/services}
   jobs:
     update-metrics:
       cron: "0 */5 * * * *"

@@ -43,6 +43,8 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.stream.IntStream;
+import com.huuhv.socialanalytics.exception.TooManyRequestsException;
+import java.util.Set;
 
 import static com.huuhv.socialanalytics.excel.TestWorkbooks.xlsx;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,6 +57,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 
 @ExtendWith(MockitoExtension.class)
 class SocialMetricImportServiceTest {
@@ -76,6 +80,9 @@ class SocialMetricImportServiceTest {
     @Mock
     private CurrentUserService currentUserService;
 
+    @Mock
+    private UserRateLimiter userRateLimiter;
+
     @Captor
     private ArgumentCaptor<List<SocialMetricRequest>> saved;
 
@@ -85,11 +92,11 @@ class SocialMetricImportServiceTest {
 
     @BeforeEach
     void setUp() {
-        AppProperties properties = new AppProperties(new AppProperties.ImportSettings(10, DataSize.ofMegabytes(20)),
+        AppProperties properties = new AppProperties(new AppProperties.ImportSettings(10, DataSize.ofMegabytes(20), Duration.ZERO),
                 new AppProperties.ExportSettings(10000, Duration.ZERO), null, null, null, null, null, null);
         service = new SocialMetricImportService(new ExcelImportSupport(new GenericExcelImporter(),
                 VALIDATOR_FACTORY.getValidator(), properties), postService, socialMetricService, currentUserService,
-                CLOCK);
+                userRateLimiter, properties, CLOCK);
     }
 
     @AfterAll
@@ -223,6 +230,80 @@ class SocialMetricImportServiceTest {
         ArgumentCaptor<Collection<String>> externalIds = ArgumentCaptor.forClass(Collection.class);
         verify(postService).findOwnedPostRefs(eq(OWNER_ID), eq(Provider.FACEBOOK), externalIds.capture());
         assertThat(externalIds.getValue()).containsExactly("fb-1", "fb-2");
+    }
+
+    /**
+     * External ID ngoài định dạng id bài (ký tự có dấu, khoảng trắng...) báo lỗi định dạng và KHÔNG được đem tra DB:
+     * collation utf8mb4_unicode_ci coi "Café" = "cafe" nhưng so khớp trong Java (lowercase) thì không — kiểm tra định
+     * dạng trước giữ 2 phía nhất quán.
+     */
+    @Test
+    void externalIdOutsidePostIdFormatIsRejectedWithoutLookup() {
+        when(currentUserService.getCurrentUser()).thenReturn(owner);
+        byte[] content = xlsx(HEADER,
+                new Object[]{"FACEBOOK", "Café", 1, 1, 1, 1, AT},
+                new Object[]{"FACEBOOK", "fb 1", 1, 1, 1, 1, AT},
+                new Object[]{"FACEBOOK", "x".repeat(101), 1, 1, 1, 1, AT});
+
+        MetricImportResultResponse result = service.importMetrics(file(content));
+
+        assertThat(result.imported()).isZero();
+        assertThat(result.errors()).extracting(RowError::row, RowError::column, RowError::message).containsExactly(
+                tuple(2, "External ID", "must contain only letters, digits, '_' or '-'"),
+                tuple(3, "External ID", "must contain only letters, digits, '_' or '-'"),
+                tuple(4, "External ID", "size must be between 0 and 100"));
+        verifyNoInteractions(postService, userRateLimiter);
+    }
+
+    /**
+     * Snapshot đã có trong DB (cùng bài + Collected At) → lỗi ở đúng dòng, không ghi lại: gửi lại cùng file / import
+     * file export không làm bảng phình ra. Lỗi xếp đúng thứ tự dòng cùng các lỗi khác.
+     */
+    @Test
+    void snapshotsAlreadyInDatabaseAreReportedAndNotWrittenAgain() {
+        givenOwnedPosts();
+        // Vị trí 0 trong danh sách dòng hợp lệ (= dòng 2 của file) đã có trong DB
+        when(socialMetricService.findExistingSnapshotIndexes(anyList())).thenReturn(Set.of(0));
+        byte[] content = xlsx(HEADER,
+                new Object[]{"FACEBOOK", "fb-1", 10, 2, 3, 400, AT},
+                new Object[]{"FACEBOOK", "fb-1", -1, 2, 3, 400, AT.plusHours(1)},
+                new Object[]{"FACEBOOK", "fb-2", 5, 1, 1, 1, AT});
+
+        MetricImportResultResponse result = service.importMetrics(file(content));
+
+        assertThat(result.imported()).isEqualTo(1);
+        assertThat(result.failed()).isEqualTo(2);
+        assertThat(result.errors()).extracting(RowError::row, RowError::column, RowError::message).containsExactly(
+                tuple(2, "Collected At", "snapshot already exists"),
+                tuple(3, "Likes", "must be greater than or equal to 0"));
+        verify(socialMetricService).importSnapshots(eq(OWNER_ID), saved.capture());
+        assertThat(saved.getValue()).extracting(SocialMetricRequest::postId).containsExactly(11L);
+    }
+
+    /** Chỉ tính lượt import khi có snapshot cần ghi; vượt tần suất → 429, không ghi gì. */
+    @Test
+    void rateLimitIsCheckedOnlyBeforeWriting() {
+        when(currentUserService.getCurrentUser()).thenReturn(owner);
+        when(postService.findOwnedPostRefs(eq(OWNER_ID), eq(Provider.FACEBOOK), anyCollection()))
+                .thenReturn(List.of(new PostRef(10L, "fb-1")));
+        doThrow(new TooManyRequestsException(Duration.ofSeconds(5)))
+                .when(userRateLimiter).acquire("import-metrics", OWNER_ID, Duration.ZERO);
+        byte[] content = xlsx(HEADER, new Object[]{"FACEBOOK", "fb-1", 10, 2, 3, 400, AT});
+
+        assertThatThrownBy(() -> service.importMetrics(file(content))).isInstanceOf(TooManyRequestsException.class);
+        verify(socialMetricService, never()).importSnapshots(any(), anyList());
+    }
+
+    @Test
+    void fileWithNothingToWriteDoesNotConsumeRateLimit() {
+        when(currentUserService.getCurrentUser()).thenReturn(owner);
+        when(postService.findOwnedPostRefs(eq(OWNER_ID), eq(Provider.FACEBOOK), anyCollection())).thenReturn(List.of());
+
+        MetricImportResultResponse result = service.importMetrics(file(xlsx(HEADER,
+                new Object[]{"FACEBOOK", "fb-404", 1, 1, 1, 1, AT})));
+
+        assertThat(result.imported()).isZero();
+        verifyNoInteractions(userRateLimiter);
     }
 
     @Test

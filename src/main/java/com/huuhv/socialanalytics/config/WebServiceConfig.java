@@ -1,6 +1,7 @@
 package com.huuhv.socialanalytics.config;
 
 import com.huuhv.socialanalytics.config.properties.AppProperties;
+import com.huuhv.socialanalytics.security.RequestBodySizeLimitFilter;
 import com.huuhv.socialanalytics.webservice.ExchangeRateEndpoint;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -10,6 +11,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.http.HttpStatus;
 import org.springframework.ws.config.annotation.WsConfigurer;
 import org.springframework.web.servlet.ModelAndView;
 import org.springframework.ws.server.EndpointInterceptor;
@@ -23,6 +25,7 @@ import org.springframework.ws.wsdl.wsdl11.DefaultWsdl11Definition;
 import org.springframework.xml.xsd.SimpleXsdSchema;
 import org.springframework.xml.xsd.XsdSchema;
 
+import java.io.IOException;
 import java.util.List;
 
 /**
@@ -106,8 +109,17 @@ public class WebServiceConfig implements WsConfigurer {
                 throws Exception {
             try {
                 return super.handle(request, response, handler);
-            } catch (SoapMessageCreationException e) {
+            } catch (SoapMessageCreationException | IOException e) {
                 if (response.isCommitted()) {
+                    throw e;
+                }
+                // Body chunked vượt mock-endpoint.max-request-size (RequestBodySizeLimitFilter ném khi đang đọc) — SAAJ
+                // bọc lỗi đọc thành lỗi tạo message mà không giữ cause → nhận ra qua dấu filter đặt trên request
+                if (RequestBodySizeLimitFilter.isBodyTooLarge(request)) {
+                    response.setStatus(HttpStatus.CONTENT_TOO_LARGE.value());
+                    return null;
+                }
+                if (e instanceof IOException) {
                     throw e;
                 }
                 log.warn("Rejected unreadable SOAP request ({})", e.getClass().getSimpleName());
@@ -115,6 +127,7 @@ public class WebServiceConfig implements WsConfigurer {
                 return null;
             }
         }
+
     }
 
     @Override
