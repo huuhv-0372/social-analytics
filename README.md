@@ -193,6 +193,7 @@ src/main/resources/
 | `DB_HOST` / `DB_PORT` / `DB_NAME` | — | Mặc định `localhost` / `33069` / `social_analytics`. `DB_PORT` là port MySQL mở ra máy host; app chạy trong Docker luôn dùng `mysql:3306` |
 | `APP_PORT` | — | Port app mở ra máy host khi chạy bằng Docker (mặc định `8080`) |
 | `SPRING_PROFILES_ACTIVE` | — | Profile của container `app` (mặc định `dev`). Đặt profile khác (vd `prod`) để chạy cấu hình production-safe, Swagger tắt |
+| `APP_TZ` | — | Múi giờ server của container `app` (compose truyền vào `TZ`, mặc định `Asia/Ho_Chi_Minh`; image không đặt thì chạy UTC). Quyết định ranh giới ngày của biểu đồ, giờ trong file Excel import/export, giờ hiển thị và log — DB luôn lưu UTC. Chạy image không qua compose thì đặt `-e TZ=Asia/Ho_Chi_Minh`; app chạy bằng JDK local dùng múi giờ của máy. Tên sai thì JVM lặng lẽ dùng `GMT` — kiểm tra dòng log `Server time zone` lúc khởi động |
 | `LOG_PATH` | — | Thư mục log file (mặc định `logs`; trong Docker là `/app/logs`) |
 | `FORWARD_HEADERS_STRATEGY` | — | Đặt `native` khi app chạy sau reverse proxy / load balancer tin cậy (kết thúc HTTPS) để link `Location` và cờ `Secure` của cookie theo `X-Forwarded-*`. Để trống khi truy cập trực tiếp — bật khi không có proxy thì client giả được scheme/host |
 | `ARTEMIS_USER` / `ARTEMIS_PASSWORD` | ✅ | Tài khoản broker Artemis |
