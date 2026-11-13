@@ -2,7 +2,7 @@
 
 Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp và theo dõi lượng tương tác (likes, shares, comments, followers) từ **Facebook** và **Twitter (X)**, xây dựng bằng Spring Boot.
 
-> 🚧 Dự án đang phát triển theo lộ trình 7 giai đoạn — xem [Roadmap](#roadmap). Các tính năng bên dưới đánh dấu ⏳ là **chưa triển khai**.
+> ✅ Đã hoàn thành đủ 7 giai đoạn của lộ trình — xem [Roadmap](#roadmap). Muốn xem nhanh mọi tính năng, làm theo [Kịch bản demo end-to-end](#kịch-bản-demo-end-to-end).
 
 ## Tính Năng
 
@@ -14,7 +14,9 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 | Background job | `updateSocialMetricsJob` chạy mỗi giờ, crawl metrics (mock API) đa luồng | 4 | ✅ |
 | JMS | Import xong → message `IMPORT_COMPLETED` → listener cập nhật thống kê (hiển thị trên dashboard), có retry + DLQ | 5 | ✅ |
 | Dashboard realtime | Chart.js cập nhật qua WebSocket (STOMP + SockJS), API `/api/chart-data` | 6 | ✅ |
-| SOAP WebService | Gọi WebService tỷ giá mock (Spring-WS), hiển thị trên dashboard | 7 | ⏳ |
+| SOAP WebService | Host endpoint tỷ giá mock + gọi lại bằng client Spring-WS, hiển thị trên dashboard (cache, dữ liệu cũ khi lỗi) | 7 | ✅ |
+| Excel generic nhiều model | Importer/exporter Reflection qua getter/setter, thêm import/export snapshot metric (`/api/import-metrics`, `/api/export-metrics`) | 7 | ✅ |
+| Integration test + coverage | Test end-to-end qua HTTP/JMS/WebSocket thật, báo cáo JaCoCo có ngưỡng tối thiểu | 7 | ✅ |
 
 ## Tech Stack
 
@@ -31,7 +33,7 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 - **WebService:** Spring-WS (SOAP) + JAXB
 - **View:** Thymeleaf + Thymeleaf Layout Dialect, Bootstrap 5, Chart.js, Vanilla JS
 - **API Docs:** springdoc-openapi 3.x (Swagger UI)
-- **Testing:** JUnit 5, Mockito, MockMvc, `@DataJpaTest`
+- **Testing:** JUnit 5, Mockito, MockMvc, `@DataJpaTest`, Testcontainers (MySQL), Awaitility, Spring-WS test; coverage JaCoCo
 - **Khác:** Lombok, SLF4J + Logback
 
 ## Prerequisites
@@ -75,7 +77,7 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 
    > Giữ key cố định: đổi key thì token đã lưu không giải mã được, user phải đăng nhập lại.
 
-2. **Chạy** — chọn 1 trong 2 cách:
+2. **Chạy** — chọn 1 trong 3 cách:
 
    **Cách A — Toàn bộ trong Docker (không cần JDK):**
 
@@ -92,6 +94,17 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
    mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=dev   # Windows
    ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev     # Mac/Linux
    ```
+
+   **Cách C — Đóng gói file JAR rồi chạy bằng `java -jar`** (JDK/JRE 25, hạ tầng như cách B):
+
+   ```bash
+   docker compose up -d mysql artemis
+
+   ./mvnw clean package -DskipTests          # → target/social-analytics-0.0.1-SNAPSHOT.jar (bỏ -DskipTests để chạy test + kiểm coverage, cần Docker)
+   java -jar target/social-analytics-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev
+   ```
+
+   JAR là file executable của Spring Boot (đã gồm mọi dependency, template, migration Flyway, `broker.properties`, file Excel mẫu). Chạy lệnh `java -jar` **tại thư mục gốc dự án** để app đọc được `.env` (`spring.config.import: optional:file:.env`) — chạy ở thư mục khác thì truyền biến môi trường trực tiếp. Không có `--spring.profiles.active=dev` là cấu hình production: Swagger tắt, endpoint SOAP mock tắt, broker Artemis phải là `native` (`docker compose up -d artemis`), cookie session `Secure` (cần HTTPS — chạy thử trên HTTP thì đặt `SESSION_COOKIE_SECURE=false`), dashboard hiện "Không lấy được tỷ giá" nếu không đặt `SOAP_MOCK_ENDPOINT_ENABLED=true` hoặc `SOAP_EXCHANGE_RATE_URL` tới dịch vụ SOAP khác.
 
    Container `app` (cách A) mặc định chạy profile `dev` (`SPRING_PROFILES_ACTIVE` trong `.env`). Không bật `dev` thì Swagger UI bị tắt.
 
@@ -121,8 +134,9 @@ docker compose run --rm maven test -Dtest=PostServiceTest   # Chạy 1 class tes
 # ưu tiên ./mvnw test bằng JDK local
 docker compose run --rm maven-testcontainers test
 
-# Hoặc bằng JDK local (cần MySQL đang chạy cho SocialAnalyticsApplicationTests)
-./mvnw test
+# Hoặc bằng JDK local (cần Docker đang chạy cho test Testcontainers)
+./mvnw test                          # Toàn bộ test + báo cáo coverage target/site/jacoco/index.html
+./mvnw clean verify                  # Test + kiểm ngưỡng coverage + đóng gói JAR (chạy trước khi tạo PR)
 ./mvnw clean package -DskipTests
 
 docker compose up -d --build app     # Build lại image và chạy app sau khi sửa code
@@ -133,13 +147,47 @@ Integration test end-to-end `EndToEndFlowTest` chạy app trên Tomcat thật (c
 
 Test repository (`@DataJpaTest`) chạy trên MySQL riêng do **Testcontainers** tạo (`TestcontainersConfiguration`, image `mysql:8.4`) — cần Docker đang chạy, không đọc/ghi vào DB dev. Container được tạo 1 lần và dùng chung cho các test class cùng cấu hình.
 
+**Coverage (JaCoCo 0.8.16):** `./mvnw test` sinh báo cáo `target/site/jacoco/index.html` (kèm `jacoco.xml` / `jacoco.csv` cho CI); `./mvnw verify` (hoặc `package` không `-DskipTests`) dừng build nếu coverage toàn project dưới ngưỡng **line 90% / branch 80%**. Không tính class JAXB sinh từ XSD và class `main`. Số đo lúc chốt (782 test, ~14 phút gồm khởi động container):
+
+| Chỉ số | Coverage |
+|---|---|
+| Line | 95,1% |
+| Branch | 84,0% |
+| Instruction | 96,0% |
+| Method | 98,5% |
+
+Package thấp nhất (line): `exception` 87% (nhánh hiếm của `ApiExceptionHandler`: vi phạm ràng buộc DB, lấy tên tham số của lỗi validate method), `messaging` 89% (`ImportCompletedDlqListener` đọc header message khi header thiếu / sai kiểu), `excel` 89% (nhánh phòng thủ của `GenericExcelImporter`: lỗi I/O khi mở file, DTO không khởi tạo được). `service`, `repository`, `controller`, `webservice`, `websocket` ≥ 97%.
+
+## Kịch Bản Demo End-to-End
+
+Đi qua toàn bộ tính năng của 7 giai đoạn trong khoảng 15 phút. Kịch bản này cũng được tự động hoá trong `EndToEndFlowTest` (`./mvnw test -Dtest=EndToEndFlowTest`, cần Docker).
+
+**Chuẩn bị:** `.env` đã điền đủ (Quick Start bước 1), chạy `docker compose up -d --build` (hoặc cách B/C với profile `dev`). Profile `dev` bật Swagger UI, endpoint SOAP mock, và chạy job crawl metrics **mỗi 5 phút** (production: mỗi giờ). Mở 2 tab: **Tab 1** http://localhost:8080/dashboard, **Tab 2** http://localhost:8080/swagger-ui.html.
+
+| # | Thao tác | Kết quả mong đợi | Tính năng |
+|---|---|---|---|
+| 1 | Tab 1 khi chưa đăng nhập | Bị chuyển về `/login`. `curl -i http://localhost:8080/api/posts` → `401` `ProblemDetail` | Deny-by-default |
+| 2 | Bấm **Login with Facebook** (hoặc X), đồng ý quyền | Về `/dashboard`: "Last updated time" = *Chưa cập nhật*, "Import statistics" = *Chưa có lần import nào*, badge realtime **Live**, card **Exchange rate** `1 USD = … VND` kèm giờ lấy | OAuth2 + PKCE, token mã hoá AES-GCM, WebSocket STOMP |
+| 3 | Mở http://localhost:8080/services/exchangeRate.wsdl, chạy lệnh `curl` ở mục [SOAP WebService](#soap-webservice-tỷ-giá) | WSDL sinh từ XSD; response có `rate` + `asOf`. Gửi `baseCurrency` = `usd` → Fault `Validation error` | Spring-WS endpoint + client |
+| 4 | Tab 2: `GET /api/import-posts/template` → *Download file*, rồi `POST /api/import-posts` chọn file vừa tải | `{"created":4,"failed":0,...}` kèm `importId` | Excel import (POI SAX + Reflection) |
+| 5 | Nhìn Tab 1 (không tải lại trang) | Trong vài giây card "Import statistics" đổi thành 1 lần import / 4 dòng thành công. Log: `Import … added to import statistics of user …` | JMS `IMPORT_COMPLETED` → listener → event `IMPORT_PROCESSED` → WebSocket |
+| 6 | Sửa file mẫu: dòng 2 đổi URL sang domain khác, dòng 3 ô Content gõ công thức `=1+1`, dòng 4 ô Content gõ `'=1+1` (dấu `'` → Excel lưu dạng text), import lại | Dòng 2 lỗi cột URL, dòng 3 lỗi `formulas are not allowed`, các dòng còn lại lưu (cập nhật bài cũ); thống kê tăng thêm 1 lần import | Validate theo dòng, từ chối công thức |
+| 7 | Chờ tới mốc 5 phút kế tiếp | Log `Update social metrics finished … succeeded …`. Tab 1 tự làm mới: "Last updated time" đổi, biểu đồ có điểm hôm nay cho provider bạn đã đăng nhập (job chỉ crawl bài cùng provider với tài khoản) | `@Scheduled` + ShedLock, `@Async` đa luồng, mock API |
+| 8 | Tab 2: `GET /api/import-metrics/template` → `POST /api/import-metrics` | `{"totalRows":8,"imported":8,"failed":0}`; Tab 1 tự cập nhật — đổi `<select>` sang 30 ngày / Followers để xem các series | Excel generic cho model thứ 2, event `METRICS_UPDATED` |
+| 9 | Tab 2: `GET /api/export-report`, `GET /api/export-metrics` → mở bằng Excel; gọi lại ngay trong 10 giây | 2 file `.xlsx` (giờ theo múi giờ server; Content `=1+1` của bước 6 hiện nguyên văn, không tính thành 2); lần gọi thứ 2 → `429` + `Retry-After` | Export streaming, chống Formula Injection, rate limit Bucket4j |
+| 10 | Import lại chính file `metrics-report-….xlsx` vừa export | Thành công (round-trip cùng 7 cột) — tạo thêm snapshot trùng thời điểm | Import/export đối xứng |
+| 11 | Mở cửa sổ ẩn danh, đăng nhập tài khoản **khác** (vd X), làm bước 4 | Dashboard cửa sổ thường **không** đổi; `GET /api/posts/{id}` với id bài của user kia → `404` | Event theo user, chống IDOR |
+| 12 | Gọi `POST /api/posts` bằng curl có cookie `SESSION` nhưng thiếu header `X-XSRF-TOKEN` | `403` | CSRF |
+| 13 | Dừng app, chạy lại với `SOAP_EXCHANGE_RATE_URL=http://localhost:9/services` | Dashboard vẫn hoạt động, card tỷ giá hiện *Không lấy được tỷ giá* (đang có số trong cache mà dịch vụ lỗi thì hiện số cũ + nhãn **Dữ liệu cũ** — xem `ExchangeRateServiceTest`) | Timeout + fail-safe |
+| 14 | *(Tuỳ chọn)* Artemis console http://localhost:8161 (khi dùng broker của compose) | Address `import-completed`, `DLQ.import-completed`, `dashboard-events` | Retry + DLQ trên broker |
+
 ## Project Structure
 
 Kiến trúc 3 lớp (3-Tier), package gốc `com.huuhv.socialanalytics`:
 
 ```
 src/main/java/com/huuhv/socialanalytics/
-├── config/          # SecurityConfig, AsyncConfig, JmsConfig, WebSocketConfig, WebSocketSecurityConfig, WebServiceConfig, OpenApiConfig, RateLimitConfig
+├── config/          # SecurityConfig, AsyncConfig, JmsConfig, WebSocketConfig, WebSocketSecurityConfig, WebServiceConfig, WebServiceClientConfig, OpenApiConfig, RateLimitConfig, SchedulerLockConfig, CryptoConfig ...
 │   └── properties/  # AppProperties (cấu hình app.*)
 ├── controller/
 │   ├── web/         # Controller Thymeleaf: /login, /dashboard, /posts ...
@@ -182,7 +230,7 @@ src/main/resources/
 | `config/OpenApiConfig` | Thông tin tài liệu OpenAPI (title, version); không khai security scheme — Swagger UI dùng session cookie sau khi đăng nhập OAuth2 |
 | `src/test/resources/application-test.yml` | Profile `test` chỉ dành cho test, không đóng gói vào JAR (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
 | `logback-spring.xml` | Log console + file theo ngày trong `logs/` (giữ 30 ngày), pattern kèm MDC `jobId` / `importId` |
-| `config/properties/AppProperties` | Bind cấu hình `app.*` (record + validation): `app.import.max-rows` / `max-uncompressed-size`, `app.export.max-rows` / `min-interval`, `app.token-encryption.key` |
+| `config/properties/AppProperties` | Bind cấu hình `app.*` (record + validation): `app.import.max-rows` / `max-uncompressed-size`, `app.export.max-rows` / `min-interval`, `app.token-encryption.key`, `app.async.social-crawler.*`, `app.jobs.*` (cron, timeout, khoá ShedLock), `app.oauth2.*` (timeout), `app.soap.exchange-rate.*` (URL, timeout, cặp tiền, cache) |
 | `.env` | Giá trị bí mật cho môi trường local — copy từ `.env.example` |
 | `docker-compose.yaml` | MySQL 8.4 + ActiveMQ Artemis + app, và service `maven` (JDK 25) để chạy lệnh Maven |
 | `src/main/resources/artemis/broker.properties` | Retry + DLQ của queue `import-completed` (6 lần giao, 2s ×2, tối đa 30s ≈ 1 phút → `DLQ.import-completed`; DLQ giao lại vô hạn khi lỗi DB, 5s ×2 tối đa 5 phút) và address multicast `dashboard-events` (event realtime cho dashboard) — nguồn duy nhất: broker Artemis của compose mount file này, broker embedded (dev/test) nạp từ classpath. Test ghi đè delay bằng `src/test/resources/artemis/broker-test.properties` |
@@ -218,7 +266,7 @@ Dùng **Flyway**, tự chạy khi ứng dụng khởi động. File đặt tại
 
 Quy ước: tên bảng số nhiều, snake_case (`users`, `posts`, `social_metrics`...); `ddl-auto=validate` nên schema chỉ thay đổi qua migration. **Không sửa migration đã commit** — muốn đổi schema thì thêm file version mới.
 
-Schema hiện tại (`V1__init_schema.sql` + `V1_1__rate_limit_buckets.sql` + `V2__social_accounts.sql`):
+Schema hiện tại (`V1` → `V7`):
 
 | Bảng | Mô tả | Ràng buộc / index chính |
 |---|---|---|
@@ -227,6 +275,12 @@ Schema hiện tại (`V1__init_schema.sql` + `V1_1__rate_limit_buckets.sql` + `V
 | `posts` | Bài viết FB/X, `user_id` là chủ sở hữu (phân quyền theo owner) | `uk_posts_user_provider_external_id (user_id, provider, external_id)` — nhiều user theo dõi được cùng 1 bài, FK `users` |
 | `social_metrics` | Snapshot likes/shares/comments/followers theo `collected_at` — mỗi lần crawl thêm 1 dòng | `idx_social_metrics_post_collected (post_id, collected_at)`, FK `posts` `ON DELETE CASCADE` |
 | `rate_limit_buckets` | Trạng thái bucket Bucket4j (giới hạn tần suất export theo user, dùng chung giữa các instance) — do Bucket4j đọc/ghi, không sửa tay | PK `id` (`action:userId:intervalMs`) |
+| `SPRING_SESSION` / `SPRING_SESSION_ATTRIBUTES` | Session HTTP (Spring Session JDBC) — nhiều instance dùng chung, restart không đăng xuất | Tên bảng do thư viện quy định (chữ hoa) |
+| `scheduler_locks` | Khoá ShedLock của job `@Scheduled` (mỗi lịch chỉ 1 instance chạy) | PK `name` |
+| `import_histories` | Mỗi lần import bài viết: số dòng total/created/updated/failed, trạng thái `PENDING` → `PROCESSED` / `DEAD_LETTERED` (outbox của message `IMPORT_COMPLETED`) | FK `users`, index `(status, updated_at)` |
+| `user_import_statistics` | Thống kê import cộng dồn theo user (card "Import statistics" trên dashboard) | PK `user_id`, FK `users` `ON DELETE CASCADE` |
+
+`social_accounts.last_updated_at` (V4) là lần job crawl metrics thành công gần nhất — nguồn của "Last updated time" trên dashboard.
 
 ## REST API
 

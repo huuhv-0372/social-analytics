@@ -27,6 +27,8 @@
         <artemis.version>2.44.0</artemis.version>
         <!-- Bản 4.x dùng JAXB 4 (jakarta.xml.bind), cùng version JAXB với BOM của Boot 4.0.7 (4.0.9) -->
         <jaxb2-maven-plugin.version>4.2.0</jaxb2-maven-plugin.version>
+        <!-- >= 0.8.14 mới đọc được class file Java 25 -->
+        <jacoco.version>0.8.16</jacoco.version>
     </properties>
 
     <dependencies>
@@ -237,6 +239,61 @@
                     <noGeneratedHeaderComments>true</noGeneratedHeaderComments>
                     <generateEpisode>false</generateEpisode>
                 </configuration>
+            </plugin>
+            <!-- Coverage: agent gắn vào surefire (property argLine), report HTML/XML/CSV ở target/site/jacoco sau
+                 phase test, ngưỡng tối thiểu kiểm ở phase verify (./mvnw verify / package không -DskipTests thì không
+                 kiểm). Bỏ class JAXB sinh từ XSD và class main -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <configuration>
+                    <excludes>
+                        <exclude>com/huuhv/socialanalytics/soap/exchangerate/**</exclude>
+                        <exclude>com/huuhv/socialanalytics/SocialAnalyticsApplication.class</exclude>
+                    </excludes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>check</id>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <!-- Đo lúc chốt (Task 7.5, 782 test): line 95,06%, branch 84,01% -->
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.90</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.80</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

@@ -46,7 +46,8 @@ Chức năng chính:
 Windows dùng `mvnw.cmd`, Mac/Linux dùng `./mvnw`:
 - Chạy dự án: `./mvnw spring-boot:run` (profile dev: `./mvnw spring-boot:run -Dspring-boot.run.profiles=dev`)
 - Build JAR bỏ qua test: `./mvnw clean package -DskipTests`
-- Chạy toàn bộ test: `./mvnw test`
+- Chạy toàn bộ test: `./mvnw test` (kèm báo cáo coverage JaCoCo `target/site/jacoco/index.html`)
+- Test + kiểm ngưỡng coverage + đóng gói JAR: `./mvnw clean verify` (chạy trước khi tạo PR); chạy JAR: `java -jar target/social-analytics-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev` tại thư mục gốc (để đọc `.env`)
 - Chạy 1 class test: `./mvnw test -Dtest=PostServiceTest`
 - Sinh class JAXB từ XSD/WSDL: `./mvnw generate-sources`
 - Docker (file `docker-compose.yaml` + `Dockerfile` ở root; trước tiên copy `.env.example` → `.env`, điền mật khẩu):
@@ -324,7 +325,8 @@ Mọi code phải tuân theo **OWASP Secure Coding Practices** và **OWASP Top 1
 - Integration test cuối: `@SpringBootTest` chạy luồng import → JMS → cập nhật thống kê → WebSocket event. Ưu tiên Testcontainers (MySQL) nếu có Docker, vì migration viết cho MySQL.
   > **Đã có (Task 7.4):** `EndToEndFlowTest` (package gốc, `RANDOM_PORT` + MySQL Testcontainers + Artemis embedded + SOAP mock): 1 kịch bản qua HTTP thật (session đăng nhập tạo bằng `config/AuthenticatedSessions` — `public`, dùng chung với `SessionPersistenceTest`/`WebSocketSecurityIntegrationTest`; CSRF: header = cookie `XSRF-TOKEN` raw, frame CONNECT = token mask từ `<meta>`) và STOMP over SockJS (`JacksonJsonMessageConverter`, payload `JsonNode`): `/dashboard` có tỷ giá (client SOAP trỏ cổng ngẫu nhiên bằng `setDefaultUri` trong `@BeforeEach`) → `POST /api/import-posts` (file mẫu) → JMS → thống kê → `IMPORT_PROCESSED` → `/api/chart-data` → `updateSocialMetricsJob()` (mock Facebook, ShedLock) → `METRICS_UPDATED` → `POST /api/import-metrics` (file mẫu) → `METRICS_UPDATED` → export 2 file đọc lại bằng `GenericExcelImporter`; user thứ 2 không nhận event / không thấy số liệu. Subscription chưa có RECEIPT → gửi payload thăm dò (`PROBE`) tới khi nhận được rồi mới kích hoạt luồng; chờ bằng hàng đợi có timeout / Awaitility, không `sleep`. Property `app.soap.exchange-rate.retry-after-failure=0` cố ý tạo context riêng (cache tỷ giá của context dùng chung có thể đang ghi lỗi) — kịch bản ~20s, khởi động context + container ~1–2 phút. Thêm giai đoạn mới thì nối tiếp kịch bản này.
 - Test bảo mật bắt buộc cho mỗi endpoint mới: chưa đăng nhập → 401/redirect login; thiếu CSRF → 403; truy cập tài nguyên của user khác → 403/404 (IDOR); input không hợp lệ → 400. Với Excel: file sai định dạng, quá dung lượng, chứa công thức (`=...`). Endpoint `/api/**` mới thêm vào ma trận `controller/api/ApiSecurityMatrixTest` (ẩn danh → 401 ProblemDetail, ghi thiếu/sai CSRF → 403, Service không được gọi); IDOR kiểm tra bằng query thật trong `service/OwnershipIsolationTest` (MySQL Testcontainers, user khác → `ResourceNotFoundException`, dữ liệu không đổi).
-- Mỗi tính năng mới phải có test; chạy `./mvnw test` pass trước khi tạo PR.
+- Mỗi tính năng mới phải có test; chạy `./mvnw clean verify` pass (test + ngưỡng coverage) trước khi tạo PR.
+  > **Đã có (Task 7.5):** `jacoco-maven-plugin` 0.8.16 (≥ 0.8.14 mới đọc class Java 25): `prepare-agent` gắn agent qua property `argLine` (cấu hình surefire thêm `argLine` phải giữ `@{argLine}`), `report` ở phase `test` → `target/site/jacoco/` (HTML/XML/CSV), `check` ở `verify`: BUNDLE **LINE ≥ 0.90, BRANCH ≥ 0.80** (đo lúc chốt 95,06% / 84,01%, 782 test). Exclude `soap/exchangerate/**` (JAXB sinh) và `SocialAnalyticsApplication`. Code mới làm tụt dưới ngưỡng → thêm test, không hạ ngưỡng / thêm exclude cho code viết tay. `SocialAnalyticsApplicationTests` chạy trên MySQL Testcontainers (trước đó kết nối DB trong `.env`) → toàn bộ `./mvnw test` chỉ cần Docker, không cần MySQL dev. `./mvnw clean package` ra JAR executable (~120 MB, gồm template Excel, migration, `artemis/broker.properties`, class JAXB) — đã chạy thử `java -jar … --spring.profiles.active=dev`.
 
 ## 8. Cấu Hình & Môi Trường
 - Dùng `application.yml` + `application-dev.yml` / `application-test.yml`. Giá trị nhạy cảm dùng `${ENV_VAR}`.
@@ -346,6 +348,6 @@ Cập nhật checkbox khi hoàn thành từng giai đoạn để AI biết phạ
 - [x] **4. Background Job & Multithread**: `updateSocialMetricsJob` mỗi giờ, mock API, màn hình "Last updated time".
 - [x] **5. JMS**: `IMPORT_COMPLETED` → listener cập nhật thống kê tổng hợp, retry + DLQ.
 - [x] **6. WebSocket + Chart**: broadcast khi metrics cập nhật, Chart.js realtime, `/api/chart-data`.
-- [ ] **7. Spring-WS + Reflection nâng cao + Tổng kết**: SOAP mock, generic export, integration test, đóng gói & demo end-to-end.
+- [x] **7. Spring-WS + Reflection nâng cao + Tổng kết**: SOAP mock, generic export, integration test, đóng gói & demo end-to-end.
 
 Chỉ triển khai trong phạm vi giai đoạn đang làm; không tự thêm tính năng của giai đoạn sau khi chưa được yêu cầu.
