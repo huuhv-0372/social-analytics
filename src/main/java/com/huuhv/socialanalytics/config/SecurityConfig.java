@@ -1,6 +1,7 @@
 package com.huuhv.socialanalytics.config;
 
 import com.huuhv.socialanalytics.security.ApiAuthenticationEntryPoint;
+import com.huuhv.socialanalytics.security.CsrfCookies;
 import com.huuhv.socialanalytics.security.CsrfHeaderOrFormTokenRequestHandler;
 import com.huuhv.socialanalytics.security.LoggingAccessDeniedHandler;
 import com.huuhv.socialanalytics.security.OAuth2LoginResultHandler;
@@ -114,7 +115,7 @@ public class SecurityConfig {
                         .accessDeniedHandler(new LoggingAccessDeniedHandler(restRequestMatcher)))
                 // Như csrf.spa() (cookie XSRF-TOKEN đọc được bằng JS) nhưng header nhận cả token đã mask từ <meta>
                 .csrf(csrf -> csrf
-                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                        .csrfTokenRepository(csrfTokenRepository())
                         .csrfTokenRequestHandler(new CsrfHeaderOrFormTokenRequestHandler())
                         // Ngoại lệ duy nhất: transport dự phòng của SockJS (xhr_send, xhr_streaming...) là POST do thư
                         // viện SockJS tự gửi, không gắn được header CSRF. CSRF của kết nối WebSocket được kiểm ở frame
@@ -146,6 +147,12 @@ public class SecurityConfig {
                         .successHandler(loginResultHandler)
                         .failureHandler(loginResultHandler));
         return http.build();
+    }
+
+    private static CookieCsrfTokenRepository csrfTokenRepository() {
+        CookieCsrfTokenRepository repository = CookieCsrfTokenRepository.withHttpOnlyFalse();
+        repository.setCookieName(CsrfCookies.NAME);
+        return repository;
     }
 
     private static LogoutSuccessHandler logoutSuccessHandler() {

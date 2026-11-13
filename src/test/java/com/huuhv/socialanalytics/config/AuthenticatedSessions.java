@@ -23,8 +23,17 @@ final class AuthenticatedSessions {
     private AuthenticatedSessions() {
     }
 
-    /** Tạo user mới + session đăng nhập của user đó; trả cookie {@code SESSION=...}. */
-    static String create(UserRepository userRepository, SessionRepository<? extends Session> sessionRepository) {
+    /**
+     * Session đã đăng nhập của 1 user.
+     *
+     * @param cookie cookie {@code SESSION=...} gửi kèm request
+     * @param userId id user nội bộ (tên principal STOMP)
+     */
+    record LoggedInSession(String cookie, long userId) {
+    }
+
+    /** Tạo user mới + session đăng nhập của user đó. */
+    static LoggedInSession create(UserRepository userRepository, SessionRepository<? extends Session> sessionRepository) {
         User user = userRepository.save(User.builder().displayName("Session test").build());
         AppOAuth2User principal = new AppOAuth2User(AuthorityUtils.createAuthorityList("OAUTH2_USER"),
                 Map.of("id", "session-test-" + user.getId(), "name", "Session test"), "id", user.getId(),
@@ -32,8 +41,8 @@ final class AuthenticatedSessions {
         String sessionId = saveSession(sessionRepository, HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY,
                 new SecurityContextImpl(new OAuth2AuthenticationToken(principal, principal.getAuthorities(), "facebook")));
         // DefaultCookieSerializer mã hoá Base64 id session trong cookie
-        return SecurityConfig.SESSION_COOKIE_NAME + "="
-                + Base64.getEncoder().encodeToString(sessionId.getBytes(StandardCharsets.UTF_8));
+        return new LoggedInSession(SecurityConfig.SESSION_COOKIE_NAME + "="
+                + Base64.getEncoder().encodeToString(sessionId.getBytes(StandardCharsets.UTF_8)), user.getId());
     }
 
     /** Kiểu session của JdbcIndexedSessionRepository không public → thao tác qua interface. */

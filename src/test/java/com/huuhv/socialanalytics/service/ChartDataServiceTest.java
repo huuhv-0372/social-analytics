@@ -1,9 +1,9 @@
 package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.dto.response.ChartDataResponse;
-import com.huuhv.socialanalytics.dto.response.ChartDataResponse.ImportStatistics;
 import com.huuhv.socialanalytics.dto.response.ChartDataResponse.ProviderSeries;
-import com.huuhv.socialanalytics.dto.response.ProviderMetricTotals;
+import com.huuhv.socialanalytics.dto.response.ImportStatisticsResponse;
+import com.huuhv.socialanalytics.dto.response.ProviderDailyTotals;
 import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.entity.UserImportStatistic;
 import com.huuhv.socialanalytics.enums.Provider;
@@ -12,6 +12,7 @@ import com.huuhv.socialanalytics.exception.BadRequestException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -28,9 +29,8 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -56,16 +56,15 @@ class ChartDataServiceTest {
     private ImportStatisticsService importStatisticsService;
 
     @Test
-    void aggregatesEachDayPerProviderWithNullBeforeFirstSnapshot() {
+    void placesAggregatedRowsOfOneQueryIntoDaysAndProvidersWithNullWhereNoData() {
         givenCurrentUser();
-        // Hết ngày theo giờ server (+07) = 17:00 UTC cùng ngày
-        when(socialMetricService.sumLatestByProvider(USER_ID, LocalDateTime.of(2026, 11, 5, 17, 0)))
-                .thenReturn(List.of());
-        when(socialMetricService.sumLatestByProvider(USER_ID, LocalDateTime.of(2026, 11, 6, 17, 0)))
-                .thenReturn(List.of(new ProviderMetricTotals(Provider.FACEBOOK, 10L, 1L, 2L, 100L)));
-        when(socialMetricService.sumLatestByProvider(USER_ID, LocalDateTime.of(2026, 11, 7, 17, 0)))
-                .thenReturn(List.of(new ProviderMetricTotals(Provider.TWITTER, 5L, 6L, 7L, 8L),
-                        new ProviderMetricTotals(Provider.FACEBOOK, 20L, 3L, 4L, 110L)));
+        // Hết ngày theo giờ server (+07) = 17:00 UTC cùng ngày; 3 ngày → 1 query với 3 mốc
+        List<LocalDateTime> dayEnds = List.of(LocalDateTime.of(2026, 11, 5, 17, 0),
+                LocalDateTime.of(2026, 11, 6, 17, 0), LocalDateTime.of(2026, 11, 7, 17, 0));
+        when(socialMetricService.sumLatestByProviderPerDay(USER_ID, dayEnds)).thenReturn(List.of(
+                totals(2, Provider.FACEBOOK, 10, 1, 2, 100),
+                totals(3, Provider.FACEBOOK, 20, 3, 4, 110),
+                totals(3, Provider.TWITTER, 5, 6, 7, 8)));
 
         ChartDataResponse chart = service(CLOCK).getChartData(3);
 
@@ -83,27 +82,25 @@ class ChartDataServiceTest {
     @Test
     void dayBoundariesFollowServerZoneAcrossDaylightSavingChange() {
         givenCurrentUser();
-        when(socialMetricService.sumLatestByProvider(eq(USER_ID), any())).thenReturn(List.of());
+        when(socialMetricService.sumLatestByProviderPerDay(eq(USER_ID), anyList())).thenReturn(List.of());
         ZoneId newYork = ZoneId.of("America/New_York");
         // DST bắt đầu 2026-03-08 lúc 02:00 (−05:00 → −04:00)
         Clock clock = Clock.fixed(Instant.parse("2026-03-09T12:00:00Z"), newYork);
 
         ChartDataResponse chart = service(clock).getChartData(3);
 
-        ArgumentCaptor<LocalDateTime> before = ArgumentCaptor.forClass(LocalDateTime.class);
-        verify(socialMetricService, times(3)).sumLatestByProvider(eq(USER_ID), before.capture());
         assertThat(chart.labels()).containsExactly(
                 LocalDate.of(2026, 3, 7), LocalDate.of(2026, 3, 8), LocalDate.of(2026, 3, 9));
-        assertThat(before.getAllValues()).containsExactly(
+        verify(socialMetricService).sumLatestByProviderPerDay(USER_ID, List.of(
                 LocalDateTime.of(2026, 3, 8, 5, 0),   // 03-08 00:00 EST
                 LocalDateTime.of(2026, 3, 9, 4, 0),   // 03-09 00:00 EDT (ngày 03-08 chỉ có 23 giờ)
-                LocalDateTime.of(2026, 3, 10, 4, 0));
+                LocalDateTime.of(2026, 3, 10, 4, 0)));
     }
 
     @Test
     void includesLastUpdatedAtAndImportStatisticsAsInstants() {
         givenCurrentUser();
-        when(socialMetricService.sumLatestByProvider(eq(USER_ID), any())).thenReturn(List.of());
+        when(socialMetricService.sumLatestByProviderPerDay(eq(USER_ID), anyList())).thenReturn(List.of());
         when(socialAccountService.findLastMetricsUpdatedAt(USER_ID))
                 .thenReturn(Optional.of(LocalDateTime.of(2026, 11, 7, 3, 0, 5)));
         when(importStatisticsService.findByUserId(USER_ID)).thenReturn(Optional.of(UserImportStatistic.builder()
@@ -114,14 +111,15 @@ class ChartDataServiceTest {
 
         assertThat(chart.labels()).containsExactly(LocalDate.of(2026, 11, 7));
         assertThat(chart.lastUpdatedAt()).isEqualTo(Instant.parse("2026-11-07T03:00:05Z"));
-        assertThat(chart.importStatistics())
-                .isEqualTo(new ImportStatistics(3, 25, 20, 5, Instant.parse("2026-11-06T18:15:00Z")));
+        // Cùng DTO với trang /dashboard
+        assertThat(chart.importStatistics()).isEqualTo(
+                new ImportStatisticsResponse(3, 25, 20, 5, Instant.parse("2026-11-06T18:15:00Z")));
     }
 
     @Test
     void emptyValuesWhenUserHasNoData() {
         givenCurrentUser();
-        when(socialMetricService.sumLatestByProvider(eq(USER_ID), any())).thenReturn(List.of());
+        when(socialMetricService.sumLatestByProviderPerDay(eq(USER_ID), anyList())).thenReturn(List.of());
 
         ChartDataResponse chart = service(CLOCK).getChartData(2);
 
@@ -138,15 +136,18 @@ class ChartDataServiceTest {
     }
 
     @Test
-    void maxDaysRunsOneQueryPerDay() {
+    void maxDaysIsStillOneQuery() {
         givenCurrentUser();
-        when(socialMetricService.sumLatestByProvider(eq(USER_ID), any())).thenReturn(List.of());
+        when(socialMetricService.sumLatestByProviderPerDay(eq(USER_ID), anyList())).thenReturn(List.of());
 
         ChartDataResponse chart = service(CLOCK).getChartData(ChartDataService.MAX_DAYS);
 
         assertThat(chart.labels()).hasSize(ChartDataService.MAX_DAYS)
                 .startsWith(LocalDate.of(2026, 10, 9)).endsWith(LocalDate.of(2026, 11, 7));
-        verify(socialMetricService, times(ChartDataService.MAX_DAYS)).sumLatestByProvider(eq(USER_ID), any());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<LocalDateTime>> dayEnds = ArgumentCaptor.forClass(List.class);
+        verify(socialMetricService).sumLatestByProviderPerDay(eq(USER_ID), dayEnds.capture());
+        assertThat(dayEnds.getValue()).hasSize(ChartDataService.MAX_DAYS);
     }
 
     @Test
@@ -157,9 +158,22 @@ class ChartDataServiceTest {
         verifyNoInteractions(socialMetricService, socialAccountService, importStatisticsService);
     }
 
+    @ParameterizedTest
+    @CsvSource({
+            "Asia/Ho_Chi_Minh, Asia/Ho_Chi_Minh",
+            // -Duser.timezone=GMT+07:00: trình duyệt không hiểu "GMT+07:00", hiểu "+07:00"
+            "GMT+07:00, +07:00",
+            "Z, UTC",
+            "UTC, UTC",
+            "Etc/UTC, UTC"})
+    void zoneIsSentInFormBrowsersUnderstand(String serverZone, String expected) {
+        assertThat(ChartDataService.clientZoneId(ZoneId.of(serverZone))).isEqualTo(expected);
+    }
+
     private ChartDataService service(Clock clock) {
-        return new ChartDataService(currentUserService, socialMetricService, socialAccountService,
-                importStatisticsService, clock);
+        // DashboardService thật (dựng từ mock) — kiểm tra luôn việc dùng chung cách tính với trang /dashboard
+        return new ChartDataService(currentUserService, socialMetricService,
+                new DashboardService(currentUserService, socialAccountService, importStatisticsService, clock), clock);
     }
 
     private void givenCurrentUser() {
@@ -169,5 +183,14 @@ class ChartDataServiceTest {
     /** {@code List.of} không nhận {@code null}. */
     private static List<Long> values(Long... values) {
         return Arrays.asList(values);
+    }
+
+    private static ProviderDailyTotals totals(long dayIndex, Provider provider, long likes, long shares, long comments,
+                                              long followers) {
+        return new Totals(dayIndex, provider, likes, shares, comments, followers);
+    }
+
+    private record Totals(Long getDayIndex, Provider getProvider, Long getLikes, Long getShares, Long getComments,
+                          Long getFollowers) implements ProviderDailyTotals {
     }
 }

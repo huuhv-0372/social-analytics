@@ -128,9 +128,9 @@ class ImportCompletedFlowIntegrationTest {
             assertThat(history.getProcessedAt()).isNotNull();
         });
         verify(importStatisticsService).applyImport(importId, owner.getId());
-        // Sau khi thống kê commit: event IMPORT_PROCESSED đi qua JMS topic tới WebSocket của instance này
+        // Sau khi thống kê commit: event IMPORT_PROCESSED chỉ cho owner, đi qua JMS topic tới WebSocket của instance này
         verify(dashboardEventBroadcaster, timeout(WAIT_MS))
-                .broadcast(eq(DashboardEventType.IMPORT_PROCESSED), occurredInThisTest());
+                .sendToUsers(eq(DashboardEventType.IMPORT_PROCESSED), occurredInThisTest(), eq(List.of(owner.getId())));
     }
 
     @Test
@@ -148,7 +148,7 @@ class ImportCompletedFlowIntegrationTest {
                 .extracting(UserImportStatistic::getTotalImports, UserImportStatistic::getTotalRows)
                 .containsExactly(1L, 1L);
         // Message trùng không cộng gì → không có event thứ 2
-        verify(dashboardEventBroadcaster, after(1_000).times(1)).broadcast(any(), occurredInThisTest());
+        verify(dashboardEventBroadcaster, after(1_000).times(1)).sendToUsers(any(), occurredInThisTest(), any());
     }
 
     @Test
@@ -159,7 +159,7 @@ class ImportCompletedFlowIntegrationTest {
         });
 
         verify(importStatisticsService, after(1_500).never()).applyImport(anyLong(), any());
-        verify(dashboardEventBroadcaster, never()).broadcast(any(), occurredInThisTest());
+        verify(dashboardEventBroadcaster, never()).sendToUsers(any(), occurredInThisTest(), any());
         assertThat(importHistoryRepository.count()).isZero();
         assertThat(userImportStatisticRepository.findById(owner.getId())).isEmpty();
     }

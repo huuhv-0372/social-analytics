@@ -11,8 +11,11 @@ import org.springframework.context.ApplicationEventPublisher;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.List;
+import java.util.Set;
 
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
 class DashboardEventServiceTest {
@@ -30,16 +33,26 @@ class DashboardEventServiceTest {
     }
 
     @Test
-    void metricsUpdatedPublishesEventWithCurrentInstant() {
-        service.metricsUpdated();
+    void metricsUpdatedTargetsOwnersOfUpdatedAccountsOnce() {
+        // Trùng id (user có cả Facebook lẫn X) → 1 user
+        service.metricsUpdated(List.of(7L, 9L, 7L));
 
-        verify(eventPublisher).publishEvent(new DashboardChangedEvent(DashboardEventType.METRICS_UPDATED, NOW));
+        verify(eventPublisher).publishEvent(
+                new DashboardChangedEvent(DashboardEventType.METRICS_UPDATED, NOW, Set.of(7L, 9L)));
     }
 
     @Test
-    void importProcessedPublishesEventWithCurrentInstant() {
-        service.importProcessed();
+    void metricsUpdatedWithoutUsersPublishesNothing() {
+        service.metricsUpdated(Set.of());
 
-        verify(eventPublisher).publishEvent(new DashboardChangedEvent(DashboardEventType.IMPORT_PROCESSED, NOW));
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void importProcessedTargetsOnlyTheOwner() {
+        service.importProcessed(7L);
+
+        verify(eventPublisher).publishEvent(
+                new DashboardChangedEvent(DashboardEventType.IMPORT_PROCESSED, NOW, Set.of(7L)));
     }
 }

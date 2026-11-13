@@ -1,20 +1,29 @@
 // Dashboard realtime: biểu đồ Chart.js + "Last updated time" + thống kê import của user đang đăng nhập.
 // - Dữ liệu: GET /api/chart-data (đã lọc theo owner ở server). URL lấy từ data-* của #dashboard (theo context path).
-// - Realtime: STOMP over SockJS, SUBSCRIBE /topic/metrics. Event chỉ là tín hiệu {type, occurredAt} gửi tới mọi user
-//   → nhận event thì gọi lại API (debounce + jitter để mọi dashboard không cùng gọi 1 lúc).
+// - Realtime: STOMP over SockJS, SUBSCRIBE đích riêng của user (data-metrics-destination, StompDestinations). Server
+//   chỉ gửi cho user có dữ liệu vừa đổi; event là tín hiệu {type, occurredAt} → gọi lại API (debounce + jitter).
+// - Lần tải đầu chạy sau khi SUBSCRIBE (1 request/trang, không lỡ event); kết nối lại → tải lại; kết nối lại thất bại
+//   → giãn dần, định kỳ kiểm tra session (401 → trang login).
 // - Chart tạo đúng 1 lần (new Chart); các lần sau chỉ đổi chart.data rồi chart.update().
 // - Mọi dữ liệu từ server/WebSocket ghi vào DOM bằng textContent / thuộc tính, không dùng innerHTML (OWASP A05).
 (function () {
     'use strict';
 
-    const METRICS_TOPIC = '/topic/metrics';
-    const EVENT_TYPES = new Set(['METRICS_UPDATED', 'IMPORT_PROCESSED']);
     const REFRESH_DEBOUNCE_MS = 500;
-    // Event broadcast tới mọi dashboard cùng lúc → giãn ngẫu nhiên lời gọi API (không phải giá trị bảo mật, Math.random đủ)
+    // Giãn ngẫu nhiên lời gọi API: sau khi server khởi động lại, mọi dashboard kết nối lại cùng lúc
+    // (không phải giá trị bảo mật, Math.random đủ)
     const REFRESH_JITTER_MS = 3000;
     const RECONNECT_DELAY_MS = 5000;
+    // Kết nối lại thất bại liên tiếp → giãn dần (5s, 10s, 20s… tối đa 60s), không dồn request vào server đang lỗi
+    const MAX_RECONNECT_DELAY_MS = 60000;
+    // Sau ngần này lần đóng liên tiếp mà chưa CONNECT được → gọi API kiểm tra session: handshake bị 401 (session hết
+    // hạn) chỉ làm socket đóng, không có ERROR frame
+    const SESSION_CHECK_AFTER_FAILED_CONNECTS = 3;
+    // Lần tải đầu đợi kết nối realtime (SUBSCRIBE trước rồi mới tải → không lỡ event, chỉ 1 request); quá thời gian
+    // này thì tải luôn, không để trang trống
+    const INITIAL_LOAD_FALLBACK_MS = 2000;
     const HEARTBEAT_MS = 10000;
-    // CONNECT bị từ chối liên tiếp (CSRF token cũ sau khi đăng nhập lại ở tab khác...) → dừng, không thử lại mãi
+    // CONNECT bị từ chối liên tiếp (token đã lấy mới mỗi lần — lỗi khác: quyền, server) → dừng, không thử lại mãi
     const MAX_STOMP_ERRORS = 3;
     const PROVIDERS = {
         FACEBOOK: { label: 'Facebook', color: '#1877f2' },
@@ -30,6 +39,7 @@
     const urls = {
         chartData: root.dataset.chartDataUrl,
         ws: root.dataset.wsUrl,
+        metricsDestination: root.dataset.metricsDestination,
         login: root.dataset.loginUrl
     };
     const byId = (id) => document.getElementById(id);
@@ -44,7 +54,12 @@
     let refreshPending = false;
     let stompClient = null;
     let stompErrors = 0;
-    let connectedBefore = false;
+    // Số lần socket đóng liên tiếp chưa vào được onConnect
+    let failedConnects = 0;
+    // Hẹn tải dữ liệu nếu realtime chưa kết nối kịp (null = đã tải / không chờ)
+    let initialLoadTimer = null;
+    // ERROR frame → Spring đóng socket ngay sau đó: giữ badge lỗi, không đổi thành "Reconnecting…"
+    let closedByStompError = false;
 
     // ---------------------------------------------------------------- dữ liệu
 
@@ -198,21 +213,50 @@
             element.removeAttribute('datetime');
             return;
         }
-        const parts = {};
-        new Intl.DateTimeFormat('en-CA', {
-            timeZone: zone,
-            year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-            timeZoneName: 'longOffset'
-        }).formatToParts(new Date(instant)).forEach((part) => {
-            parts[part.type] = part.value;
-        });
-        // longOffset: "GMT+07:00"; UTC là "GMT"
-        const offset = parts.timeZoneName === 'GMT' ? '+00:00' : parts.timeZoneName.replace('GMT', '');
-        const date = parts.year + '-' + parts.month + '-' + parts.day;
-        const clock = parts.hour + ':' + parts.minute + ':' + parts.second;
-        element.textContent = date + ' ' + clock + ' ' + offset;
-        element.dateTime = date + 'T' + clock + offset;
+        const date = new Date(instant);
+        // Múi giờ server không phải tên IANA (vd -Duser.timezone=GMT+07:00) hoặc trình duyệt chưa hỗ trợ longOffset
+        // → hiển thị theo giờ máy người dùng, không để lỗi định dạng làm hỏng phần còn lại của dashboard
+        const formatted = formatInZone(date, zone) || formatInBrowserZone(date);
+        element.textContent = formatted.date + ' ' + formatted.clock + ' ' + formatted.offset;
+        element.dateTime = formatted.date + 'T' + formatted.clock + formatted.offset;
+    }
+
+    function formatInZone(date, zone) {
+        try {
+            const parts = {};
+            new Intl.DateTimeFormat('en-CA', {
+                timeZone: zone,
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+                timeZoneName: 'longOffset'
+            }).formatToParts(date).forEach((part) => {
+                parts[part.type] = part.value;
+            });
+            // longOffset: "GMT+07:00"; UTC là "GMT"
+            const offset = parts.timeZoneName === 'GMT' ? '+00:00' : (parts.timeZoneName || '').replace('GMT', '');
+            if (!/^[+-]\d{2}:\d{2}$/.test(offset)) {
+                return null;
+            }
+            return {
+                date: parts.year + '-' + parts.month + '-' + parts.day,
+                clock: parts.hour + ':' + parts.minute + ':' + parts.second,
+                offset: offset
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function formatInBrowserZone(date) {
+        const pad = (value) => String(value).padStart(2, '0');
+        const minutesEast = -date.getTimezoneOffset();
+        const sign = minutesEast >= 0 ? '+' : '-';
+        const absolute = Math.abs(minutesEast);
+        return {
+            date: date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()),
+            clock: pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds()),
+            offset: sign + pad(Math.floor(absolute / 60)) + ':' + pad(absolute % 60)
+        };
     }
 
     function showError(message) {
@@ -236,7 +280,8 @@
         } catch (e) {
             return;
         }
-        if (event && EVENT_TYPES.has(event.type)) {
+        // Không whitelist loại event (server có thể thêm loại mới): mọi event có type đều là tín hiệu làm mới
+        if (event && typeof event.type === 'string' && event.type !== '') {
             scheduleRefresh();
         }
     }
@@ -246,27 +291,46 @@
             setStatus('Realtime unavailable', 'secondary');
             return;
         }
+        // activate() do connectThenLoad gọi (kèm hẹn tải dữ liệu)
         stompClient = new window.StompJs.Client({
             // Không dùng transport iframe (bị chặn bởi X-Frame-Options: DENY)
             webSocketFactory: () => new window.SockJS(urls.ws, null,
                 { transports: ['websocket', 'xhr-streaming', 'xhr-polling'] }),
-            // CSRF ở frame CONNECT: token đã mask từ <meta name="_csrf"> (csrf.js)
-            connectHeaders: window.csrfHeaders(),
+            // CSRF ở frame CONNECT: đọc token hiện tại trong cookie ngay trước MỖI lần kết nối (cookie có thể đã đổi
+            // từ khi tải trang — đăng nhập lại ở tab khác); không có cookie thì dùng token trong <meta> (csrf.js)
+            beforeConnect: () => {
+                try {
+                    stompClient.connectHeaders = window.currentCsrfHeaders();
+                } catch (e) {
+                    // stompjs không bắt lỗi ở đây (kết nối treo, không thử lại) → dùng token trong <meta>
+                    stompClient.connectHeaders = window.csrfHeaders();
+                }
+            },
             reconnectDelay: RECONNECT_DELAY_MS,
+            reconnectTimeMode: window.StompJs.ReconnectionTimeMode.EXPONENTIAL,
+            maxReconnectDelay: MAX_RECONNECT_DELAY_MS,
             heartbeatIncoming: HEARTBEAT_MS,
             heartbeatOutgoing: HEARTBEAT_MS,
             onConnect: () => {
                 stompErrors = 0;
+                failedConnects = 0;
+                closedByStompError = false;
                 setStatus('Live', 'success');
-                stompClient.subscribe(METRICS_TOPIC, onEvent);
-                if (connectedBefore) {
-                    // Có thể đã lỡ event trong lúc mất kết nối
+                stompClient.subscribe(urls.metricsDestination, onEvent);
+                if (initialLoadTimer !== null) {
+                    // Lần tải đầu: đã SUBSCRIBE → tải ngay, không cần tải lại lần nữa
+                    window.clearTimeout(initialLoadTimer);
+                    initialLoadTimer = null;
+                    refresh();
+                } else {
+                    // Kết nối lại (hoặc dữ liệu đã tải trước khi SUBSCRIBE): event phát lúc mất kết nối không tới
+                    // client → tải lại
                     scheduleRefresh();
                 }
-                connectedBefore = true;
             },
             onStompError: () => {
                 stompErrors += 1;
+                closedByStompError = true;
                 if (stompErrors >= MAX_STOMP_ERRORS) {
                     stopRealtime();
                     setStatus('Realtime off — reload page', 'secondary');
@@ -277,12 +341,17 @@
                 refresh();
             },
             onWebSocketClose: () => {
-                if (stompClient !== null && stompClient.active) {
-                    setStatus('Reconnecting…', 'warning');
+                if (closedByStompError || stompClient === null || !stompClient.active) {
+                    return;
+                }
+                setStatus('Reconnecting…', 'warning');
+                failedConnects += 1;
+                if (failedConnects % SESSION_CHECK_AFTER_FAILED_CONNECTS === 0) {
+                    // Session hết hạn → API trả 401 → dừng realtime, chuyển về trang login
+                    refresh();
                 }
             }
         });
-        stompClient.activate();
     }
 
     function stopRealtime() {
@@ -300,15 +369,29 @@
     });
     daysSelect.addEventListener('change', refresh);
     window.addEventListener('pagehide', stopRealtime);
-    // Trang khôi phục từ bfcache (nút Back): kết nối lại + tải dữ liệu mới
+    // Trang khôi phục từ bfcache (nút Back): kết nối lại rồi tải dữ liệu mới
     window.addEventListener('pageshow', (event) => {
         if (event.persisted && stompClient !== null) {
             stompErrors = 0;
-            stompClient.activate();
-            refresh();
+            failedConnects = 0;
+            connectThenLoad();
         }
     });
 
-    refresh();
+    /** Kết nối realtime, tải dữ liệu ngay sau khi SUBSCRIBE (onConnect); kết nối chậm thì tải trước. */
+    function connectThenLoad() {
+        window.clearTimeout(initialLoadTimer);
+        initialLoadTimer = window.setTimeout(() => {
+            initialLoadTimer = null;
+            refresh();
+        }, INITIAL_LOAD_FALLBACK_MS);
+        stompClient.activate();
+    }
+
     startRealtime();
+    if (stompClient !== null) {
+        connectThenLoad();
+    } else {
+        refresh(); // không có thư viện realtime → chỉ tải 1 lần
+    }
 })();

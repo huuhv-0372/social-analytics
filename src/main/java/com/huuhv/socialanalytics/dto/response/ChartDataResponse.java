@@ -1,8 +1,6 @@
 package com.huuhv.socialanalytics.dto.response;
 
-import com.huuhv.socialanalytics.entity.UserImportStatistic;
 import com.huuhv.socialanalytics.enums.Provider;
-import com.huuhv.socialanalytics.util.UtcDateTimes;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -20,26 +18,15 @@ import java.util.List;
  * @param importStatistics thống kê import tổng hợp; {@code null} = chưa có lần import nào được tổng hợp
  */
 public record ChartDataResponse(String zone, List<LocalDate> labels, List<ProviderSeries> series,
-                                Instant lastUpdatedAt, ImportStatistics importStatistics) {
+                                Instant lastUpdatedAt, ImportStatisticsResponse importStatistics) {
 
     /**
      * Giá trị metric của 1 provider theo từng ngày trong {@code labels} (cùng độ dài, cùng thứ tự). Mỗi bài lấy
      * snapshot mới nhất tính tới hết ngày đó (bài không được crawl trong ngày giữ giá trị trước đó); likes / shares /
-     * comments = tổng các bài, followers = lớn nhất trong các bài (số người theo dõi tác giả, không cộng lặp);
+     * comments = tổng các bài, followers = của snapshot mới nhất theo thời gian (số người theo dõi tác giả);
      * {@code null} = chưa có bài nào của provider có snapshot tới ngày đó.
      */
     public record ProviderSeries(Provider provider, List<Long> likes, List<Long> shares, List<Long> comments,
                                  List<Long> followers) {
-    }
-
-    /** Thống kê import tổng hợp ({@code user_import_statistics}). */
-    public record ImportStatistics(long totalImports, long totalRows, long successRows, long failedRows,
-                                   Instant lastImportAt) {
-
-        public static ImportStatistics from(UserImportStatistic statistic) {
-            return new ImportStatistics(statistic.getTotalImports(), statistic.getTotalRows(),
-                    statistic.getSuccessRows(), statistic.getFailedRows(),
-                    UtcDateTimes.toInstant(statistic.getLastImportAt()));
-        }
     }
 }

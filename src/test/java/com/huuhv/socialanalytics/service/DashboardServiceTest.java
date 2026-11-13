@@ -47,27 +47,22 @@ class DashboardServiceTest {
     }
 
     @Test
-    void convertsUtcLastUpdatedAtOfCurrentUserToServerTimeZone() {
+    void lastUpdatedAtOfCurrentUserIsUtcInstantWithServerZoneForDisplay() {
         givenCurrentUser(7L);
         when(socialAccountService.findLastMetricsUpdatedAt(7L))
                 .thenReturn(Optional.of(LocalDateTime.of(2026, 11, 7, 3, 0, 5)));
 
-        assertThat(service.getDashboard().lastUpdatedAt())
+        DashboardResponse dashboard = service.getDashboard();
+
+        assertThat(dashboard.lastUpdatedAt()).isEqualTo(Instant.parse("2026-11-07T03:00:05Z"));
+        // Template hiển thị theo múi giờ server (qua ngày khi đổi từ UTC sang +07)
+        assertThat(dashboard.zone()).isEqualTo(SERVER_ZONE);
+        assertThat(dashboard.lastUpdatedAt().atZone(dashboard.zone()))
                 .isEqualTo(ZonedDateTime.of(2026, 11, 7, 10, 0, 5, 0, SERVER_ZONE));
     }
 
     @Test
-    void conversionCrossesDateBoundary() {
-        givenCurrentUser(7L);
-        when(socialAccountService.findLastMetricsUpdatedAt(7L))
-                .thenReturn(Optional.of(LocalDateTime.of(2026, 11, 6, 20, 30)));
-
-        assertThat(service.getDashboard().lastUpdatedAt())
-                .isEqualTo(ZonedDateTime.of(2026, 11, 7, 3, 30, 0, 0, SERVER_ZONE));
-    }
-
-    @Test
-    void importStatisticsOfCurrentUserWithLastImportInServerTimeZone() {
+    void importStatisticsOfCurrentUserUseSameDtoAsChartApi() {
         givenCurrentUser(7L);
         when(importStatisticsService.findByUserId(7L)).thenReturn(Optional.of(UserImportStatistic.builder()
                 .userId(7L).totalImports(3).totalRows(25).successRows(20).failedRows(5)
@@ -76,7 +71,7 @@ class DashboardServiceTest {
         DashboardResponse dashboard = service.getDashboard();
 
         assertThat(dashboard.importStatistics()).isEqualTo(new ImportStatisticsResponse(3, 25, 20, 5,
-                ZonedDateTime.of(2026, 11, 7, 1, 15, 0, 0, SERVER_ZONE)));
+                Instant.parse("2026-11-06T18:15:00Z")));
         verify(importStatisticsService).findByUserId(7L);
     }
 

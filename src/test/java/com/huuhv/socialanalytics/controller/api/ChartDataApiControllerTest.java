@@ -3,7 +3,7 @@ package com.huuhv.socialanalytics.controller.api;
 import com.huuhv.socialanalytics.config.SecurityConfig;
 import com.huuhv.socialanalytics.config.WebConfig;
 import com.huuhv.socialanalytics.dto.response.ChartDataResponse;
-import com.huuhv.socialanalytics.dto.response.ChartDataResponse.ImportStatistics;
+import com.huuhv.socialanalytics.dto.response.ImportStatisticsResponse;
 import com.huuhv.socialanalytics.dto.response.ChartDataResponse.ProviderSeries;
 import com.huuhv.socialanalytics.enums.Provider;
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
@@ -64,7 +64,7 @@ class ChartDataApiControllerTest {
                 List.of(new ProviderSeries(Provider.FACEBOOK, Arrays.asList(null, 10L), Arrays.asList(null, 1L),
                         Arrays.asList(null, 2L), Arrays.asList(null, 100L))),
                 Instant.parse("2026-11-07T03:00:05Z"),
-                new ImportStatistics(3, 25, 20, 5, Instant.parse("2026-11-06T18:15:00Z"))));
+                new ImportStatisticsResponse(3, 25, 20, 5, Instant.parse("2026-11-06T18:15:00Z"))));
 
         mockMvc.perform(get("/api/chart-data").param("days", "2").with(oauth2Login()))
                 .andExpect(status().isOk())

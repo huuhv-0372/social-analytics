@@ -14,16 +14,19 @@ import org.springframework.web.socket.config.annotation.WebSocketTransportRegist
 
 /**
  * STOMP over WebSocket (SockJS) cho dashboard realtime: endpoint {@value StompDestinations#ENDPOINT}, app prefix
- * {@value StompDestinations#APPLICATION_PREFIX}, simple broker {@value StompDestinations#BROKER_PREFIX}.
+ * {@value StompDestinations#APPLICATION_PREFIX}, simple broker {@value StompDestinations#BROKER_PREFIX}, đích theo user
+ * {@value StompDestinations#USER_PREFIX} (event chỉ gửi cho user có dữ liệu thay đổi).
  * <ul>
+ *     <li>Tên principal STOMP = id user nội bộ, gán ở frame CONNECT cho mọi transport SockJS
+ *     ({@link StompUserIdChannelInterceptor}) — {@code convertAndSendToUser(userId, …)} tới đúng user.</li>
  *     <li>Handshake là request HTTP đi qua filter chain của {@link SecurityConfig}: chưa đăng nhập → 401. Phân quyền
  *     frame + CSRF ở frame CONNECT: {@link WebSocketSecurityConfig}.</li>
  *     <li>Không gọi {@code setAllowedOriginPatterns}: Spring chỉ nhận handshake cùng origin (chống Cross-Site
  *     WebSocket Hijacking).</li>
  *     <li>Giới hạn kích thước frame client gửi lên (A06): client chỉ gửi CONNECT/SUBSCRIBE, vài trăm byte.</li>
  *     <li>Lỗi xử lý frame (gồm bị từ chối) → ERROR frame chung chung + log ({@link StompAccessDeniedErrorHandler}).</li>
- *     <li>Simple broker giữ subscription trong RAM từng instance — chạy nhiều instance thì event phải được phát tới
- *     mọi instance trước khi gửi xuống client.</li>
+ *     <li>Simple broker và registry user giữ session trong RAM từng instance — chạy nhiều instance thì event phải được
+ *     phát tới mọi instance (JMS topic) trước khi gửi xuống client.</li>
  * </ul>
  * {@code @EnableWebSocketMessageBroker} đăng ký bean {@code TaskScheduler} {@code messageBrokerTaskScheduler}; vì vậy
  * {@link AsyncConfig} phải tự khai báo {@code taskScheduler} cho {@code @Scheduled} (xem javadoc ở đó).
@@ -62,6 +65,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
         registry.setApplicationDestinationPrefixes(StompDestinations.APPLICATION_PREFIX);
+        registry.setUserDestinationPrefix(StompDestinations.USER_PREFIX);
         registry.enableSimpleBroker(StompDestinations.BROKER_PREFIX)
                 .setHeartbeatValue(new long[]{HEARTBEAT_MILLIS, HEARTBEAT_MILLIS})
                 .setTaskScheduler(messageBrokerTaskScheduler);

@@ -2,6 +2,7 @@ package com.huuhv.socialanalytics.controller.web;
 
 import com.huuhv.socialanalytics.dto.response.DashboardResponse;
 import com.huuhv.socialanalytics.service.DashboardService;
+import com.huuhv.socialanalytics.websocket.StompDestinations;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -28,6 +29,9 @@ public class DashboardController {
         DashboardResponse dashboard = dashboardService.getDashboard();
         model.addAttribute("lastUpdatedAt", dashboard.lastUpdatedAt());
         model.addAttribute("importStatistics", dashboard.importStatistics());
+        model.addAttribute("zone", dashboard.zone());
+        // Đích STOMP cho dashboard.js (hằng số dùng chung với server, không hardcode trong JS)
+        model.addAttribute("metricsDestination", StompDestinations.USER_METRICS_DESTINATION);
         return "dashboard";
     }
 }

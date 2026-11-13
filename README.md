@@ -323,29 +323,30 @@ curl -OJ -b "SESSION=$SESSION_ID" http://localhost:8080/api/export-report
 }
 ```
 
-- Ngày tính theo múi giờ server (`zone`). Mỗi bài lấy **snapshot mới nhất tính tới hết ngày đó** — snapshot là số tích luỹ nên không cộng mọi lần crawl; bài không được crawl trong ngày giữ giá trị trước đó. `likes`/`shares`/`comments` = tổng các bài; `followers` = **lớn nhất** trong các bài (là số người theo dõi tác giả, cộng theo bài sẽ đếm lặp).
+- Ngày tính theo múi giờ server (`zone`). Mỗi bài lấy **snapshot mới nhất tính tới hết ngày đó** — snapshot là số tích luỹ nên không cộng mọi lần crawl; bài không được crawl trong ngày giữ giá trị trước đó. `likes`/`shares`/`comments` = tổng các bài; `followers` = của **snapshot mới nhất theo thời gian** trong các bài (là số người theo dõi tác giả: cộng theo bài sẽ đếm lặp, lấy lớn nhất sẽ giữ số cũ). Bài không còn được crawl (vd đã xoá trên nền tảng) vẫn giữ số cuối cùng; xoá bài trong app thì số liệu của bài bị xoá theo.
+- Cả biểu đồ tính trong **1 query** (MySQL 8 `JSON_TABLE` + window function), không phải 1 query/ngày.
 - `null` = provider chưa có bài nào có snapshot tới ngày đó (khác 0). Mỗi provider luôn có 1 phần tử trong `series`.
 - `lastUpdatedAt` / `importStatistics` (`null` nếu chưa có) đi kèm để dashboard cập nhật mọi số liệu bằng 1 request khi nhận event WebSocket.
 
 ## WebSocket (realtime dashboard)
 
-**Luồng event:** job crawl metrics xong (ít nhất 1 tài khoản thành công) hoặc listener `IMPORT_COMPLETED` vừa cộng 1 lần import vào thống kê → event phát lên JMS topic `dashboard-events` **sau khi transaction commit** (rollback → không có event) → mỗi instance app nhận 1 bản và đẩy xuống client của mình trên `/topic/metrics`:
+**Luồng event:** job crawl metrics xong (ít nhất 1 tài khoản thành công) hoặc listener `IMPORT_COMPLETED` vừa cộng 1 lần import vào thống kê → event phát lên JMS topic `dashboard-events` **sau khi transaction commit** (rollback → không có event) → mỗi instance app nhận 1 bản và chỉ đẩy xuống **các user có dữ liệu vừa đổi** (chủ tài khoản vừa crawl xong / chủ lần import) đang kết nối với nó, trên đích riêng `/user/queue/metrics`:
 
 ```json
 {"type": "METRICS_UPDATED", "occurredAt": "2026-11-12T03:00:00Z"}
 ```
 
-`type` là `METRICS_UPDATED` hoặc `IMPORT_PROCESSED`. Payload không chứa userId hay số liệu (mọi user đều nhận) — client nhận event rồi gọi lại `GET /api/chart-data` (chỉ trả dữ liệu của mình). Event chỉ là tín hiệu làm mới: gửi lỗi / instance đang tắt thì bỏ qua, không retry; client tải lại dữ liệu khi có event sau hoặc khi kết nối lại.
+`type` hiện là `METRICS_UPDATED` hoặc `IMPORT_PROCESSED` (client làm mới với mọi `type`). User khác không nhận event — không phải gọi lại API vô ích, không biết thời điểm import của người khác. Payload không chứa số liệu — client nhận event rồi gọi lại `GET /api/chart-data` (chỉ trả dữ liệu của mình). Event chỉ là tín hiệu làm mới: gửi lỗi / instance đang tắt thì bỏ qua, không retry; client tải lại dữ liệu khi có event sau hoặc khi kết nối lại.
 
-**Trên `/dashboard`:** biểu đồ đường Chart.js theo provider/ngày (chọn metric và 7/14/30 ngày), "Last updated time" và thống kê import tự cập nhật không cần tải lại trang; badge góc phải cho biết trạng thái kết nối (`Live` / `Reconnecting…`). Nhận event → chờ 0,5–3,5s (ngẫu nhiên, tránh mọi dashboard gọi API cùng lúc) → gọi lại `/api/chart-data`. Mất kết nối thì tự nối lại sau 5s và tải lại dữ liệu.
+**Trên `/dashboard`:** biểu đồ đường Chart.js theo provider/ngày (chọn metric và 7/14/30 ngày), "Last updated time" và thống kê import tự cập nhật không cần tải lại trang; badge góc phải cho biết trạng thái kết nối (`Live` / `Reconnecting…`). Nhận event → chờ 0,5–3,5s (ngẫu nhiên, tránh mọi dashboard gọi API cùng lúc khi server khởi động lại) → gọi lại `/api/chart-data`. Mỗi lần kết nối xong (kể cả lần đầu) đều tải lại dữ liệu để không lỡ event; mất kết nối thì tự nối lại sau 5s.
 
 **Kiểm tra thủ công** (chưa có test JS tự động): chạy profile `dev` (cron metrics 5 phút) → đăng nhập → mở `/dashboard` (badge `Live`) → import 1 file Excel ở tab khác: card thống kê đổi sau vài giây; chờ job chạy: biểu đồ + "Last updated time" đổi. DevTools → Console không có lỗi CSP; Network → WS: frame `CONNECT` có header `X-XSRF-TOKEN`.
 
-- Endpoint STOMP `/ws` (SockJS), broker prefix `/topic`, app prefix `/app`. Client chỉ được `SUBSCRIBE /topic/metrics`; mọi `SEND` (kể cả vào `/topic/**`) và destination khác bị từ chối bằng ERROR frame `Access denied` rồi đóng kết nối.
+- Endpoint STOMP `/ws` (SockJS), broker prefix `/queue`, user prefix `/user`, app prefix `/app`. Client chỉ được `SUBSCRIBE /user/queue/metrics` (Spring chỉ giao event của chính user đó); mọi `SEND` và destination khác (kể cả `SUBSCRIBE` thẳng `/queue/**`) bị từ chối bằng ERROR frame `Access denied` rồi đóng kết nối.
 - Phải đăng nhập: handshake dùng session cookie `SESSION` của trình duyệt — chưa đăng nhập thì `/ws/**` trả 401 `ProblemDetail`.
-- **CSRF ở frame `CONNECT`:** header `X-XSRF-TOKEN` chứa token **đã mask** lấy từ `<meta name="_csrf">` (dùng `csrfHeaders()` của `static/js/csrf.js`), và handshake phải mang cookie `XSRF-TOKEN` (trình duyệt tự gửi). Token raw của cookie không được nhận ở đây. Request HTTP dưới `/ws/**` (POST của transport dự phòng SockJS) không kiểm CSRF — đây là ngoại lệ duy nhất, vì kết nối không qua được `CONNECT` thì không frame nào được xử lý.
+- **CSRF ở frame `CONNECT`:** header `X-XSRF-TOKEN` chứa token đã mask (`<meta name="_csrf">`) **hoặc** giá trị raw của cookie `XSRF-TOKEN` — giống header HTTP; handshake phải mang cookie `XSRF-TOKEN` (trình duyệt tự gửi). Dashboard đọc cookie hiện tại trước mỗi lần kết nối (`currentCsrfHeaders()` trong `static/js/csrf.js`) nên vẫn kết nối lại được sau khi đăng nhập lại ở tab khác. Request HTTP dưới `/ws/**` (POST của transport dự phòng SockJS) không kiểm CSRF — đây là ngoại lệ duy nhất, vì kết nối không qua được `CONNECT` thì không frame nào được xử lý.
 - Chạy nhiều instance sau load balancer: transport WebSocket không cần gì thêm; transport dự phòng của SockJS (xhr-streaming/polling) giữ session SockJS trong RAM nên cần **sticky session**. Transport iframe của SockJS không dùng được (`X-Frame-Options: DENY`).
-- Kết nối WebSocket không gia hạn session HTTP và không tự đóng khi logout / session hết hạn (Spring Session JDBC không phát sự kiện huỷ session) — payload trên topic không chứa dữ liệu riêng của user nên chấp nhận.
+- Kết nối WebSocket không gia hạn session HTTP và không tự đóng khi logout / session hết hạn (Spring Session JDBC không phát sự kiện huỷ session) — payload event không chứa số liệu, client gọi API gặp 401 thì chuyển về `/login`.
 
 ## Xử Lý Lỗi
 

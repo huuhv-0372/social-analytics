@@ -60,8 +60,8 @@ public class ImportStatisticsService {
         // Audit (OWASP A09) ghi owner trong DB — không phải userId của payload. Lỗi commit sau dòng này → exception
         // thoát khỏi listener (có log của container) và message được giao lại.
         log.info("Import {} added to import statistics of user {}", importId, counts.userId());
-        // Gửi sau khi transaction này commit; message trùng (ALREADY_PROCESSED) / rollback → không có event
-        dashboardEventService.importProcessed();
+        // Chỉ báo dashboard của owner (trong DB), gửi sau khi transaction này commit; message trùng / rollback → không có event
+        dashboardEventService.importProcessed(counts.userId());
         return ApplyResult.APPLIED;
     }
 

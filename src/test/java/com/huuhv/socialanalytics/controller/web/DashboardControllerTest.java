@@ -6,9 +6,11 @@ import com.huuhv.socialanalytics.dto.response.DashboardResponse;
 import com.huuhv.socialanalytics.dto.response.ImportStatisticsResponse;
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.security.AppOAuth2User;
+import com.huuhv.socialanalytics.security.CsrfCookies;
 import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.DashboardService;
+import com.huuhv.socialanalytics.websocket.StompDestinations;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,7 +27,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.nio.charset.StandardCharsets;
 import java.time.ZoneId;
-import java.time.ZonedDateTime;
+import java.time.Instant;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -53,7 +55,8 @@ class DashboardControllerTest {
             "<script src=\"https://cdn\\.jsdelivr\\.net/npm/([^\"]+)\"\\s+integrity=\"sha384-[A-Za-z0-9+/=]{64}\"\\s+"
                     + "crossorigin=\"anonymous\"></script>");
 
-    private static final DashboardResponse EMPTY_DASHBOARD = new DashboardResponse(null, null);
+    private static final ZoneId SERVER_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
+    private static final DashboardResponse EMPTY_DASHBOARD = new DashboardResponse(null, null, SERVER_ZONE);
 
     @Autowired
     private MockMvc mockMvc;
@@ -87,9 +90,9 @@ class DashboardControllerTest {
     @Test
     void showsLastUpdatedTimeInServerTimeZone() throws Exception {
         // Job lưu tới micro giây (DATETIME(6)); HTML <time datetime> chỉ cho phép tối đa 3 chữ số lẻ → cắt về giây
-        ZonedDateTime lastUpdatedAt = ZonedDateTime.of(2026, 11, 7, 10, 0, 5, 123_456_000,
-                ZoneId.of("Asia/Ho_Chi_Minh"));
-        when(dashboardService.getDashboard()).thenReturn(new DashboardResponse(lastUpdatedAt, null));
+        // 03:00:05 UTC = 10:00:05 giờ server (+07)
+        Instant lastUpdatedAt = Instant.parse("2026-11-07T03:00:05.123456Z");
+        when(dashboardService.getDashboard()).thenReturn(new DashboardResponse(lastUpdatedAt, null, SERVER_ZONE));
 
         mockMvc.perform(get("/dashboard").with(oauth2Login()))
                 .andExpect(status().isOk())
@@ -118,8 +121,8 @@ class DashboardControllerTest {
     @Test
     void showsImportStatistics() throws Exception {
         ImportStatisticsResponse statistics = new ImportStatisticsResponse(3, 1_250, 1_200, 50,
-                ZonedDateTime.of(2026, 11, 7, 9, 30, 15, 987_654_000, ZoneId.of("Asia/Ho_Chi_Minh")));
-        when(dashboardService.getDashboard()).thenReturn(new DashboardResponse(null, statistics));
+                Instant.parse("2026-11-07T02:30:15.987654Z"));
+        when(dashboardService.getDashboard()).thenReturn(new DashboardResponse(null, statistics, SERVER_ZONE));
 
         mockMvc.perform(get("/dashboard").with(oauth2Login()))
                 .andExpect(status().isOk())
@@ -158,6 +161,9 @@ class DashboardControllerTest {
                 .andReturn().getResponse().getContentAsString();
 
         // URL cho dashboard.js theo context path (không hardcode domain / đường dẫn tuyệt đối)
+        // Đích STOMP lấy từ hằng số StompDestinations (không hardcode trong JS); tên cookie CSRF cho lần kết nối lại
+        assertThat(html).contains("data-metrics-destination=\"" + StompDestinations.USER_METRICS_DESTINATION + "\"",
+                "<meta name=\"_csrf_cookie\" content=\"" + CsrfCookies.NAME + "\">");
         assertThat(html).contains("data-chart-data-url=\"/app/api/chart-data\"", "data-ws-url=\"/app/ws\"",
                 "data-login-url=\"/app/login\"", "<canvas id=\"metrics-chart\"",
                 "<script src=\"/app/js/csrf.js\"></script>", "<script src=\"/app/js/dashboard.js\"></script>");
@@ -185,6 +191,11 @@ class DashboardControllerTest {
                 .noneMatch(line -> line.contains("eval(") || line.contains("new Function"));
         // Chart tạo 1 lần, cập nhật bằng chart.update()
         assertThat(script).containsOnlyOnce("new window.Chart(").contains("chart.update()");
+        // Đích STOMP / loại event không hardcode: lấy từ data-*, mọi event có type đều làm mới
+        assertThat(script).doesNotContain("/topic/", "/queue/", "METRICS_UPDATED", "IMPORT_PROCESSED")
+                .contains("root.dataset.metricsDestination");
+        // CSRF đọc lại trước mỗi lần kết nối (cookie có thể đã đổi), không cố định lúc tạo client
+        assertThat(script).contains("beforeConnect").doesNotContain("connectHeaders: window.csrfHeaders()");
     }
 
     @Test

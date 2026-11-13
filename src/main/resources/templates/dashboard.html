@@ -8,12 +8,14 @@
 </head>
 <body>
 <!--/* Trang render sẵn số liệu lúc tải (server-side); static/js/dashboard.js gọi GET /api/chart-data để vẽ biểu đồ và
-     tự gọi lại khi nhận event STOMP trên /topic/metrics (job metrics / import xong). URL truyền qua data-* (theo
-     context path, không hardcode). Cả 2 trạng thái có/không có dữ liệu luôn được render, bật/tắt bằng thuộc tính
+     tự gọi lại khi nhận event STOMP riêng của user (job metrics / import xong). URL và đích STOMP truyền qua data-*
+     (theo context path / hằng số StompDestinations, không hardcode trong JS). Mốc thời gian là Instant, hiển thị theo
+     múi giờ server (zone). Cả 2 trạng thái có/không có dữ liệu luôn được render, bật/tắt bằng thuộc tính
      hidden → JS chỉ đổi textContent + hidden, không dựng HTML. Comment parser-level: không gửi ra HTML */-->
 <main layout:fragment="content" id="dashboard"
       th:data-chart-data-url="@{/api/chart-data}"
       th:data-ws-url="@{/ws}"
+      th:data-metrics-destination="${metricsDestination}"
       th:data-login-url="@{/login}">
     <h1 class="h3 mb-3">Dashboard</h1>
     <p class="lead">Welcome, <span th:text="${displayName}">user</span>!</p>
@@ -23,8 +25,8 @@
             <h2 class="h6 text-muted mb-1">Last updated time</h2>
             <p class="fs-5 mb-0" id="last-updated-at">
                 <time id="last-updated-time" th:hidden="${lastUpdatedAt == null}"
-                      th:datetime="${lastUpdatedAt != null ? #temporals.format(lastUpdatedAt, 'yyyy-MM-dd''T''HH:mm:ssXXX') : null}"
-                      th:text="${lastUpdatedAt != null ? #temporals.format(lastUpdatedAt, 'yyyy-MM-dd HH:mm:ss xxx') : ''}">2026-01-01 00:00:00 +07:00</time>
+                      th:datetime="${lastUpdatedAt != null ? #temporals.format(lastUpdatedAt.atZone(zone), 'yyyy-MM-dd''T''HH:mm:ssXXX') : null}"
+                      th:text="${lastUpdatedAt != null ? #temporals.format(lastUpdatedAt.atZone(zone), 'yyyy-MM-dd HH:mm:ss xxx') : ''}">2026-01-01 00:00:00 +07:00</time>
                 <span id="last-updated-empty" class="text-muted" th:hidden="${lastUpdatedAt != null}">Chưa cập nhật</span>
             </p>
         </div>
@@ -52,8 +54,8 @@
                 <div class="col-6 col-md-3">
                     <div class="fs-6 fw-semibold mt-md-2">
                         <time id="stat-last-import-at"
-                              th:datetime="${importStatistics != null ? #temporals.format(importStatistics.lastImportAt, 'yyyy-MM-dd''T''HH:mm:ssXXX') : null}"
-                              th:text="${importStatistics != null ? #temporals.format(importStatistics.lastImportAt, 'yyyy-MM-dd HH:mm:ss xxx') : ''}">2026-01-01 00:00:00 +07:00</time>
+                              th:datetime="${importStatistics != null ? #temporals.format(importStatistics.lastImportAt.atZone(zone), 'yyyy-MM-dd''T''HH:mm:ssXXX') : null}"
+                              th:text="${importStatistics != null ? #temporals.format(importStatistics.lastImportAt.atZone(zone), 'yyyy-MM-dd HH:mm:ss xxx') : ''}">2026-01-01 00:00:00 +07:00</time>
                     </div>
                     <div class="small text-muted">Last import</div>
                 </div>

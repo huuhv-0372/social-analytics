@@ -23,6 +23,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
+import org.springframework.web.socket.sockjs.client.RestTemplateXhrTransport;
 import org.springframework.web.socket.sockjs.client.SockJsClient;
 import org.springframework.web.socket.sockjs.client.WebSocketTransport;
 
@@ -48,7 +49,8 @@ import static org.awaitility.Awaitility.await;
 
 /**
  * STOMP over SockJS trên Tomcat thật với session đăng nhập lưu MySQL: handshake phải đăng nhập, frame CONNECT phải có
- * CSRF token đã mask (như trình duyệt đọc từ {@code <meta name="_csrf">}), client chỉ được SUBSCRIBE topic metrics.
+ * CSRF token (đã mask từ {@code <meta name="_csrf">} hoặc raw từ cookie), client chỉ được SUBSCRIBE đích riêng của
+ * user và chỉ nhận event gửi cho chính mình.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -62,6 +64,9 @@ class WebSocketSecurityIntegrationTest {
     private final HttpClient httpClient = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
     private final WebSocketStompClient stompClient = new WebSocketStompClient(
             new SockJsClient(List.of(new WebSocketTransport(new StandardWebSocketClient()))));
+    /** Transport dự phòng của SockJS khi WebSocket bị chặn (dashboard.js bật xhr-streaming, xhr-polling). */
+    private final WebSocketStompClient xhrStompClient = new WebSocketStompClient(
+            new SockJsClient(List.of(new RestTemplateXhrTransport())));
 
     @LocalServerPort
     private int port;
@@ -80,11 +85,13 @@ class WebSocketSecurityIntegrationTest {
 
     WebSocketSecurityIntegrationTest() {
         stompClient.setMessageConverter(new StringMessageConverter());
+        xhrStompClient.setMessageConverter(new StringMessageConverter());
     }
 
     @AfterEach
     void stopClient() {
         stompClient.stop();
+        xhrStompClient.stop();
     }
 
     @Test
@@ -121,42 +128,82 @@ class WebSocketSecurityIntegrationTest {
     }
 
     @Test
-    void connectWithCsrfTokenReceivesMetricsBroadcast() throws Exception {
+    void connectWithMaskedTokenReceivesEventsAddressedToOwnUserId() throws Exception {
         Browser browser = loggedInBrowser();
         RecordingHandler handler = new RecordingHandler();
 
-        StompSession session = connect(browser.cookies(), browser.csrfToken(), handler)
+        StompSession session = connect(browser.cookies(), browser.maskedToken(), handler)
                 .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        session.subscribe(StompDestinations.METRICS_TOPIC, handler);
+        session.subscribe(StompDestinations.USER_METRICS_DESTINATION, handler);
 
-        // Không có RECEIPT cho SUBSCRIBE trên simple broker → gửi lại tới khi subscription đã được đăng ký
-        await().atMost(Duration.ofSeconds(TIMEOUT_SECONDS)).untilAsserted(() -> {
-            messagingTemplate.convertAndSend(StompDestinations.METRICS_TOPIC, "changed");
-            assertThat(handler.messages.poll(200, TimeUnit.MILLISECONDS)).isEqualTo("changed");
-        });
+        // Tên principal STOMP = id user nội bộ (StompUserIdChannelInterceptor), không phải id phía provider
+        awaitDelivered(browser.userId(), handler);
         assertThat(handler.errorFrame).isNotDone();
     }
 
     @Test
-    void sendingToMetricsTopicIsRejected() throws Exception {
+    void xhrStreamingFallbackAlsoReceivesEventsAddressedToOwnUserId() throws Exception {
+        // HandshakeHandler chỉ chạy với transport websocket — tên principal phải được gán ở frame CONNECT
         Browser browser = loggedInBrowser();
         RecordingHandler handler = new RecordingHandler();
-        StompSession session = connect(browser.cookies(), browser.csrfToken(), handler)
+
+        StompSession session = connect(xhrStompClient, browser.cookies(), browser.maskedToken(), handler)
+                .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        session.subscribe(StompDestinations.USER_METRICS_DESTINATION, handler);
+
+        awaitDelivered(browser.userId(), handler);
+        assertThat(handler.errorFrame).isNotDone();
+    }
+
+    @Test
+    void connectWithRawCookieTokenIsAcceptedSoReconnectWorksAfterCookieChanged() throws Exception {
+        // JS đọc cookie XSRF-TOKEN hiện tại trước mỗi lần kết nối lại (token trong <meta> có thể đã cũ)
+        Browser browser = loggedInBrowser();
+        RecordingHandler handler = new RecordingHandler();
+
+        StompSession session = connect(browser.cookies(), browser.rawToken(), handler)
+                .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        session.subscribe(StompDestinations.USER_METRICS_DESTINATION, handler);
+
+        awaitDelivered(browser.userId(), handler);
+    }
+
+    @Test
+    void eventForOneUserIsNotDeliveredToAnotherUser() throws Exception {
+        Browser owner = loggedInBrowser();
+        Browser other = loggedInBrowser();
+        RecordingHandler ownerHandler = new RecordingHandler();
+        RecordingHandler otherHandler = new RecordingHandler();
+        connect(owner.cookies(), owner.maskedToken(), ownerHandler).get(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .subscribe(StompDestinations.USER_METRICS_DESTINATION, ownerHandler);
+        connect(other.cookies(), other.maskedToken(), otherHandler).get(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .subscribe(StompDestinations.USER_METRICS_DESTINATION, otherHandler);
+
+        awaitDelivered(owner.userId(), ownerHandler);
+
+        assertThat(otherHandler.messages.poll(500, TimeUnit.MILLISECONDS)).isNull();
+    }
+
+    @Test
+    void sendingToUserDestinationIsRejected() throws Exception {
+        Browser browser = loggedInBrowser();
+        RecordingHandler handler = new RecordingHandler();
+        StompSession session = connect(browser.cookies(), browser.maskedToken(), handler)
                 .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
-        session.send(StompDestinations.METRICS_TOPIC, "forged event");
+        session.send("/user/" + browser.userId() + StompDestinations.METRICS_QUEUE, "forged event");
 
         assertAccessDeniedError(handler);
     }
 
     @Test
-    void subscribingToOtherDestinationIsRejected() throws Exception {
+    void subscribingToBrokerQueueDirectlyIsRejected() throws Exception {
         Browser browser = loggedInBrowser();
         RecordingHandler handler = new RecordingHandler();
-        StompSession session = connect(browser.cookies(), browser.csrfToken(), handler)
+        StompSession session = connect(browser.cookies(), browser.maskedToken(), handler)
                 .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
-        session.subscribe("/topic/other", handler);
+        session.subscribe(StompDestinations.METRICS_QUEUE, handler);
 
         assertAccessDeniedError(handler);
     }
@@ -167,6 +214,14 @@ class WebSocketSecurityIntegrationTest {
         assertThat(applicationContext.getBean("messageBrokerTaskScheduler")).isInstanceOf(ThreadPoolTaskScheduler.class);
         assertThat(applicationContext.getBean("taskScheduler", ThreadPoolTaskScheduler.class).getThreadNamePrefix())
                 .isEqualTo("scheduler-");
+    }
+
+    /** Không có RECEIPT cho SUBSCRIBE trên simple broker → gửi lại tới khi subscription đã được đăng ký. */
+    private void awaitDelivered(long userId, RecordingHandler handler) {
+        await().atMost(Duration.ofSeconds(TIMEOUT_SECONDS)).untilAsserted(() -> {
+            messagingTemplate.convertAndSendToUser(String.valueOf(userId), StompDestinations.METRICS_QUEUE, "changed");
+            assertThat(handler.messages.poll(200, TimeUnit.MILLISECONDS)).isEqualTo("changed");
+        });
     }
 
     private static void assertAccessDeniedError(RecordingHandler handler) throws Exception {
@@ -180,9 +235,9 @@ class WebSocketSecurityIntegrationTest {
      * {@code <meta name="_csrf">}; cả 2 cookie gửi kèm handshake.
      */
     private Browser loggedInBrowser() throws IOException, InterruptedException {
-        String sessionCookie = AuthenticatedSessions.create(userRepository, sessionRepository);
+        AuthenticatedSessions.LoggedInSession session = AuthenticatedSessions.create(userRepository, sessionRepository);
         HttpResponse<String> dashboard = httpClient.send(HttpRequest.newBuilder(uri("/dashboard"))
-                .header("Cookie", sessionCookie).GET().build(), HttpResponse.BodyHandlers.ofString());
+                .header("Cookie", session.cookie()).GET().build(), HttpResponse.BodyHandlers.ofString());
         assertThat(dashboard.statusCode()).isEqualTo(200);
         String xsrfCookie = dashboard.headers().allValues("Set-Cookie").stream()
                 .filter(value -> value.startsWith("XSRF-TOKEN="))
@@ -191,10 +246,16 @@ class WebSocketSecurityIntegrationTest {
                 .orElseThrow(() -> new AssertionError("Dashboard response has no XSRF-TOKEN cookie"));
         Matcher meta = CSRF_META.matcher(dashboard.body());
         assertThat(meta.find()).as("dashboard renders <meta name=\"_csrf\">").isTrue();
-        return new Browser(sessionCookie + "; " + xsrfCookie, meta.group(1));
+        return new Browser(session.cookie() + "; " + xsrfCookie, meta.group(1),
+                xsrfCookie.substring(xsrfCookie.indexOf('=') + 1), session.userId());
     }
 
     private CompletableFuture<StompSession> connect(String cookies, String csrfToken, RecordingHandler handler) {
+        return connect(stompClient, cookies, csrfToken, handler);
+    }
+
+    private CompletableFuture<StompSession> connect(WebSocketStompClient client, String cookies, String csrfToken,
+                                                    RecordingHandler handler) {
         WebSocketHttpHeaders handshakeHeaders = new WebSocketHttpHeaders();
         if (cookies != null) {
             handshakeHeaders.add(HttpHeaders.COOKIE, cookies);
@@ -203,7 +264,7 @@ class WebSocketSecurityIntegrationTest {
         if (csrfToken != null) {
             connectHeaders.add(CSRF_HEADER, csrfToken);
         }
-        return stompClient.connectAsync("http://localhost:" + port + StompDestinations.ENDPOINT,
+        return client.connectAsync("http://localhost:" + port + StompDestinations.ENDPOINT,
                 handshakeHeaders, connectHeaders, handler);
     }
 
@@ -211,7 +272,11 @@ class WebSocketSecurityIntegrationTest {
         return URI.create("http://localhost:" + port + path);
     }
 
-    private record Browser(String cookies, String csrfToken) {
+    /**
+     * @param maskedToken token trong {@code <meta name="_csrf">}
+     * @param rawToken    giá trị cookie {@code XSRF-TOKEN}
+     */
+    private record Browser(String cookies, String maskedToken, String rawToken, long userId) {
     }
 
     /** Ghi lại ERROR frame (frame cấp session) và payload nhận được trên subscription. */

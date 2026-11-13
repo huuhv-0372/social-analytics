@@ -151,7 +151,7 @@ class SessionPersistenceTest {
 
     /** Session đã đăng nhập do "instance khác" ghi thẳng vào DB; trả cookie {@code SESSION=...}. */
     private String authenticatedSession() {
-        return AuthenticatedSessions.create(userRepository, sessionRepository);
+        return AuthenticatedSessions.create(userRepository, sessionRepository).cookie();
     }
 
     private static String decodeSessionId(String sessionCookie) {

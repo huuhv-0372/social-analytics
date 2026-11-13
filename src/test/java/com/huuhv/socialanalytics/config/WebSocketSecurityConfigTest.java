@@ -38,7 +38,7 @@ class WebSocketSecurityConfigTest {
                 arguments(SimpMessageType.HEARTBEAT, null),
                 arguments(SimpMessageType.UNSUBSCRIBE, null),
                 arguments(SimpMessageType.DISCONNECT, null),
-                arguments(SimpMessageType.SUBSCRIBE, StompDestinations.METRICS_TOPIC));
+                arguments(SimpMessageType.SUBSCRIBE, StompDestinations.USER_METRICS_DESTINATION));
     }
 
     @ParameterizedTest
@@ -55,17 +55,24 @@ class WebSocketSecurityConfigTest {
 
     static Stream<Arguments> deniedForLoggedInUser() {
         return Stream.of(
-                // SEND thẳng vào topic → broker phát tới mọi dashboard (event giả)
-                arguments(SimpMessageType.MESSAGE, StompDestinations.METRICS_TOPIC),
-                arguments(SimpMessageType.MESSAGE, "/topic/other"),
+                // SEND thẳng vào đích của user / hàng đợi broker → event giả tới dashboard của user khác
+                arguments(SimpMessageType.MESSAGE, StompDestinations.USER_METRICS_DESTINATION),
+                arguments(SimpMessageType.MESSAGE, "/user/42/queue/metrics"),
+                arguments(SimpMessageType.MESSAGE, StompDestinations.METRICS_QUEUE),
+                arguments(SimpMessageType.MESSAGE, "/queue/metrics-userabc123"),
                 // Chưa có @MessageMapping
                 arguments(SimpMessageType.MESSAGE, "/app/anything"),
                 arguments(SimpMessageType.MESSAGE, null),
-                arguments(SimpMessageType.SUBSCRIBE, "/topic/other"),
-                arguments(SimpMessageType.SUBSCRIBE, StompDestinations.METRICS_TOPIC + "/child"),
-                arguments(SimpMessageType.SUBSCRIBE, "/topic/**"),
-                arguments(SimpMessageType.SUBSCRIBE, "/app/anything"),
+                // SUBSCRIBE thẳng hàng đợi của broker (đoán tên hàng đợi theo session của user khác)
+                arguments(SimpMessageType.SUBSCRIBE, StompDestinations.METRICS_QUEUE),
+                arguments(SimpMessageType.SUBSCRIBE, "/queue/metrics-userabc123"),
+                arguments(SimpMessageType.SUBSCRIBE, "/queue/**"),
+                arguments(SimpMessageType.SUBSCRIBE, "/user/42/queue/metrics"),
+                arguments(SimpMessageType.SUBSCRIBE, StompDestinations.USER_METRICS_DESTINATION + "/child"),
                 arguments(SimpMessageType.SUBSCRIBE, "/user/queue/errors"),
+                // Đích broadcast cũ không còn dùng
+                arguments(SimpMessageType.SUBSCRIBE, "/topic/metrics"),
+                arguments(SimpMessageType.SUBSCRIBE, "/app/anything"),
                 arguments(SimpMessageType.SUBSCRIBE, null),
                 // ACK/NACK/BEGIN/COMMIT/ABORT — simple broker không hỗ trợ
                 arguments(SimpMessageType.OTHER, null));

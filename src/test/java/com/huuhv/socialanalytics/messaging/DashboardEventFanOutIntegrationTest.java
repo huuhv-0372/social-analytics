@@ -32,6 +32,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -109,35 +111,36 @@ class DashboardEventFanOutIntegrationTest {
 
     @Test
     void eventOutsideTransactionReachesEveryInstance() throws JMSException {
-        dashboardEventService.metricsUpdated();
+        dashboardEventService.metricsUpdated(Set.of(42L, 43L));
 
-        // Instance này: listener topic → WebSocket
+        // Instance này: listener topic → WebSocket của các user đó
         verify(dashboardEventBroadcaster, timeout(WAIT.toMillis()))
-                .broadcast(eq(DashboardEventType.METRICS_UPDATED), occurredInThisTest());
-        // "Instance khác" cũng nhận được, JSON có alias, không có userId / số liệu
+                .sendToUsers(eq(DashboardEventType.METRICS_UPDATED), occurredInThisTest(), eq(List.of(42L, 43L)));
+        // "Instance khác" cũng nhận được (user có thể nối vào instance đó), JSON có alias + id user, không có số liệu
         TextMessage received = receiveFromThisTest(WAIT);
         assertThat(received).isNotNull();
         assertThat(received.getStringProperty("_type")).isEqualTo(MessageTypes.DASHBOARD_EVENT);
-        assertThat(received.getText()).contains("\"type\":\"METRICS_UPDATED\"").doesNotContain("userId");
+        assertThat(received.getText()).contains("\"type\":\"METRICS_UPDATED\"", "\"userIds\":[42,43]")
+                .doesNotContain("likes");
     }
 
     @Test
     void eventInsideCommittedTransactionIsSentAfterCommit() throws JMSException {
-        transactionTemplate.executeWithoutResult(status -> dashboardEventService.importProcessed());
+        transactionTemplate.executeWithoutResult(status -> dashboardEventService.importProcessed(42L));
 
         verify(dashboardEventBroadcaster, timeout(WAIT.toMillis()))
-                .broadcast(eq(DashboardEventType.IMPORT_PROCESSED), occurredInThisTest());
+                .sendToUsers(eq(DashboardEventType.IMPORT_PROCESSED), occurredInThisTest(), eq(List.of(42L)));
         assertThat(receiveFromThisTest(WAIT)).isNotNull();
     }
 
     @Test
     void eventInsideRolledBackTransactionIsNeverSent() throws JMSException {
         transactionTemplate.executeWithoutResult(status -> {
-            dashboardEventService.importProcessed();
+            dashboardEventService.importProcessed(42L);
             status.setRollbackOnly();
         });
 
-        verify(dashboardEventBroadcaster, after(1_500).never()).broadcast(any(), occurredInThisTest());
+        verify(dashboardEventBroadcaster, after(1_500).never()).sendToUsers(any(), occurredInThisTest(), any());
         assertThat(receiveFromThisTest(Duration.ofMillis(200))).isNull();
     }
 

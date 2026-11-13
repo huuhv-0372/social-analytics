@@ -12,6 +12,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.params.provider.Arguments.arguments;
@@ -30,21 +33,32 @@ class DashboardEventListenerTest {
     private DashboardEventListener listener;
 
     @Test
-    void forwardsEventToLocalWebSocketClients() {
-        listener.onDashboardEvent(new DashboardEventMessage(DashboardEventType.METRICS_UPDATED, OCCURRED_AT));
+    void forwardsEventToTargetUsersConnectedHere() {
+        listener.onDashboardEvent(new DashboardEventMessage(DashboardEventType.METRICS_UPDATED, OCCURRED_AT,
+                List.of(7L, 9L)));
 
-        verify(broadcaster).broadcast(DashboardEventType.METRICS_UPDATED, OCCURRED_AT);
+        verify(broadcaster).sendToUsers(DashboardEventType.METRICS_UPDATED, OCCURRED_AT, List.of(7L, 9L));
     }
 
-    static Stream<Arguments> incompleteMessages() {
-        return Stream.of(arguments(null, OCCURRED_AT), arguments(DashboardEventType.METRICS_UPDATED, null),
-                arguments(null, null));
+    static Stream<Arguments> invalidMessages() {
+        List<Long> users = List.of(7L);
+        List<Long> tooMany = LongStream.rangeClosed(1, DashboardEventMessage.MAX_USER_IDS + 1).boxed().toList();
+        return Stream.of(
+                arguments(null, OCCURRED_AT, users),
+                arguments(DashboardEventType.METRICS_UPDATED, null, users),
+                arguments(DashboardEventType.METRICS_UPDATED, OCCURRED_AT, null),
+                arguments(DashboardEventType.METRICS_UPDATED, OCCURRED_AT, List.of()),
+                arguments(DashboardEventType.METRICS_UPDATED, OCCURRED_AT, List.of(0L)),
+                arguments(DashboardEventType.METRICS_UPDATED, OCCURRED_AT, List.of(-3L)),
+                arguments(DashboardEventType.METRICS_UPDATED, OCCURRED_AT, Arrays.asList(7L, null)),
+                arguments(DashboardEventType.METRICS_UPDATED, OCCURRED_AT, tooMany));
     }
 
     @ParameterizedTest
-    @MethodSource("incompleteMessages")
-    void incompleteMessageIsDroppedWithoutBroadcast(DashboardEventType type, Instant occurredAt) {
-        listener.onDashboardEvent(new DashboardEventMessage(type, occurredAt));
+    @MethodSource("invalidMessages")
+    void invalidMessageIsDroppedWithoutSendingAnything(DashboardEventType type, Instant occurredAt,
+                                                       List<Long> userIds) {
+        listener.onDashboardEvent(new DashboardEventMessage(type, occurredAt, userIds));
 
         verifyNoInteractions(broadcaster);
     }

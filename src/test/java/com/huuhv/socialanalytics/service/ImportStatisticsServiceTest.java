@@ -63,7 +63,8 @@ class ImportStatisticsServiceTest {
         assertThat(result).isEqualTo(ApplyResult.APPLIED);
         verify(importHistoryService).markProcessed(IMPORT_ID, NOW_UTC);
         verify(userImportStatisticRepository).addImport(OWNER_ID, 10, 8, 2, IMPORTED_AT, NOW_UTC);
-        verify(dashboardEventService).importProcessed();
+        // Báo dashboard của owner trong DB, không phải userId của payload
+        verify(dashboardEventService).importProcessed(OWNER_ID);
     }
 
     @Test
@@ -97,6 +98,9 @@ class ImportStatisticsServiceTest {
         verify(userImportStatisticRepository).addImport(eq(OWNER_ID), anyInt(), anyInt(), anyInt(), any(), any());
         verify(userImportStatisticRepository, never())
                 .addImport(eq(999L), anyInt(), anyInt(), anyInt(), any(), any());
+        // Event dashboard cũng tới owner thật, không tới user ghi trong payload
+        verify(dashboardEventService).importProcessed(OWNER_ID);
+        verify(dashboardEventService, never()).importProcessed(999L);
     }
 
     @Test
@@ -115,7 +119,7 @@ class ImportStatisticsServiceTest {
 
         assertThatThrownBy(() -> service.applyImport(IMPORT_ID, OWNER_ID))
                 .isInstanceOf(QueryTimeoutException.class);
-        verify(dashboardEventService, never()).importProcessed();
+        verify(dashboardEventService, never()).importProcessed(anyLong());
     }
 
     private void givenPendingImport() {
@@ -128,6 +132,6 @@ class ImportStatisticsServiceTest {
     private void verifyNothingAdded() {
         verify(userImportStatisticRepository, never())
                 .addImport(anyLong(), anyInt(), anyInt(), anyInt(), any(), any());
-        verify(dashboardEventService, never()).importProcessed();
+        verify(dashboardEventService, never()).importProcessed(anyLong());
     }
 }

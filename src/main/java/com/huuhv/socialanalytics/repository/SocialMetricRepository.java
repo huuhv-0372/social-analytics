@@ -1,6 +1,6 @@
 package com.huuhv.socialanalytics.repository;
 
-import com.huuhv.socialanalytics.dto.response.ProviderMetricTotals;
+import com.huuhv.socialanalytics.dto.response.ProviderDailyTotals;
 import com.huuhv.socialanalytics.entity.SocialMetric;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -39,30 +39,52 @@ public interface SocialMetricRepository extends JpaRepository<SocialMetric, Long
                               Pageable pageable);
 
     /**
-     * Tổng metric theo provider của các bài thuộc user tại mốc {@code before} (giờ UTC, không tính snapshot đúng bằng
-     * mốc): mỗi bài lấy snapshot mới nhất có {@code collectedAt < before} (2 snapshot cùng thời điểm → id lớn hơn), bài
-     * chưa có snapshot nào trước mốc bị bỏ qua. Provider không có bài nào có snapshot → không có dòng.
+     * Metric theo provider của các bài thuộc user tại <b>từng</b> mốc trong {@code dayEndsJson} — 1 query cho cả biểu đồ
+     * (thay vì 1 query/ngày). Tại mỗi mốc (giờ UTC, không tính snapshot đúng bằng mốc), mỗi bài lấy snapshot mới nhất có
+     * {@code collected_at < mốc} (2 snapshot cùng thời điểm → id lớn hơn); bài chưa có snapshot trước mốc bị bỏ qua
+     * (provider không có bài nào → không có dòng cho mốc đó). Bài không còn được crawl (vd đã xoá trên nền tảng) giữ
+     * snapshot cuối cùng mãi (carry-forward, chủ ý — tránh biểu đồ tụt giả khi token hết hạn và job bỏ qua tài khoản vài
+     * ngày); xoá bài trong app thì snapshot bị xoá theo (FK cascade).
+     * <ul>
+     *     <li>likes / shares / comments: tổng các bài ({@code SUM}).</li>
+     *     <li>followers (số người theo dõi tác giả, lặp trên mọi bài của tài khoản): giá trị của snapshot mới nhất theo
+     *     {@code collected_at} trong provider ({@code FIRST_VALUE … OVER}) — cộng sẽ đếm lặp, MAX sẽ để số cũ của bài
+     *     không còn được crawl đè số mới.</li>
+     * </ul>
+     * Mốc truyền dạng mảng JSON {@code ["2026-11-06 17:00:00.000000", …]} (tham số bind, không nối chuỗi) →
+     * {@code JSON_TABLE} của MySQL 8; {@code day_index} = vị trí mốc, bắt đầu từ 1.
      * <p>
-     * likes / shares / comments là số của từng bài → cộng ({@code SUM}). followers là số người theo dõi <b>tác giả</b>
-     * (tài khoản), lặp lại trên mọi bài của tài khoản đó → lấy {@code MAX}, cộng sẽ đếm lặp theo số bài (mỗi user có tối
-     * đa 1 tài khoản mỗi provider).
-     * <p>
-     * Hiệu năng giống {@code PostRepository.findReportRows}: subquery {@code ORDER BY collectedAt DESC, id DESC LIMIT 1}
-     * đi lùi trên index {@code (post_id, collected_at)} từ mốc {@code before} → O(số bài), không phụ thuộc số snapshot.
-     * Không dùng {@code NOT EXISTS} + điều kiện {@code OR} (MySQL không range-scan được).
+     * Hiệu năng: subquery {@code ORDER BY collected_at DESC, id DESC LIMIT 1} đi lùi trên index
+     * {@code (post_id, collected_at)} từ mỗi mốc → O(số mốc × số bài) lần tra index trong <b>1</b> round-trip, không
+     * phụ thuộc số snapshot (gom nhóm mọi snapshot trong khoảng sẽ đọc ~24 dòng/bài/ngày khi crawl mỗi giờ). Không dùng
+     * {@code NOT EXISTS} + {@code OR} (MySQL không range-scan được). Tổng hợp nằm hết trong SQL.
      */
-    @Query("""
-            SELECT new com.huuhv.socialanalytics.dto.response.ProviderMetricTotals(
-                p.provider, SUM(m.likes), SUM(m.shares), SUM(m.comments), MAX(m.followers))
-            FROM Post p
-            JOIN SocialMetric m ON m.id = (
-                SELECT latest.id FROM SocialMetric latest
-                WHERE latest.post = p AND latest.collectedAt < :before
-                ORDER BY latest.collectedAt DESC, latest.id DESC
-                LIMIT 1)
-            WHERE p.user.id = :userId
-            GROUP BY p.provider
-            """)
-    List<ProviderMetricTotals> sumLatestByProvider(@Param("userId") Long userId,
-                                                   @Param("before") LocalDateTime before);
+    @Query(value = """
+            WITH latest AS (
+                SELECT d.day_index, p.provider, m.likes, m.shares, m.comments,
+                       FIRST_VALUE(m.followers) OVER (
+                           PARTITION BY d.day_index, p.provider
+                           ORDER BY m.collected_at DESC, m.id DESC) AS latest_followers
+                FROM JSON_TABLE(:dayEndsJson, '$[*]' COLUMNS (
+                         day_index FOR ORDINALITY,
+                         day_end DATETIME(6) PATH '$')) AS d
+                JOIN posts p ON p.user_id = :userId
+                JOIN social_metrics m ON m.id = (
+                    SELECT s.id FROM social_metrics s
+                    WHERE s.post_id = p.id AND s.collected_at < d.day_end
+                    ORDER BY s.collected_at DESC, s.id DESC
+                    LIMIT 1)
+            )
+            SELECT CAST(day_index AS SIGNED) AS dayIndex,
+                   provider AS provider,
+                   CAST(SUM(likes) AS SIGNED) AS likes,
+                   CAST(SUM(shares) AS SIGNED) AS shares,
+                   CAST(SUM(comments) AS SIGNED) AS comments,
+                   CAST(MAX(latest_followers) AS SIGNED) AS followers
+            FROM latest
+            GROUP BY day_index, provider
+            ORDER BY day_index, provider
+            """, nativeQuery = true)
+    List<ProviderDailyTotals> sumLatestByProviderPerDay(@Param("userId") Long userId,
+                                                        @Param("dayEndsJson") String dayEndsJson);
 }
