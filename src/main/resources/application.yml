@@ -224,6 +224,13 @@ app:
       # Timeout gọi SOAP (OWASP A10): dịch vụ treo không giữ thread request của dashboard lâu
       connect-timeout: 2s
       read-timeout: 3s
+      # Cặp tỷ giá hiển thị trên dashboard: 1 USD = ? VND
+      base-currency: USD
+      quote-currency: VND
+      # Tỷ giá lấy được dùng lại trong khoảng này (cache trong bộ nhớ mỗi instance) — không gọi SOAP mỗi lần tải trang
+      cache-ttl: 10m
+      # Gọi lỗi → không thử lại trong khoảng này, dashboard hiện giá trị cũ (nếu có) mà không phải chờ timeout
+      retry-after-failure: 1m
       mock-endpoint:
         # Endpoint mock /services/** + WSDL: public (không đăng nhập, không CSRF — chỉ trả dữ liệu giả) nên mặc định
         # TẮT ở production. Dev/test bật; container app của compose đặt SOAP_MOCK_ENDPOINT_ENABLED=true.

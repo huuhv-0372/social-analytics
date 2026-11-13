@@ -53,6 +53,7 @@ class ExchangeRateSoapClientTest {
     private static ExchangeRateSoapClient client(URI url, Duration readTimeout) {
         AppProperties properties = new AppProperties(null, null, null, null, null, null, null,
                 new AppProperties.Soap(new AppProperties.ExchangeRate(url, Duration.ofSeconds(1), readTimeout,
+                        "USD", "VND", Duration.ofMinutes(10), Duration.ofMinutes(1),
                         new AppProperties.MockEndpoint(false))));
         try {
             return new WebServiceClientConfig().exchangeRateSoapClient(new WebServiceTemplateBuilder(), properties,

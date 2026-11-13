@@ -360,6 +360,7 @@ App vừa **host** 1 endpoint SOAP mock (Spring-WS, contract-first từ `src/mai
 - WSDL: `http://localhost:8080/services/exchangeRate.wsdl`. Endpoint public, stateless, không CSRF (chỉ trả dữ liệu giả, không có dữ liệu user) — ngoại lệ thứ 2 của deny-by-default, cạnh `/ws/**`.
 - Tỷ giá giả: USD, EUR, GBP, JPY, VND; cùng 1 giờ cùng 1 số, mỗi giờ dao động ±0,5%. Cặp không hỗ trợ → SOAP Fault `Client` `Unsupported currency pair`; request sai XSD (mã tiền không phải 3 chữ in hoa...) → Fault `Client` `Validation error`; lỗi khác → Fault `Server` `Internal error`. Request có DOCTYPE / XML hỏng → 400 (chống XXE).
 - Client: URL `app.soap.exchange-rate.url`, connect timeout 2s / read timeout 3s, không theo redirect, validate response theo XSD + kiểm cặp tiền và `asOf`.
+- **Trên `/dashboard`:** card "Exchange rate" hiện `1 USD = … VND` (cặp tiền: `app.soap.exchange-rate.base-currency` / `quote-currency`) và thời điểm lấy theo múi giờ server. Tỷ giá được cache 10 phút (`cache-ttl`) mỗi instance; dịch vụ SOAP lỗi/timeout thì trang vẫn hiển thị bình thường — còn giá trị cũ thì hiện kèm nhãn **Dữ liệu cũ**, chưa từng lấy được thì hiện "Không lấy được tỷ giá"; sau 1 lần lỗi không gọi lại trong 1 phút (`retry-after-failure`) để trang không phải chờ timeout. Thử: chạy dev rồi đặt `SOAP_EXCHANGE_RATE_URL=http://localhost:9/services` (cổng không có dịch vụ) và khởi động lại → "Không lấy được tỷ giá".
 
 ```bash
 curl -s http://localhost:8080/services -H 'Content-Type: text/xml; charset=utf-8' -d '

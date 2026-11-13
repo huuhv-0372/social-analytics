@@ -7,6 +7,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -51,13 +52,32 @@ public record AppProperties(
      *                       endpoint mock của chính app
      * @param connectTimeout timeout mở kết nối (OWASP A10 — dịch vụ ngoài treo không giữ thread request)
      * @param readTimeout    timeout chờ response
+     * @param baseCurrency   cặp tỷ giá hiển thị trên dashboard: 1 {@code baseCurrency} = ? {@code quoteCurrency}
+     * @param quoteCurrency  (mã ISO 4217, 3 chữ in hoa, khác {@code baseCurrency})
+     * @param cacheTtl       tỷ giá lấy thành công được dùng lại trong khoảng này (không gọi SOAP mỗi lần tải trang)
+     * @param retryAfterFailure sau 1 lần gọi lỗi, không gọi lại trong khoảng này (dashboard không phải chờ timeout
+     *                       mỗi lần tải trang khi dịch vụ đang hỏng); {@code 0} = thử lại ngay lần sau
      * @param mockEndpoint   endpoint mock {@code /services/**} (public, không CSRF) — mặc định tắt
      */
     public record ExchangeRate(
             @NotNull @DefaultValue("http://localhost:8080/services") URI url,
             @NotNull @DefaultValue("2s") Duration connectTimeout,
             @NotNull @DefaultValue("3s") Duration readTimeout,
+            @NotNull @Pattern(regexp = "[A-Z]{3}") @DefaultValue("USD") String baseCurrency,
+            @NotNull @Pattern(regexp = "[A-Z]{3}") @DefaultValue("VND") String quoteCurrency,
+            @NotNull @DefaultValue("10m") Duration cacheTtl,
+            @NotNull @DefaultValue("1m") Duration retryAfterFailure,
             @Valid @DefaultValue MockEndpoint mockEndpoint) {
+
+        @AssertTrue(message = "app.soap.exchange-rate.base-currency and quote-currency must differ")
+        public boolean isCurrencyPairDistinct() {
+            return baseCurrency == null || !baseCurrency.equals(quoteCurrency);
+        }
+
+        @AssertTrue(message = "app.soap.exchange-rate.cache-ttl must be positive and retry-after-failure not negative")
+        public boolean isCacheDurationsValid() {
+            return isPositive(cacheTtl) && (retryAfterFailure == null || !retryAfterFailure.isNegative());
+        }
 
         /** Tên property bật endpoint mock — dùng trong {@code @ConditionalOnBooleanProperty}. */
         public static final String MOCK_ENDPOINT_ENABLED_PROPERTY = "app.soap.exchange-rate.mock-endpoint.enabled";

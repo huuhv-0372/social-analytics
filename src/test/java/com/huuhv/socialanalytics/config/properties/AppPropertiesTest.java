@@ -312,6 +312,10 @@ class AppPropertiesTest {
             assertThat(exchangeRate.url()).isEqualTo(URI.create("http://localhost:8080/services"));
             assertThat(exchangeRate.connectTimeout()).isEqualTo(Duration.ofSeconds(2));
             assertThat(exchangeRate.readTimeout()).isEqualTo(Duration.ofSeconds(3));
+            assertThat(exchangeRate.baseCurrency()).isEqualTo("USD");
+            assertThat(exchangeRate.quoteCurrency()).isEqualTo("VND");
+            assertThat(exchangeRate.cacheTtl()).isEqualTo(Duration.ofMinutes(10));
+            assertThat(exchangeRate.retryAfterFailure()).isEqualTo(Duration.ofMinutes(1));
             // Endpoint mock public → mặc định tắt (production-safe)
             assertThat(exchangeRate.mockEndpoint().enabled()).isFalse();
         });
@@ -339,6 +343,25 @@ class AppPropertiesTest {
         contextRunner
                 .withPropertyValues("app.soap.exchange-rate.url=/services")
                 .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void failsStartupWhenExchangeRatePairOrCacheSettingsAreInvalid() {
+        contextRunner
+                .withPropertyValues("app.soap.exchange-rate.base-currency=usd")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.soap.exchange-rate.base-currency=VND")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.soap.exchange-rate.cache-ttl=0")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.soap.exchange-rate.retry-after-failure=-1s")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.soap.exchange-rate.retry-after-failure=0")
+                .run(context -> assertThat(context).hasNotFailed());
     }
 
     @Test
