@@ -80,6 +80,23 @@ class PostRepositoryTest {
     }
 
     @Test
+    void findRefsByExternalIdsReturnsOnlyOwnPostsOfProviderIgnoringCase() {
+        User owner = saveUser("owner@example.com");
+        User other = saveUser("other@example.com");
+        Post fb1 = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));
+        Post fb2 = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-2"));
+        postRepository.save(newPost(owner, Provider.TWITTER, "fb-3"));
+        postRepository.save(newPost(other, Provider.FACEBOOK, "fb-9"));
+
+        // Không phân biệt hoa thường (collation như unique index); bài TWITTER / bài của user khác không lọt vào
+        List<PostRef> refs = postRepository.findRefsByUserIdAndProviderAndExternalIdIn(owner.getId(),
+                Provider.FACEBOOK, List.of("FB-1", "fb-2", "fb-3", "fb-9", "missing"));
+
+        assertThat(refs).extracting(PostRef::id, PostRef::externalId)
+                .containsExactlyInAnyOrder(tuple(fb1.getId(), "fb-1"), tuple(fb2.getId(), "fb-2"));
+    }
+
+    @Test
     void reportRowsRespectLimit() {
         User owner = saveUser("owner@example.com");
         postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));

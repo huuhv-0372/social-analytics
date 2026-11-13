@@ -250,6 +250,9 @@ Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); ch�
 | POST | `/api/import-posts` | Import bài viết từ file `.xlsx` (multipart, field `file`) — xem bên dưới |
 | GET | `/api/import-posts/template` | Tải file `.xlsx` mẫu (header + dữ liệu giả + sheet hướng dẫn) |
 | GET | `/api/export-report` | Tải báo cáo `.xlsx`: mỗi bài viết 1 dòng kèm snapshot metric mới nhất — xem bên dưới |
+| POST | `/api/import-metrics` | Import snapshot metric từ file `.xlsx` (multipart, field `file`) — xem bên dưới |
+| GET | `/api/import-metrics/template` | Tải file `.xlsx` mẫu import metric (snapshot giả của các bài `demo-*` + sheet hướng dẫn) |
+| GET | `/api/export-metrics?from=...&to=...` | Tải mọi snapshot metric `.xlsx` (lọc `collectedAt` tuỳ chọn) — cùng định dạng file import metric |
 | GET | `/api/chart-data?days=7` | Dữ liệu biểu đồ dashboard: metric theo provider, theo ngày (`days` 1–30, mặc định 7) — xem bên dưới |
 
 Ví dụ:
@@ -308,6 +311,28 @@ curl -b "SESSION=$SESSION_ID; XSRF-TOKEN=$XSRF" -X POST http://localhost:8080/ap
 
 ```bash
 curl -OJ -b "SESSION=$SESSION_ID" http://localhost:8080/api/export-report
+```
+
+### Import / export snapshot metric (Excel)
+
+Importer/exporter Excel là **generic** (Reflection: metadata cột cache theo class, đọc/ghi qua getter/setter) — cùng 1 bộ code cho bài viết và snapshot metric.
+
+File mẫu: `GET /api/import-metrics/template` (Swagger UI → *Download file*) hoặc [`src/main/resources/excel/metrics-import-template.xlsx`](src/main/resources/excel/metrics-import-template.xlsx) — 8 snapshot giả của 4 bài `demo-*` trong file mẫu import bài viết: **import file mẫu bài viết trước**, rồi import nguyên file này sẽ thành công (biểu đồ dashboard có dữ liệu ngày 01–06/06/2026).
+
+File metric:
+
+| Provider | External ID | Likes | Shares | Comments | Followers | Collected At |
+|---|---|---|---|---|---|---|
+| `FACEBOOK` / `TWITTER` | bài viết **của bạn** (không phân biệt hoa thường) | số nguyên ≥ 0 | ≥ 0 | ≥ 0 | ≥ 0 | không ở tương lai — ô kiểu ngày hoặc `yyyy-MM-dd HH:mm:ss`, theo múi giờ server |
+
+- `POST /api/import-metrics`: mỗi dòng tạo 1 snapshot (snapshot là bản ghi theo thời gian, không cập nhật bản cũ). Bài không có trong các bài của bạn → lỗi `post not found`; trùng bài + Collected At trong file → lỗi ở dòng sau. Cùng giới hạn file / số dòng với import bài viết. Lưu xong → dashboard của bạn tự làm mới (event `METRICS_UPDATED`). Không tính vào "Import statistics" (thống kê đó chỉ cho import bài viết).
+- `GET /api/export-metrics?from=2026-11-01T00:00:00Z&to=2026-11-13T00:00:00Z` → `metrics-report-yyyyMMdd-HHmmss.xlsx`, cùng 7 cột → sửa rồi import lại được (import lại nguyên file sẽ tạo snapshot trùng). `from`/`to` tuỳ chọn, tính cả 2 đầu; tối đa 10000 dòng (vượt → 400, thu hẹp khoảng thời gian); tần suất như export báo cáo (bucket riêng).
+
+```bash
+curl -b "SESSION=$SESSION_ID; XSRF-TOKEN=$XSRF" -X POST http://localhost:8080/api/import-metrics \
+  -H "X-XSRF-TOKEN: $XSRF" -F "file=@metrics.xlsx"
+# {"totalRows":3,"imported":2,"failed":1,"errors":[{"row":3,"column":"External ID","message":"post not found"}]}
+curl -OJ -b "SESSION=$SESSION_ID" "http://localhost:8080/api/export-metrics?from=2026-11-01T00:00:00Z"
 ```
 
 ### Dữ liệu biểu đồ

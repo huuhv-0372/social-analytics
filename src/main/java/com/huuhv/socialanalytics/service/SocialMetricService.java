@@ -3,6 +3,7 @@ package com.huuhv.socialanalytics.service;
 import com.huuhv.socialanalytics.dto.request.SocialMetricRequest;
 import com.huuhv.socialanalytics.dto.response.PageResponse;
 import com.huuhv.socialanalytics.dto.response.ProviderDailyTotals;
+import com.huuhv.socialanalytics.dto.response.SocialMetricReportRow;
 import com.huuhv.socialanalytics.dto.response.SocialMetricResponse;
 import com.huuhv.socialanalytics.entity.Post;
 import com.huuhv.socialanalytics.entity.SocialMetric;
@@ -13,6 +14,7 @@ import com.huuhv.socialanalytics.util.PageableUtils;
 import com.huuhv.socialanalytics.util.UtcDateTimes;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -44,6 +46,7 @@ public class SocialMetricService {
     private final PostService postService;
     private final CurrentUserService currentUserService;
     private final SocialAccountService socialAccountService;
+    private final DashboardEventService dashboardEventService;
 
     @Transactional(readOnly = true)
     public PageResponse<SocialMetricResponse> findByPost(Long postId, Instant from, Instant to,
@@ -121,6 +124,60 @@ public class SocialMetricService {
         int saved = socialMetricRepository.insertAll(snapshots);
         socialAccountService.markMetricsUpdated(accountId, updatedAtUtc);
         return saved;
+    }
+
+    /**
+     * Lưu snapshot nhập từ file Excel của {@code ownerId} trong 1 transaction rồi báo dashboard của owner làm mới
+     * ({@code METRICS_UPDATED}, gửi sau commit — rollback thì không có event).
+     * <p>
+     * {@code postId} của mọi request phải là bài của owner, đã tra bằng {@link PostService#findOwnedPostRefs} (không từ
+     * client). Bài bị xoá giữa lúc đọc file và lúc ghi được bỏ qua: bài còn tồn tại bị khoá chia sẻ
+     * ({@link PostService#lockExistingIds}) nên không bị xoá xen giữa → INSERT không vi phạm khoá ngoại. Ghi bằng
+     * INSERT nhiều dòng ({@link SocialMetricRepository#insertAll}). Không đổi {@code social_accounts.last_updated_at}
+     * (mốc đó chỉ dành cho job crawl).
+     *
+     * @param snapshots request đã validate (cùng quy tắc với {@link #create})
+     * @return số snapshot đã lưu
+     */
+    @Transactional
+    public int importSnapshots(Long ownerId, List<SocialMetricRequest> snapshots) {
+        if (snapshots.isEmpty()) {
+            return 0;
+        }
+        Set<Long> existingPostIds = postService.lockExistingIds(
+                snapshots.stream().map(SocialMetricRequest::postId).distinct().toList());
+        List<SocialMetric> rows = snapshots.stream()
+                .filter(request -> existingPostIds.contains(request.postId()))
+                .map(request -> SocialMetric.builder()
+                        .post(postService.getReference(request.postId()))
+                        .likes(request.likes())
+                        .shares(request.shares())
+                        .comments(request.comments())
+                        .followers(request.followers())
+                        .collectedAt(UtcDateTimes.toUtc(request.collectedAt()))
+                        .build())
+                .toList();
+        if (rows.size() < snapshots.size()) {
+            log.info("User {}: skipped {} imported snapshots of posts deleted during import", ownerId,
+                    snapshots.size() - rows.size());
+        }
+        int saved = socialMetricRepository.insertAll(rows);
+        if (saved > 0) {
+            dashboardEventService.metricsUpdated(Set.of(ownerId));
+        }
+        return saved;
+    }
+
+    /**
+     * Dữ liệu file export snapshot metric của owner (projection) — xem {@link SocialMetricRepository#findReportRows}.
+     * {@code ownerId} lấy từ user đang đăng nhập ở Service gọi tới, không bao giờ từ client.
+     *
+     * @param fromUtc / toUtc khoảng {@code collectedAt} (giờ UTC, 2 đầu tính cả); {@code null} = không giới hạn
+     */
+    @Transactional(readOnly = true)
+    public List<SocialMetricReportRow> findReportRows(Long ownerId, LocalDateTime fromUtc, LocalDateTime toUtc,
+                                                      int limit) {
+        return socialMetricRepository.findReportRows(ownerId, fromUtc, toUtc, Limit.of(limit));
     }
 
     /**

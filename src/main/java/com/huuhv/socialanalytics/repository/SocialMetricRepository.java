@@ -1,7 +1,9 @@
 package com.huuhv.socialanalytics.repository;
 
 import com.huuhv.socialanalytics.dto.response.ProviderDailyTotals;
+import com.huuhv.socialanalytics.dto.response.SocialMetricReportRow;
 import com.huuhv.socialanalytics.entity.SocialMetric;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -37,6 +39,30 @@ public interface SocialMetricRepository extends JpaRepository<SocialMetric, Long
                               @Param("from") LocalDateTime from,
                               @Param("to") LocalDateTime to,
                               Pageable pageable);
+
+    /**
+     * File export snapshot metric của user (projection, không load Entity): mọi snapshot của các bài thuộc
+     * {@code userId}, lọc khoảng {@code collectedAt} tuỳ chọn (giờ UTC, 2 đầu tính cả; {@code null} = không giới hạn),
+     * sắp theo bài rồi thời gian. Caller truyền {@code limit} = giới hạn + 1 để biết có vượt giới hạn hay không.
+     * <p>
+     * Hiệu năng: JOIN từ {@code posts} (unique index bắt đầu bằng {@code user_id}) sang
+     * {@code idx_social_metrics_post_collected (post_id, collected_at)} — lọc khoảng thời gian bằng range trên index của
+     * từng bài; sắp xếp cần filesort (top-N vì có LIMIT) trên các snapshot khớp điều kiện → khoảng thời gian càng hẹp
+     * càng rẻ.
+     */
+    @Query("""
+            SELECT new com.huuhv.socialanalytics.dto.response.SocialMetricReportRow(
+                p.provider, p.externalId, m.likes, m.shares, m.comments, m.followers, m.collectedAt)
+            FROM SocialMetric m JOIN m.post p
+            WHERE p.user.id = :userId
+              AND (:from IS NULL OR m.collectedAt >= :from)
+              AND (:to IS NULL OR m.collectedAt <= :to)
+            ORDER BY p.provider, p.externalId, m.collectedAt, m.id
+            """)
+    List<SocialMetricReportRow> findReportRows(@Param("userId") Long userId,
+                                               @Param("from") LocalDateTime from,
+                                               @Param("to") LocalDateTime to,
+                                               Limit limit);
 
     /**
      * Metric theo provider của các bài thuộc user tại <b>từng</b> mốc trong {@code dayEndsJson} — 1 query cho cả biểu đồ

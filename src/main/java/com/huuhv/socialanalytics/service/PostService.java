@@ -24,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -133,6 +134,22 @@ public class PostService {
     @Transactional(readOnly = true)
     public List<PostRef> findPostRefs(Long userId, Provider provider) {
         return postRepository.findRefsByUserIdAndProvider(userId, provider);
+    }
+
+    /**
+     * Bài của owner trên 1 provider theo lô externalId (import snapshot metric). {@code ownerId} lấy từ user đang đăng
+     * nhập ở Service gọi tới — bài của user khác không bao giờ được trả về (chống IDOR). Tra theo lô
+     * {@value #LOCK_BATCH_SIZE} externalId để câu {@code IN (...)} không quá dài.
+     */
+    @Transactional(readOnly = true)
+    public List<PostRef> findOwnedPostRefs(Long ownerId, Provider provider, Collection<String> externalIds) {
+        List<String> ids = List.copyOf(externalIds);
+        List<PostRef> refs = new ArrayList<>(ids.size());
+        for (int from = 0; from < ids.size(); from += LOCK_BATCH_SIZE) {
+            refs.addAll(postRepository.findRefsByUserIdAndProviderAndExternalIdIn(ownerId, provider,
+                    ids.subList(from, Math.min(from + LOCK_BATCH_SIZE, ids.size()))));
+        }
+        return refs;
     }
 
     /**

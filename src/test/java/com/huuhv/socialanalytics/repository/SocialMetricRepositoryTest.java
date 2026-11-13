@@ -1,6 +1,7 @@
 package com.huuhv.socialanalytics.repository;
 
 import com.huuhv.socialanalytics.TestcontainersConfiguration;
+import com.huuhv.socialanalytics.dto.response.SocialMetricReportRow;
 import com.huuhv.socialanalytics.entity.Post;
 import com.huuhv.socialanalytics.entity.SocialMetric;
 import com.huuhv.socialanalytics.entity.User;
@@ -12,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -25,6 +27,7 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -94,6 +97,34 @@ class SocialMetricRepositoryTest {
                 .extracting(SocialMetric::getLikes).containsExactly(20L, 30L);
         assertThat(socialMetricRepository.search(post.getId(), null, BASE.plusHours(1), PageRequest.of(0, 10, ascending)))
                 .extracting(SocialMetric::getLikes).containsExactly(10L, 20L);
+    }
+
+    @Test
+    void reportRowsListOwnSnapshotsSortedByPostThenTimeWithinRange() {
+        Post facebook = postRepository.save(Post.builder().user(owner).provider(Provider.FACEBOOK)
+                .externalId("fb-1").url("https://facebook.com/posts/1").build());
+        saveSnapshot(facebook, BASE.plusHours(1), 7);
+        User other = userRepository.save(User.builder().email("other@example.com").displayName("Other").build());
+        Post othersPost = postRepository.save(Post.builder().user(other).provider(Provider.FACEBOOK)
+                .externalId("fb-1").url("https://facebook.com/posts/1").build());
+        saveSnapshot(othersPost, BASE.plusHours(1), 999);
+
+        List<SocialMetricReportRow> all = socialMetricRepository.findReportRows(owner.getId(), null, null,
+                Limit.unlimited());
+
+        // FACEBOOK trước TWITTER (thứ tự enum lưu chuỗi → theo chữ cái), trong 1 bài theo thời gian; không có bài user khác
+        assertThat(all).extracting(SocialMetricReportRow::provider, SocialMetricReportRow::likes,
+                SocialMetricReportRow::collectedAt).containsExactly(
+                tuple(Provider.FACEBOOK, 7L, BASE.plusHours(1)),
+                tuple(Provider.TWITTER, 10L, BASE),
+                tuple(Provider.TWITTER, 20L, BASE.plusHours(1)),
+                tuple(Provider.TWITTER, 30L, BASE.plusHours(2)));
+        assertThat(all.get(1)).isEqualTo(new SocialMetricReportRow(Provider.TWITTER, "tw-1", 10L, 1L, 2L, 1000L, BASE));
+        // 2 đầu khoảng tính cả
+        assertThat(socialMetricRepository.findReportRows(owner.getId(), BASE.plusHours(1), BASE.plusHours(1),
+                Limit.unlimited())).extracting(SocialMetricReportRow::likes).containsExactly(7L, 20L);
+        assertThat(socialMetricRepository.findReportRows(owner.getId(), null, null, Limit.of(2)))
+                .extracting(SocialMetricReportRow::likes).containsExactly(7L, 10L);
     }
 
     @Test

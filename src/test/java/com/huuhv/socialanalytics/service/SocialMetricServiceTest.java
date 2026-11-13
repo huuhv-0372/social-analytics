@@ -59,6 +59,9 @@ class SocialMetricServiceTest {
     @Mock
     private SocialAccountService socialAccountService;
 
+    @Mock
+    private DashboardEventService dashboardEventService;
+
     @InjectMocks
     private SocialMetricService socialMetricService;
 
@@ -262,6 +265,46 @@ class SocialMetricServiceTest {
         assertThat(socialMetricService.recordSnapshots(7L, List.of(), NOW, NOW)).isZero();
 
         verify(socialAccountService).markMetricsUpdated(7L, NOW);
+    }
+
+    @Test
+    void importSnapshotsInsertsInUtcSkipsDeletedPostsAndNotifiesOwner() {
+        // 10 lặp 2 lần: chỉ khoá mỗi bài 1 lần
+        when(postService.lockExistingIds(List.of(10L, 11L))).thenReturn(Set.of(10L));
+        when(postService.getReference(10L)).thenReturn(post);
+        when(socialMetricRepository.insertAll(anyList())).thenReturn(2);
+
+        int saved = socialMetricService.importSnapshots(OWNER_ID, List.of(
+                new SocialMetricRequest(10L, 5L, 1L, 2L, 300L, Instant.parse("2026-01-01T02:00:00.1234567Z")),
+                new SocialMetricRequest(11L, 8L, 0L, 0L, 40L, NOW_INSTANT),
+                new SocialMetricRequest(10L, 6L, 1L, 2L, 301L, NOW_INSTANT)));
+
+        assertThat(saved).isEqualTo(2);
+        ArgumentCaptor<List<SocialMetric>> inserted = ArgumentCaptor.captor();
+        verify(socialMetricRepository).insertAll(inserted.capture());
+        assertThat(inserted.getValue())
+                .extracting(SocialMetric::getPost, SocialMetric::getLikes, SocialMetric::getFollowers,
+                        SocialMetric::getCollectedAt)
+                .containsExactly(
+                        // Lưu giờ UTC, cắt về micro giây như DATETIME(6)
+                        tuple(post, 5L, 300L, LocalDateTime.of(2026, 1, 1, 2, 0, 0, 123_456_000)),
+                        tuple(post, 6L, 301L, NOW));
+        verify(postService, never()).getReference(11L);
+        // Dashboard của owner làm mới (gửi sau commit); không đụng mốc last_updated_at của job crawl
+        verify(dashboardEventService).metricsUpdated(Set.of(OWNER_ID));
+        verifyNoInteractions(socialAccountService);
+    }
+
+    @Test
+    void importSnapshotsWithNothingSavedDoesNotNotify() {
+        when(postService.lockExistingIds(List.of(10L))).thenReturn(Set.of());
+        when(socialMetricRepository.insertAll(List.of())).thenReturn(0);
+
+        assertThat(socialMetricService.importSnapshots(OWNER_ID,
+                List.of(new SocialMetricRequest(10L, 1L, 1L, 1L, 1L, NOW_INSTANT)))).isZero();
+        assertThat(socialMetricService.importSnapshots(OWNER_ID, List.of())).isZero();
+
+        verifyNoInteractions(dashboardEventService);
     }
 
     private void givenCurrentUser() {

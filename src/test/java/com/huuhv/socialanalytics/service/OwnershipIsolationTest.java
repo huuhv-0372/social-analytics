@@ -3,20 +3,28 @@ package com.huuhv.socialanalytics.service;
 import com.huuhv.socialanalytics.TestcontainersConfiguration;
 import com.huuhv.socialanalytics.config.ClockConfig;
 import com.huuhv.socialanalytics.config.CryptoConfig;
+import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.dto.request.PostRequest;
 import com.huuhv.socialanalytics.dto.request.SocialMetricRequest;
 import com.huuhv.socialanalytics.dto.response.ChartDataResponse;
 import com.huuhv.socialanalytics.dto.response.ChartDataResponse.ProviderSeries;
+import com.huuhv.socialanalytics.dto.response.ImportResultResponse.RowError;
+import com.huuhv.socialanalytics.dto.response.MetricImportResultResponse;
 import com.huuhv.socialanalytics.dto.response.PostResponse;
+import com.huuhv.socialanalytics.dto.response.SocialMetricReportRow;
 import com.huuhv.socialanalytics.dto.response.SocialMetricResponse;
 import com.huuhv.socialanalytics.entity.SocialAccount;
 import com.huuhv.socialanalytics.enums.Provider;
+import com.huuhv.socialanalytics.excel.GenericExcelImporter;
+import com.huuhv.socialanalytics.excel.TestWorkbooks;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
 import com.huuhv.socialanalytics.repository.PostRepository;
 import com.huuhv.socialanalytics.repository.SocialAccountRepository;
 import com.huuhv.socialanalytics.repository.SocialMetricRepository;
 import com.huuhv.socialanalytics.repository.UserImportStatisticRepository;
 import com.huuhv.socialanalytics.repository.UserRepository;
+import jakarta.validation.Validation;
+import jakarta.validation.ValidatorFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,6 +34,7 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
@@ -36,7 +45,10 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.unit.DataSize;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -44,6 +56,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 /**
  * Chống IDOR (OWASP A01) với query thật trên MySQL: owner lấy từ {@code SecurityContext} (principal OAuth2 →
@@ -71,6 +84,9 @@ class OwnershipIsolationTest {
 
     @Autowired
     private SocialMetricService socialMetricService;
+
+    @Autowired
+    private CurrentUserService currentUserService;
 
     @Autowired
     private DashboardService dashboardService;
@@ -216,6 +232,47 @@ class OwnershipIsolationTest {
                 .isEqualTo(List.of(10L));
         assertThat(ownersView.lastUpdatedAt()).isNotNull();
         assertThat(ownersView.importStatistics().totalRows()).isEqualTo(10);
+    }
+
+    /**
+     * Import snapshot metric tra bài theo (Provider, External ID) <b>trong các bài của user đang đăng nhập</b>: file của
+     * attacker nhắm vào bài của owner → lỗi "post not found" (như bài không tồn tại), không ghi snapshot nào.
+     */
+    @Test
+    void otherUserCannotImportMetricsIntoOwnersPost() {
+        AppProperties properties = new AppProperties(new AppProperties.ImportSettings(10, DataSize.ofMegabytes(1)),
+                new AppProperties.ExportSettings(100, Duration.ZERO), null, null, null, null, null, null);
+        SocialMetricImportService importService;
+        try (ValidatorFactory validatorFactory = Validation.buildDefaultValidatorFactory()) {
+            importService = new SocialMetricImportService(new ExcelImportSupport(new GenericExcelImporter(),
+                    validatorFactory.getValidator(), properties), postService, socialMetricService,
+                    currentUserService, Clock.systemUTC());
+            byte[] file = TestWorkbooks.xlsx(
+                    new Object[]{"Provider", "External ID", "Likes", "Shares", "Comments", "Followers", "Collected At"},
+                    new Object[]{"FACEBOOK", "fb-1", 999, 0, 0, 0, LocalDateTime.of(2026, 1, 2, 0, 0)});
+
+            MetricImportResultResponse result = importService.importMetrics(
+                    new MockMultipartFile("file", "metrics.xlsx", "application/octet-stream", file));
+
+            assertThat(result.imported()).isZero();
+            assertThat(result.errors()).singleElement().extracting(RowError::column, RowError::message)
+                    .containsExactly("External ID", "post not found");
+        }
+        assertThat(socialMetricRepository.count()).isEqualTo(1);
+        assertThat(postService.findOwnedPostRefs(currentUserService.getCurrentUser().getId(), Provider.FACEBOOK,
+                List.of("fb-1"))).isEmpty();
+    }
+
+    @Test
+    void otherUserDoesNotExportOwnersMetrics() {
+        Long attackerId = currentUserService.getCurrentUser().getId();
+        assertThat(socialMetricService.findReportRows(attackerId, null, null, 100)).isEmpty();
+
+        authenticate(owner);
+        Long ownerId = currentUserService.getCurrentUser().getId();
+        assertThat(socialMetricService.findReportRows(ownerId, null, null, 100))
+                .extracting(SocialMetricReportRow::externalId, SocialMetricReportRow::likes)
+                .containsExactly(tuple("fb-1", 10L));
     }
 
     @Test

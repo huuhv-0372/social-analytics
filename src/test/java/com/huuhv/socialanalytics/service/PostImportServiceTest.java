@@ -82,9 +82,8 @@ class PostImportServiceTest {
                 new AppProperties.ExportSettings(10000, Duration.ZERO),
                 // Service không dùng key mã hoá token / timeout OAuth2, thread pool, job, JMS
                 null, null, null, null, null, null);
-        return new PostImportService(new GenericExcelImporter(),
-                new PostUpsertService(postRepository, importHistoryService),
-                currentUserService, validator, properties, CLOCK);
+        return new PostImportService(new ExcelImportSupport(new GenericExcelImporter(), validator, properties),
+                new PostUpsertService(postRepository, importHistoryService), currentUserService, CLOCK);
     }
 
     @AfterAll
@@ -232,7 +231,7 @@ class PostImportServiceTest {
     void importRowCoversEveryPostRequestField() {
         // Import validate PostRequest dựng từ PostImportRow → mọi component phải có cột cùng tên field
         List<String> importFields = ExcelColumnMetadata.of(PostImportRow.class).stream()
-                .map(meta -> meta.field().getName()).toList();
+                .map(ExcelColumnMetadata.ColumnMeta::property).toList();
 
         assertThat(Arrays.stream(PostRequest.class.getRecordComponents()).map(RecordComponent::getName).toList())
                 .containsExactlyInAnyOrderElementsOf(importFields);

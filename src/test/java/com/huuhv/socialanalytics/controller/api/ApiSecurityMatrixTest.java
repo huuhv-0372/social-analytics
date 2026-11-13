@@ -7,6 +7,8 @@ import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.PostImportService;
 import com.huuhv.socialanalytics.service.PostReportService;
+import com.huuhv.socialanalytics.service.SocialMetricImportService;
+import com.huuhv.socialanalytics.service.SocialMetricReportService;
 import com.huuhv.socialanalytics.service.PostService;
 import com.huuhv.socialanalytics.service.SocialMetricService;
 import org.junit.jupiter.api.AfterEach;
@@ -47,7 +49,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * và {@code service/OwnershipIsolationTest}.
  */
 @WebMvcTest({PostApiController.class, SocialMetricApiController.class, PostImportApiController.class,
-        ReportApiController.class, ChartDataApiController.class})
+        SocialMetricImportApiController.class, ReportApiController.class, ChartDataApiController.class})
 @Import({SecurityConfig.class, WebConfig.class})
 @ActiveProfiles("test")
 class ApiSecurityMatrixTest {
@@ -73,6 +75,12 @@ class ApiSecurityMatrixTest {
     private PostReportService postReportService;
 
     @MockitoBean
+    private SocialMetricImportService socialMetricImportService;
+
+    @MockitoBean
+    private SocialMetricReportService socialMetricReportService;
+
+    @MockitoBean
     private ChartDataService chartDataService;
 
     @MockitoBean
@@ -84,7 +92,8 @@ class ApiSecurityMatrixTest {
 
     @AfterEach
     void serviceIsNeverReached() {
-        verifyNoInteractions(postService, socialMetricService, postImportService, postReportService, chartDataService);
+        verifyNoInteractions(postService, socialMetricService, postImportService, postReportService, chartDataService,
+                socialMetricImportService, socialMetricReportService);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -131,6 +140,8 @@ class ApiSecurityMatrixTest {
                 endpoint("GET /api/metrics/{id}", () -> get("/api/metrics/5")),
                 endpoint("GET /api/import-posts/template", () -> get("/api/import-posts/template")),
                 endpoint("GET /api/export-report", () -> get("/api/export-report")),
+                endpoint("GET /api/export-metrics", () -> get("/api/export-metrics")),
+                endpoint("GET /api/import-metrics/template", () -> get("/api/import-metrics/template")),
                 endpoint("GET /api/chart-data", () -> get("/api/chart-data"))), writeEndpoints());
     }
 
@@ -145,7 +156,10 @@ class ApiSecurityMatrixTest {
                         .contentType(MediaType.APPLICATION_JSON).content(METRIC_BODY)),
                 endpoint("DELETE /api/metrics/{id}", () -> delete("/api/metrics/5")),
                 endpoint("POST /api/import-posts", () -> multipart("/api/import-posts")
-                        .file(new MockMultipartFile("file", "posts.xlsx", "application/octet-stream", new byte[]{1}))));
+                        .file(new MockMultipartFile("file", "posts.xlsx", "application/octet-stream", new byte[]{1}))),
+                endpoint("POST /api/import-metrics", () -> multipart("/api/import-metrics")
+                        .file(new MockMultipartFile("file", "metrics.xlsx", "application/octet-stream",
+                                new byte[]{1}))));
     }
 
     private static Arguments endpoint(String name, Supplier<AbstractMockHttpServletRequestBuilder<?>> request) {

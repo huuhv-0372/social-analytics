@@ -47,6 +47,20 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     List<PostRef> findRefsByUserIdAndProvider(@Param("userId") Long userId, @Param("provider") Provider provider);
 
     /**
+     * Id + externalId của các bài thuộc user trên 1 provider có externalId trong {@code externalIds} (import snapshot
+     * metric tra bài theo lô, projection không load Entity). So khớp theo collation của cột (không phân biệt hoa
+     * thường, như unique index). Đi trên unique index {@code (user_id, provider, external_id)}.
+     */
+    @Query("""
+            SELECT new com.huuhv.socialanalytics.dto.response.PostRef(p.id, p.externalId)
+            FROM Post p
+            WHERE p.user.id = :userId AND p.provider = :provider AND p.externalId IN (:externalIds)
+            """)
+    List<PostRef> findRefsByUserIdAndProviderAndExternalIdIn(@Param("userId") Long userId,
+                                                              @Param("provider") Provider provider,
+                                                              @Param("externalIds") Collection<String> externalIds);
+
+    /**
      * Id các bài còn tồn tại trong {@code ids}, giữ khoá chia sẻ ({@code FOR SHARE}, MySQL 8) tới hết transaction: bài
      * không bị xoá được cho tới khi caller commit → INSERT snapshot theo các id này không vi phạm khoá ngoại. Cần chạy
      * trong transaction.
