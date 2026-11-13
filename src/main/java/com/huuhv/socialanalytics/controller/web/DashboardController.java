@@ -13,7 +13,8 @@ import org.springframework.web.bind.annotation.GetMapping;
  * Trang chính sau khi đăng nhập: "Last updated time" của metrics + thống kê import tổng hợp + tỷ giá (SOAP) render sẵn
  * lúc tải trang.
  * Biểu đồ và cập nhật realtime do {@code static/js/dashboard.js} làm phía trình duyệt ({@code GET /api/chart-data} +
- * STOMP {@code /topic/metrics}) — controller không đổi.
+ * SUBSCRIBE đích STOMP riêng của user {@link StompDestinations#USER_METRICS_DESTINATION}); controller chỉ truyền đích
+ * đó qua model ({@code metricsDestination}) để JS không hardcode.
  */
 @Controller
 @RequiredArgsConstructor
