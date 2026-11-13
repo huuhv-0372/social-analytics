@@ -120,6 +120,14 @@ spring:
       min-concurrency: 1
       max-concurrency: 3
 
+  webservices:
+    # MessageDispatcherServlet của Spring-WS (endpoint SOAP mock + WSDL) ở /services/* (mặc định của Boot)
+    path: /services
+    servlet:
+      init:
+        # WSDL ghi địa chỉ endpoint theo scheme/host/port của request (định nghĩa WSDL chỉ khai đường dẫn tương đối)
+        transformWsdlLocations: true
+
   data:
     web:
       pageable:
@@ -208,6 +216,19 @@ app:
     # (spring.artemis.embedded.enabled=true — dev/test); production tắt broker embedded nên không đọc.
     embedded-broker-properties:
       - classpath:artemis/broker.properties
+  soap:
+    exchange-rate:
+      # Endpoint SOAP tỷ giá mà client (client/soap/ExchangeRateSoapClient) gọi — mặc định là endpoint mock của chính
+      # app. Chỉ http/https, không chứa user:password. Container app của compose gọi chính nó qua localhost:8080.
+      url: ${SOAP_EXCHANGE_RATE_URL:http://localhost:8080/services}
+      # Timeout gọi SOAP (OWASP A10): dịch vụ treo không giữ thread request của dashboard lâu
+      connect-timeout: 2s
+      read-timeout: 3s
+      mock-endpoint:
+        # Endpoint mock /services/** + WSDL: public (không đăng nhập, không CSRF — chỉ trả dữ liệu giả) nên mặc định
+        # TẮT ở production. Dev/test bật; container app của compose đặt SOAP_MOCK_ENDPOINT_ENABLED=true.
+        # Tắt mà vẫn để url trỏ vào chính app → không lấy được tỷ giá
+        enabled: ${SOAP_MOCK_ENDPOINT_ENABLED:false}
   jobs:
     update-metrics:
       # Crawl metrics mọi tài khoản (UpdateSocialMetricsJob). Cron Spring 6 trường: giây phút giờ ngày tháng thứ.

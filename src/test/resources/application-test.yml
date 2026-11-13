@@ -33,6 +33,11 @@ logging:
     com.huuhv.socialanalytics: INFO
 
 app:
+  soap:
+    exchange-rate:
+      mock-endpoint:
+        # Test chạy cả endpoint mock (chain bảo mật riêng /services/**) để kiểm tra như dev/compose
+        enabled: true
   jms:
     # File chính + file ghi đè của test (giao lại sau 100ms để test retry → DLQ không phải chờ vài giây)
     embedded-broker-properties:

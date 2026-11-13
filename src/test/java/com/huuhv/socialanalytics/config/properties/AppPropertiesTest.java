@@ -11,6 +11,7 @@ import org.springframework.util.unit.DataSize;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.URI;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -304,6 +305,52 @@ class AppPropertiesTest {
                 .run(context -> assertThat(context).hasFailed());
     }
 
+    @Test
+    void bindsSoapExchangeRateSettings() {
+        contextRunner.run(context -> {
+            AppProperties.ExchangeRate exchangeRate = context.getBean(AppProperties.class).soap().exchangeRate();
+            assertThat(exchangeRate.url()).isEqualTo(URI.create("http://localhost:8080/services"));
+            assertThat(exchangeRate.connectTimeout()).isEqualTo(Duration.ofSeconds(2));
+            assertThat(exchangeRate.readTimeout()).isEqualTo(Duration.ofSeconds(3));
+            // Endpoint mock public → mặc định tắt (production-safe)
+            assertThat(exchangeRate.mockEndpoint().enabled()).isFalse();
+        });
+        contextRunner
+                .withPropertyValues("app.soap.exchange-rate.url=https://rates.example.com/ws",
+                        "app.soap.exchange-rate.connect-timeout=1s", "app.soap.exchange-rate.read-timeout=4s",
+                        "app.soap.exchange-rate.mock-endpoint.enabled=true")
+                .run(context -> {
+                    AppProperties.ExchangeRate exchangeRate = context.getBean(AppProperties.class).soap().exchangeRate();
+                    assertThat(exchangeRate.url()).isEqualTo(URI.create("https://rates.example.com/ws"));
+                    assertThat(exchangeRate.connectTimeout()).isEqualTo(Duration.ofSeconds(1));
+                    assertThat(exchangeRate.readTimeout()).isEqualTo(Duration.ofSeconds(4));
+                    assertThat(exchangeRate.mockEndpoint().enabled()).isTrue();
+                });
+    }
+
+    @Test
+    void failsStartupWhenSoapUrlIsNotHttpOrHasUserInfo() {
+        contextRunner
+                .withPropertyValues("app.soap.exchange-rate.url=file:///etc/passwd")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.soap.exchange-rate.url=http://user:secret@localhost:8080/services")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.soap.exchange-rate.url=/services")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void failsStartupWhenSoapTimeoutIsNotPositive() {
+        contextRunner
+                .withPropertyValues("app.soap.exchange-rate.read-timeout=0")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.soap.exchange-rate.connect-timeout=-1s")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
     /** Giá trị thật trong application.yml / application-dev.yml phải bind + validate được (sai định dạng → app không chạy). */
     @Test
     void applicationYmlAndDevProfileBindValidSettings() {
@@ -315,6 +362,8 @@ class AppPropertiesTest {
                     assertThat(properties.jobs().updateMetrics().lockAtMostFor()).isEqualTo(Duration.ofMinutes(55));
                     assertThat(properties.jobs().resendImportCompleted().minAge()).isEqualTo(Duration.ofMinutes(10));
                     assertThat(properties.async().socialCrawler().corePoolSize()).isEqualTo(8);
+                    // Production: endpoint SOAP mock public phải tắt mặc định
+                    assertThat(properties.soap().exchangeRate().mockEndpoint().enabled()).isFalse();
                 });
         contextRunner
                 .withInitializer(context -> {
@@ -328,6 +377,8 @@ class AppPropertiesTest {
                             context.getBean(AppProperties.class).jobs().updateMetrics();
                     assertThat(updateMetrics.timeout()).isEqualTo(Duration.ofMinutes(4));
                     assertThat(updateMetrics.lockAtMostFor()).isEqualTo(Duration.ofSeconds(270));
+                    assertThat(context.getBean(AppProperties.class).soap().exchangeRate().mockEndpoint().enabled())
+                            .isTrue();
                 });
     }
 

@@ -27,7 +27,7 @@ class ArtemisEmbeddedBrokerActivationTest {
             .withConfiguration(AutoConfigurations.of(ArtemisAutoConfiguration.class))
             .withUserConfiguration(ArtemisEmbeddedConfig.class)
             .withBean(AppProperties.class, () -> new AppProperties(null, null, null, null, null, null,
-                    new AppProperties.JmsSettings(List.of("classpath:artemis/broker.properties"))))
+                    new AppProperties.JmsSettings(List.of("classpath:artemis/broker.properties")), null))
             .withPropertyValues("ARTEMIS_USER=test", "ARTEMIS_PASSWORD=test");
 
     @Test

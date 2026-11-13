@@ -64,7 +64,7 @@ class PostReportServiceTest {
                 new AppProperties.ImportSettings(1000, DataSize.ofMegabytes(20)),
                 new AppProperties.ExportSettings(MAX_ROWS, MIN_INTERVAL),
                 // Service không dùng key mã hoá token / timeout OAuth2, thread pool, job, JMS
-                null, null, null, null, null);
+                null, null, null, null, null, null);
         postReportService = new PostReportService(postService, currentUserService, userRateLimiter,
                 new GenericExcelExporter(), properties, CLOCK);
     }

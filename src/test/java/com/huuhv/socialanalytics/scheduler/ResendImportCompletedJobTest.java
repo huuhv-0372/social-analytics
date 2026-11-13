@@ -54,7 +54,7 @@ class ResendImportCompletedJobTest {
     @BeforeEach
     void setUp() {
         AppProperties properties = new AppProperties(null, null, null, null, null, new AppProperties.Jobs(null,
-                new AppProperties.ResendImportCompleted(MIN_AGE, 50, LOCK_AT_MOST_FOR, LOCK_AT_LEAST_FOR)), null);
+                new AppProperties.ResendImportCompleted(MIN_AGE, 50, LOCK_AT_MOST_FOR, LOCK_AT_LEAST_FOR)), null, null);
         LockProvider delegating = configuration -> lockProvider.lock(configuration);
         job = new ResendImportCompletedJob(importHistoryService, properties, Clock.systemUTC(),
                 new DefaultLockingTaskExecutor(delegating));

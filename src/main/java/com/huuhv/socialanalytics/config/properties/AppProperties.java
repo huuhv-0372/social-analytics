@@ -15,6 +15,7 @@ import org.springframework.boot.context.properties.bind.Name;
 import org.springframework.util.unit.DataSize;
 import org.springframework.validation.annotation.Validated;
 
+import java.net.URI;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
@@ -33,7 +34,60 @@ public record AppProperties(
         @Valid @DefaultValue OAuth2Client oauth2,
         @Valid @DefaultValue AsyncSettings async,
         @Valid @DefaultValue Jobs jobs,
-        @Valid @DefaultValue JmsSettings jms) {
+        @Valid @DefaultValue JmsSettings jms,
+        @Valid @DefaultValue Soap soap) {
+
+    /**
+     * SOAP WebService ({@code app.soap.*}).
+     */
+    public record Soap(@Valid @DefaultValue ExchangeRate exchangeRate) {
+    }
+
+    /**
+     * Dịch vụ tỷ giá SOAP ({@code app.soap.exchange-rate.*}): client {@code ExchangeRateSoapClient} gọi {@code url};
+     * endpoint mock của chính app ({@code webservice/ExchangeRateEndpoint}) chỉ chạy khi bật {@code mockEndpoint}.
+     *
+     * @param url            địa chỉ endpoint SOAP (http/https, không chứa thông tin đăng nhập) — mặc định trỏ vào
+     *                       endpoint mock của chính app
+     * @param connectTimeout timeout mở kết nối (OWASP A10 — dịch vụ ngoài treo không giữ thread request)
+     * @param readTimeout    timeout chờ response
+     * @param mockEndpoint   endpoint mock {@code /services/**} (public, không CSRF) — mặc định tắt
+     */
+    public record ExchangeRate(
+            @NotNull @DefaultValue("http://localhost:8080/services") URI url,
+            @NotNull @DefaultValue("2s") Duration connectTimeout,
+            @NotNull @DefaultValue("3s") Duration readTimeout,
+            @Valid @DefaultValue MockEndpoint mockEndpoint) {
+
+        /** Tên property bật endpoint mock — dùng trong {@code @ConditionalOnBooleanProperty}. */
+        public static final String MOCK_ENDPOINT_ENABLED_PROPERTY = "app.soap.exchange-rate.mock-endpoint.enabled";
+
+        @AssertTrue(message = "app.soap.exchange-rate.url must be an absolute http(s) URL with a host and no user info")
+        public boolean isUrlValid() {
+            if (url == null) {
+                return true; // đã báo bởi @NotNull
+            }
+            String scheme = url.getScheme();
+            return ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                    && url.getHost() != null && url.getRawUserInfo() == null;
+        }
+
+        @AssertTrue(message = "app.soap.exchange-rate.connect-timeout and read-timeout must be positive")
+        public boolean isTimeoutsPositive() {
+            return isPositive(connectTimeout) && isPositive(readTimeout);
+        }
+
+        private static boolean isPositive(Duration value) {
+            return value == null || (!value.isNegative() && !value.isZero());
+        }
+    }
+
+    /**
+     * @param enabled bật endpoint SOAP mock {@code /services/**} + WSDL. Endpoint public (không đăng nhập, không CSRF —
+     *                chỉ trả dữ liệu giả, không có dữ liệu user) nên mặc định tắt ở production; dev/test/compose bật
+     */
+    public record MockEndpoint(@DefaultValue("false") boolean enabled) {
+    }
 
     /**
      * Timeout khi gọi provider OAuth2 (đổi code lấy token, user info) trong lúc login callback (OWASP A10): provider

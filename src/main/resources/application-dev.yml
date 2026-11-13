@@ -27,6 +27,11 @@ springdoc:
 
 # Dev: chạy job crawl metrics mỗi 5 phút để thấy dữ liệu nhanh (production: đầu mỗi giờ)
 app:
+  soap:
+    exchange-rate:
+      mock-endpoint:
+        # Dev bật endpoint SOAP mock (http://localhost:8080/services/exchangeRate.wsdl) — dashboard gọi chính app
+        enabled: ${SOAP_MOCK_ENDPOINT_ENABLED:true}
   jobs:
     update-metrics:
       cron: "0 */5 * * * *"

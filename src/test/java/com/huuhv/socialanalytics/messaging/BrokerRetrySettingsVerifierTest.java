@@ -32,7 +32,7 @@ class BrokerRetrySettingsVerifierTest {
         embeddedBroker
                 .withUserConfiguration(ArtemisEmbeddedConfig.class)
                 .withBean(AppProperties.class, () -> new AppProperties(null, null, null, null, null, null,
-                        new AppProperties.JmsSettings(List.of("classpath:artemis/broker.properties"))))
+                        new AppProperties.JmsSettings(List.of("classpath:artemis/broker.properties")), null))
                 .run(context -> {
                     BrokerRetrySettingsVerifier verifier = verifier(context.getBean(ConnectionFactory.class));
 

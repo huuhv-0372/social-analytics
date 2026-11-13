@@ -151,7 +151,8 @@ src/main/java/com/huuhv/socialanalytics/
 ├── service/         # Toàn bộ business logic (Controller chỉ gọi Service)
 ├── client/
 │   ├── social/      # SocialPlatformClient + mock Facebook / Twitter
-│   └── soap/        # Spring-WS client
+│   └── soap/        # Spring-WS client (ExchangeRateSoapClient)
+├── webservice/      # Endpoint SOAP (@Endpoint) app tự host — mock tỷ giá
 ├── scheduler/       # Background job (@Scheduled)
 ├── messaging/       # JMS producer, listener, tên queue
 ├── websocket/       # Đường dẫn STOMP (StompDestinations), publisher gửi event
@@ -162,6 +163,7 @@ src/main/java/com/huuhv/socialanalytics/
 
 src/main/resources/
 ├── db/migration/    # Flyway migrations
+├── xsd/             # Hợp đồng SOAP (XSD) — class JAXB sinh vào target/generated-sources/jaxb, không commit
 ├── templates/       # Thymeleaf
 ├── static/          # CSS, JS
 └── application*.yml # Cấu hình theo profile
@@ -202,6 +204,8 @@ src/main/resources/
 | `ARTEMIS_MODE` | — | Chỉ profile `dev`: `embedded` (mặc định, broker trong JVM) hoặc `native` (broker của compose). Container `app` luôn `native`; production luôn `native` |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | ✅ | OAuth2 credentials (App ID / App Secret) từ Facebook Developers — xem Quick Start. Test dùng giá trị giả trong `application-test.yml` |
 | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | ✅ | OAuth 2.0 Client ID / Secret từ X Developer Portal — xem Quick Start. Test dùng giá trị giả |
+| `SOAP_MOCK_ENDPOINT_ENABLED` | — | Bật endpoint SOAP mock tỷ giá `/services/**` (public, không đăng nhập/CSRF — chỉ dữ liệu giả). Mặc định `false` (production); profile `dev` và container `app` của compose mặc định `true` |
+| `SOAP_EXCHANGE_RATE_URL` | — | Địa chỉ dịch vụ SOAP tỷ giá mà dashboard gọi (chỉ `http`/`https`). Mặc định `http://localhost:8080/services` = endpoint mock của chính app |
 
 > Không commit bất kỳ secret nào. Nếu lỡ commit, **thu hồi/đổi secret ngay** — xem [SECURITY.md](.github/SECURITY.md).
 
@@ -347,6 +351,26 @@ curl -OJ -b "SESSION=$SESSION_ID" http://localhost:8080/api/export-report
 - **CSRF ở frame `CONNECT`:** header `X-XSRF-TOKEN` chứa token đã mask (`<meta name="_csrf">`) **hoặc** giá trị raw của cookie `XSRF-TOKEN` — giống header HTTP; handshake phải mang cookie `XSRF-TOKEN` (trình duyệt tự gửi). Dashboard đọc cookie hiện tại trước mỗi lần kết nối (`currentCsrfHeaders()` trong `static/js/csrf.js`) nên vẫn kết nối lại được sau khi đăng nhập lại ở tab khác. Request HTTP dưới `/ws/**` (POST của transport dự phòng SockJS) không kiểm CSRF — đây là ngoại lệ duy nhất, vì kết nối không qua được `CONNECT` thì không frame nào được xử lý.
 - Chạy nhiều instance sau load balancer: transport WebSocket không cần gì thêm; transport dự phòng của SockJS (xhr-streaming/polling) giữ session SockJS trong RAM nên cần **sticky session**. Transport iframe của SockJS không dùng được (`X-Frame-Options: DENY`).
 - Kết nối WebSocket không gia hạn session HTTP và không tự đóng khi logout / session hết hạn (Spring Session JDBC không phát sự kiện huỷ session) — payload event không chứa số liệu, client gọi API gặp 401 thì chuyển về `/login`.
+
+## SOAP WebService (tỷ giá)
+
+App vừa **host** 1 endpoint SOAP mock (Spring-WS, contract-first từ `src/main/resources/xsd/exchange-rate.xsd`) vừa **gọi lại** nó bằng client `WebServiceGatewaySupport`. Class JAXB sinh tự động khi build (`./mvnw generate-sources` để sinh riêng) vào `target/generated-sources/jaxb` — không sửa tay, không commit.
+
+- Bật bằng `SOAP_MOCK_ENDPOINT_ENABLED=true` (profile `dev`, `test`, container `app` của compose đã bật). Tắt (mặc định production) thì `/services/**` thuộc chain bảo mật chính như mọi đường dẫn khác.
+- WSDL: `http://localhost:8080/services/exchangeRate.wsdl`. Endpoint public, stateless, không CSRF (chỉ trả dữ liệu giả, không có dữ liệu user) — ngoại lệ thứ 2 của deny-by-default, cạnh `/ws/**`.
+- Tỷ giá giả: USD, EUR, GBP, JPY, VND; cùng 1 giờ cùng 1 số, mỗi giờ dao động ±0,5%. Cặp không hỗ trợ → SOAP Fault `Client` `Unsupported currency pair`; request sai XSD (mã tiền không phải 3 chữ in hoa...) → Fault `Client` `Validation error`; lỗi khác → Fault `Server` `Internal error`. Request có DOCTYPE / XML hỏng → 400 (chống XXE).
+- Client: URL `app.soap.exchange-rate.url`, connect timeout 2s / read timeout 3s, không theo redirect, validate response theo XSD + kiểm cặp tiền và `asOf`.
+
+```bash
+curl -s http://localhost:8080/services -H 'Content-Type: text/xml; charset=utf-8' -d '
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:r="urn:social-analytics:exchange-rate">
+  <soapenv:Body>
+    <r:GetExchangeRateRequest><r:baseCurrency>USD</r:baseCurrency><r:quoteCurrency>VND</r:quoteCurrency></r:GetExchangeRateRequest>
+  </soapenv:Body>
+</soapenv:Envelope>'
+# ...<ns2:GetExchangeRateResponse ...><ns2:baseCurrency>USD</ns2:baseCurrency><ns2:quoteCurrency>VND</ns2:quoteCurrency>
+#    <ns2:rate>25387.123456</ns2:rate><ns2:asOf>2026-11-13T05:00:00Z</ns2:asOf></ns2:GetExchangeRateResponse>...
+```
 
 ## Xử Lý Lỗi
 

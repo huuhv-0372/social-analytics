@@ -25,6 +25,8 @@
              (AuditLogger gọi Subject.getSubject → UnsupportedOperationException). 2.44.0 chuyển sang SecurityManagerShim.
              Bỏ dòng này khi BOM của Boot đã >= 2.44 -->
         <artemis.version>2.44.0</artemis.version>
+        <!-- Bản 4.x dùng JAXB 4 (jakarta.xml.bind), cùng version JAXB với BOM của Boot 4.0.7 (4.0.9) -->
+        <jaxb2-maven-plugin.version>4.2.0</jaxb2-maven-plugin.version>
     </properties>
 
     <dependencies>
@@ -108,6 +110,16 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webservices</artifactId>
         </dependency>
+        <!-- JAXB runtime cho class sinh từ XSD (endpoint + client SOAP) — version theo BOM của Boot -->
+        <dependency>
+            <groupId>org.glassfish.jaxb</groupId>
+            <artifactId>jaxb-runtime</artifactId>
+        </dependency>
+        <!-- DefaultWsdl11Definition sinh WSDL từ XSD (/services/exchangeRate.wsdl) — version theo BOM của Boot -->
+        <dependency>
+            <groupId>wsdl4j</groupId>
+            <artifactId>wsdl4j</artifactId>
+        </dependency>
 
         <!-- Excel -->
         <dependency>
@@ -169,6 +181,12 @@
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- MockWebServiceClient / MockWebServiceServer (spring-ws-test) cho test endpoint + client SOAP -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webservices-test</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- MySQL riêng cho test (Docker), không đụng DB dev — version theo BOM của Spring Boot -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -194,6 +212,30 @@
                             <artifactId>lombok</artifactId>
                         </exclude>
                     </excludes>
+                </configuration>
+            </plugin>
+            <!-- Sinh class JAXB từ XSD (src/main/resources/xsd) vào target/generated-sources/jaxb ở phase
+                 generate-sources (./mvnw generate-sources, tự chạy trong compile/package). Class sinh ra không commit,
+                 không sửa tay -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>jaxb2-maven-plugin</artifactId>
+                <version>${jaxb2-maven-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>xjc-exchange-rate</id>
+                        <goals>
+                            <goal>xjc</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <sources>
+                        <source>src/main/resources/xsd</source>
+                    </sources>
+                    <packageName>com.huuhv.socialanalytics.soap.exchangerate</packageName>
+                    <noGeneratedHeaderComments>true</noGeneratedHeaderComments>
+                    <generateEpisode>false</generateEpisode>
                 </configuration>
             </plugin>
             <plugin>
