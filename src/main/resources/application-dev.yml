@@ -1,6 +1,16 @@
 # Profile dev: ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 # Chỉ tăng mức log để debug; không bật log giá trị bind tham số SQL (có thể chứa dữ liệu nhạy cảm).
 
+# Dev mặc định chạy Artemis embedded (trong JVM, không lưu message xuống đĩa) → không cần cài broker.
+# Muốn dùng broker của docker compose (xem web console :8161): ARTEMIS_MODE=native — container app trong compose đã đặt sẵn.
+spring:
+  artemis:
+    mode: ${ARTEMIS_MODE:embedded}
+    embedded:
+      # Bật/tắt broker embedded phải đi cùng mode: ARTEMIS_MODE=native thì đặt thêm ARTEMIS_EMBEDDED_ENABLED=false.
+      # Lệch nhau (native + embedded bật) → app dừng khởi động với thông báo rõ (config/ArtemisEmbeddedConfig).
+      enabled: ${ARTEMIS_EMBEDDED_ENABLED:true}
+
 # Dev chạy HTTP localhost → cookie session không đặt Secure (production giữ mặc định true)
 server:
   servlet:

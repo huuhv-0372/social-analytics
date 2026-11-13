@@ -46,11 +46,16 @@ services:
     environment:
       ARTEMIS_USER: ${ARTEMIS_USER:?ARTEMIS_USER is required}
       ARTEMIS_PASSWORD: ${ARTEMIS_PASSWORD:?ARTEMIS_PASSWORD is required}
+    # Retry + DLQ của queue import-completed: nạp src/main/resources/artemis/broker.properties mỗi lần khởi động —
+    # cùng file broker embedded (dev/test) của app nạp từ classpath, chỉ khai báo 1 nơi.
+    # (etc-override của image chỉ được copy lúc tạo instance lần đầu → không áp dụng khi volume đã có sẵn)
+    command: ["run", "--properties", "/opt/broker-config/broker.properties"]
     ports:
       - "127.0.0.1:${ARTEMIS_PORT:-61616}:61616"   # JMS (core / OpenWire)
       - "127.0.0.1:8161:8161"                       # Web console
     volumes:
       - artemis-data:/var/lib/artemis-instance
+      - ./src/main/resources/artemis/broker.properties:/opt/broker-config/broker.properties:ro
 
   app:
     build: .
@@ -60,6 +65,10 @@ services:
       <<: *app-env
       # Compose dùng cho môi trường local → mặc định profile dev (bật Swagger, log DEBUG)
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      # Profile dev mặc định chạy Artemis embedded → container app dùng broker riêng của compose
+      # (đổi mode thì tắt luôn broker embedded — 2 biến phải đi cùng nhau, xem application-dev.yml)
+      ARTEMIS_MODE: native
+      ARTEMIS_EMBEDDED_ENABLED: "false"
       # Bắt buộc cho app (client-id / client-secret / key rỗng → app dừng khởi động; secret do
       # config/OAuth2ClientConfig kiểm tra vì Boot chỉ kiểm client-id). Không dùng ${...:?} vì compose kiểm
       # biến đó cho mọi service, kể cả khi chỉ chạy test bằng service maven (test dùng giá trị giả trong application-test.yml)

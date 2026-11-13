@@ -12,7 +12,7 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 | Import / Export Excel | Upload danh sách bài viết (`/api/import-posts`), xuất báo cáo (`/api/export-report`) bằng Apache POI + Reflection | 2 | ✅ |
 | Social Login | Đăng nhập Facebook & Twitter/X qua OAuth2, bảo vệ CSRF | 3 | ✅ |
 | Background job | `updateSocialMetricsJob` chạy mỗi giờ, crawl metrics (mock API) đa luồng | 4 | ⏳ |
-| JMS | Import xong → message `IMPORT_COMPLETED` → listener cập nhật thống kê, có retry + DLQ | 5 | ⏳ |
+| JMS | Import xong → message `IMPORT_COMPLETED` → listener cập nhật thống kê (hiển thị trên dashboard), có retry + DLQ | 5 | ✅ |
 | Dashboard realtime | Chart.js cập nhật qua WebSocket (STOMP + SockJS), API `/api/chart-data` | 6 | ⏳ |
 | SOAP WebService | Gọi WebService tỷ giá mock (Spring-WS), hiển thị trên dashboard | 7 | ⏳ |
 
@@ -95,6 +95,12 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 
    Container `app` (cách A) mặc định chạy profile `dev` (`SPRING_PROFILES_ACTIVE` trong `.env`). Không bật `dev` thì Swagger UI bị tắt.
 
+   Profile `dev` chạy broker JMS **Artemis embedded** (trong JVM, không cần container `artemis`). Cách B muốn dùng broker của compose (xem message trên web console) thì đặt `ARTEMIS_MODE=native` **và** `ARTEMIS_EMBEDDED_ENABLED=false` trong `.env` (thiếu 1 trong 2 thì app dừng khởi động và báo cần đặt biến nào); container `app` (cách A) luôn dùng broker của compose.
+
+   > **Triển khai broker Artemis riêng (production):** retry + DLQ của queue `import-completed` cấu hình **trên broker**, không nằm trong app. Broker bắt buộc khởi động kèm file [`src/main/resources/artemis/broker.properties`](src/main/resources/artemis/broker.properties) (`artemis run --properties <đường dẫn file>`, như service `artemis` trong `docker-compose.yaml`), và tài khoản `ARTEMIS_USER` cần quyền `manage` để app tự kiểm tra cấu hình lúc khởi động. Thiếu file thì broker vẫn chạy nhưng message lỗi bị giao lại 10 lần liền rồi rơi vào queue `DLQ` chung không ai xử lý. Khi đó app log `ERROR Broker is not configured with artemis/broker.properties`. Nếu không kiểm tra được (broker chưa sẵn sàng, thiếu quyền), app log `WARN Could not verify broker retry/DLQ settings`.
+   >
+   > Lần import có message bị mất (broker chết đúng lúc gửi) được job `ResendImportCompletedJob` gửi lại sau khoảng 10 phút. Lần import đã vào DLQ (`status = DEAD_LETTERED`) không được tự động gửi lại: sau khi khắc phục nguyên nhân, chạy `UPDATE import_histories SET status = 'PENDING' WHERE status = 'DEAD_LETTERED'` thì job sẽ gửi lại, và mỗi lần import chỉ được cộng vào thống kê 1 lần.
+
    Flyway tự tạo bảng khi app khởi động.
 
 3. Truy cập:
@@ -168,13 +174,14 @@ src/main/resources/
 | File | Vai trò |
 |---|---|
 | `application.yml` | Cấu hình chung, an toàn cho production: datasource, JPA (`ddl-auto=validate`), Flyway, Artemis, ẩn chi tiết lỗi, tắt Swagger, giới hạn `size` phân trang (`spring.data.web.pageable.max-page-size`) |
-| `application-dev.yml` | Profile `dev`: bật Swagger UI, cookie session không `Secure` (HTTP localhost), log DEBUG cho app, SQL, Security (`-Dspring-boot.run.profiles=dev`) |
+| `application-dev.yml` | Profile `dev`: bật Swagger UI, cookie session không `Secure` (HTTP localhost), Artemis embedded (`ARTEMIS_MODE`), log DEBUG cho app, SQL, Security (`-Dspring-boot.run.profiles=dev`) |
 | `config/OpenApiConfig` | Thông tin tài liệu OpenAPI (title, version); không khai security scheme — Swagger UI dùng session cookie sau khi đăng nhập OAuth2 |
 | `src/test/resources/application-test.yml` | Profile `test` chỉ dành cho test, không đóng gói vào JAR (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
 | `logback-spring.xml` | Log console + file theo ngày trong `logs/` (giữ 30 ngày), pattern kèm MDC `jobId` / `importId` |
 | `config/properties/AppProperties` | Bind cấu hình `app.*` (record + validation): `app.import.max-rows` / `max-uncompressed-size`, `app.export.max-rows` / `min-interval`, `app.token-encryption.key` |
 | `.env` | Giá trị bí mật cho môi trường local — copy từ `.env.example` |
 | `docker-compose.yaml` | MySQL 8.4 + ActiveMQ Artemis + app, và service `maven` (JDK 25) để chạy lệnh Maven |
+| `src/main/resources/artemis/broker.properties` | Retry + DLQ của queue `import-completed` (6 lần giao, 2s ×2, tối đa 30s ≈ 1 phút → `DLQ.import-completed`; DLQ giao lại vô hạn khi lỗi DB, 5s ×2 tối đa 5 phút) — nguồn duy nhất: broker Artemis của compose mount file này, broker embedded (dev/test) nạp từ classpath. Test ghi đè delay bằng `src/test/resources/artemis/broker-test.properties` |
 | `Dockerfile` | Build multi-stage: JDK 25 build JAR → JRE 25 chạy app bằng user không phải root |
 
 ### Biến môi trường
@@ -192,6 +199,7 @@ src/main/resources/
 | `TOKEN_ENCRYPTION_KEY` | ✅ | Key AES-256 (Base64 của 32 byte) mã hoá access token Facebook/X lưu DB — xem Quick Start. Thiếu/sai thì app không khởi động; đổi key thì user phải đăng nhập lại. Test dùng key giả |
 | `SESSION_COOKIE_SECURE` | — | Cookie session chỉ gửi qua HTTPS. Mặc định `true` (production); profile `dev`/`test` mặc định `false` vì chạy HTTP localhost |
 | `ARTEMIS_HOST` / `ARTEMIS_PORT` | — | Mặc định `localhost` / `61616` |
+| `ARTEMIS_MODE` | — | Chỉ profile `dev`: `embedded` (mặc định, broker trong JVM) hoặc `native` (broker của compose). Container `app` luôn `native`; production luôn `native` |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | ✅ | OAuth2 credentials (App ID / App Secret) từ Facebook Developers — xem Quick Start. Test dùng giá trị giả trong `application-test.yml` |
 | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | ✅ | OAuth 2.0 Client ID / Secret từ X Developer Portal — xem Quick Start. Test dùng giá trị giả |
 

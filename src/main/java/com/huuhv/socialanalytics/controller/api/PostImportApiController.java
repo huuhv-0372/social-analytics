@@ -35,7 +35,9 @@ public class PostImportApiController {
                     + "externalId) được cập nhật — ô Content / Published At để trống thì giữ nguyên giá trị cũ. "
                     + "External ID dài hơn 15 chữ số phải nhập dạng text. Giới hạn dung lượng theo "
                     + "spring.servlet.multipart.max-file-size và app.import.max-uncompressed-size, "
-                    + "số dòng theo app.import.max-rows. File mẫu: GET /api/import-posts/template.")
+                    + "số dòng theo app.import.max-rows. File mẫu: GET /api/import-posts/template. "
+                    + "Response có importId của lần import; thống kê tổng hợp được cập nhật bất đồng bộ sau đó "
+                    + "(message JMS IMPORT_COMPLETED).")
     @PostMapping(path = "/api/import-posts", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ImportResultResponse importPosts(@RequestParam("file") MultipartFile file) {
         return postImportService.importPosts(file);

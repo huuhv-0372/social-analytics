@@ -96,9 +96,29 @@ spring:
       cleanup-cron: "0 * * * * *"
 
   artemis:
-    broker-url: tcp://${ARTEMIS_HOST:localhost}:${ARTEMIS_PORT:61616}
+    # native = kết nối broker Artemis riêng (production, docker compose). Dev/test dùng embedded (broker trong JVM,
+    # không mở cổng mạng) — xem application-dev.yml / application-test.yml
+    mode: native
+    embedded:
+      # Tắt broker embedded khi chạy native. Lý do: Boot tự khởi động broker trong JVM chỉ cần có
+      # artemis-jakarta-server trên classpath và embedded.enabled=true (mặc định) — KHÔNG xét mode. Không tắt thì
+      # production chạy thêm 1 broker không ai dùng (tốn heap/thread, lỗi file broker.properties còn làm app không
+      # khởi động). Dev/test bật lại (application-dev.yml / application-test.yml).
+      enabled: false
+    # Timeout (OWASP A10) để broker chậm/không phản hồi không giữ thread vô thời hạn (vd thread request lúc publish):
+    #   connectTimeoutMillis: mở kết nối TCP; callTimeout: chờ broker xác nhận 1 lệnh (gửi message persistent, commit...)
+    broker-url: tcp://${ARTEMIS_HOST:localhost}:${ARTEMIS_PORT:61616}?connectTimeoutMillis=5000&callTimeout=10000
     user: ${ARTEMIS_USER}
     password: ${ARTEMIS_PASSWORD}
+
+  jms:
+    listener:
+      session:
+        # Listener ném exception → rollback session → broker giao lại message (retry + DLQ cấu hình trên broker)
+        transacted: true
+      # Số consumer song song mỗi @JmsListener (listener phải idempotent — có thể nhận lại message)
+      min-concurrency: 1
+      max-concurrency: 3
 
   data:
     web:
@@ -181,6 +201,13 @@ app:
       queue-capacity: 100
       # Tắt app: chờ task đang chạy tối đa khoảng này
       await-termination: 30s
+  jms:
+    # Retry + DLQ (address settings, queue DLQ) khai báo DUY NHẤT trong artemis/broker.properties: broker riêng của
+    # docker compose mount chính file đó, broker embedded (dev/test) nạp từ classpath các file dưới đây theo thứ tự
+    # (file sau ghi đè khoá trùng — config/ArtemisEmbeddedConfig). Chỉ được đọc khi broker embedded chạy
+    # (spring.artemis.embedded.enabled=true — dev/test); production tắt broker embedded nên không đọc.
+    embedded-broker-properties:
+      - classpath:artemis/broker.properties
   jobs:
     update-metrics:
       # Crawl metrics mọi tài khoản (UpdateSocialMetricsJob). Cron Spring 6 trường: giây phút giờ ngày tháng thứ.
@@ -197,3 +224,15 @@ app:
       # Đổi cron thì đổi cả 2 giá trị (xem application-dev.yml)
       lock-at-most-for: 55m
       lock-at-least-for: 5m
+    resend-import-completed:
+      # Gửi lại message IMPORT_COMPLETED cho import kẹt ở PENDING (ResendImportCompletedJob): producer gửi lỗi lúc
+      # broker chết, hoặc broker embedded (dev, không lưu đĩa) restart làm mất message. Mặc định mỗi 10 phút; "-" = tắt
+      cron: "0 */10 * * * *"
+      # Chỉ gửi lại import PENDING lâu hơn khoảng này kể từ lần ghi/gửi gần nhất. Phải lớn hơn thời gian broker retry
+      # trước khi vào DLQ (~1 phút, artemis/broker.properties) để không gửi trùng message đang được retry
+      min-age: 10m
+      # Số import tối đa gửi lại mỗi lần chạy
+      batch-size: 100
+      # Khoá ShedLock như update-metrics: lock-at-most-for < chu kỳ cron 10 phút; lock-at-least-for ≤ lock-at-most-for
+      lock-at-most-for: 9m
+      lock-at-least-for: 1m

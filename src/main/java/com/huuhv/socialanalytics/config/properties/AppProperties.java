@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -16,6 +17,7 @@ import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
 
 /**
  * Cấu hình riêng của ứng dụng, prefix {@code app.*}. Sai giá trị → app không khởi động (fail fast).
@@ -30,7 +32,8 @@ public record AppProperties(
         @Valid @DefaultValue TokenEncryption tokenEncryption,
         @Valid @DefaultValue OAuth2Client oauth2,
         @Valid @DefaultValue AsyncSettings async,
-        @Valid @DefaultValue Jobs jobs) {
+        @Valid @DefaultValue Jobs jobs,
+        @Valid @DefaultValue JmsSettings jms) {
 
     /**
      * Timeout khi gọi provider OAuth2 (đổi code lấy token, user info) trong lúc login callback (OWASP A10): provider
@@ -160,10 +163,57 @@ public record AppProperties(
     }
 
     /**
+     * JMS ({@code app.jms.*}).
+     *
+     * @param embeddedBrokerProperties file "broker properties" của Artemis (location kiểu Spring, vd
+     *                                 {@code classpath:...}) nạp vào broker <b>embedded</b> theo thứ tự, file sau ghi đè
+     *                                 khoá trùng của file trước ({@code config/ArtemisEmbeddedConfig}). File đầu tiên
+     *                                 cũng là file broker riêng của docker compose nạp → retry/DLQ chỉ khai báo 1 nơi.
+     */
+    public record JmsSettings(
+            @NotEmpty @DefaultValue("classpath:artemis/broker.properties")
+            List<@NotBlank String> embeddedBrokerProperties) {
+    }
+
+    /**
      * Background job ({@code app.jobs.*}). Lịch chạy (cron) đọc trực tiếp bằng placeholder trong {@code @Scheduled}
      * nên không nằm trong record này.
      */
-    public record Jobs(@Valid @DefaultValue UpdateMetrics updateMetrics) {
+    public record Jobs(
+            @Valid @DefaultValue UpdateMetrics updateMetrics,
+            @Valid @DefaultValue ResendImportCompleted resendImportCompleted) {
+    }
+
+    /**
+     * Job {@code resendImportCompletedJob}: gửi lại message {@code IMPORT_COMPLETED} cho các lần import kẹt ở
+     * {@code PENDING} (producer gửi lỗi, broker mất message) — listener idempotent nên gửi trùng không cộng 2 lần.
+     *
+     * @param minAge         chỉ gửi lại import đã {@code PENDING} (tính từ lần ghi/gửi gần nhất) lâu hơn khoảng này.
+     *                       Nên lớn hơn tổng thời gian broker retry trước khi vào DLQ (~1 phút, xem
+     *                       {@code artemis/broker.properties}) để không gửi trùng message đang được retry
+     * @param batchSize      số import tối đa gửi lại mỗi lần chạy (phần còn lại để lần sau)
+     * @param lockAtMostFor  thời hạn tối đa giữ khoá ShedLock — phải nhỏ hơn chu kỳ cron
+     * @param lockAtLeastFor thời gian tối thiểu giữ khoá (đồng hồ các instance lệch nhau không làm chạy lại);
+     *                       không vượt {@code lockAtMostFor}
+     */
+    public record ResendImportCompleted(
+            @NotNull @DefaultValue("10m") Duration minAge,
+            @Positive @Max(1000) @DefaultValue("100") int batchSize,
+            @NotNull @DefaultValue("9m") Duration lockAtMostFor,
+            @NotNull @DefaultValue("1m") Duration lockAtLeastFor) {
+
+        @AssertTrue(message = "app.jobs.resend-import-completed.min-age and lock-at-most-for must be positive")
+        public boolean isDurationsPositive() {
+            return (minAge == null || (!minAge.isNegative() && !minAge.isZero()))
+                    && (lockAtMostFor == null || (!lockAtMostFor.isNegative() && !lockAtMostFor.isZero()));
+        }
+
+        @AssertTrue(message = "app.jobs.resend-import-completed.lock-at-least-for must be between 0 and"
+                + " lock-at-most-for")
+        public boolean isLockAtLeastForWithinLockAtMostFor() {
+            return lockAtLeastFor == null || lockAtMostFor == null
+                    || (!lockAtLeastFor.isNegative() && lockAtLeastFor.compareTo(lockAtMostFor) <= 0);
+        }
     }
 
     /**

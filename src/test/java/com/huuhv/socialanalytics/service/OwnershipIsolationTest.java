@@ -12,6 +12,7 @@ import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
 import com.huuhv.socialanalytics.repository.PostRepository;
 import com.huuhv.socialanalytics.repository.SocialAccountRepository;
 import com.huuhv.socialanalytics.repository.SocialMetricRepository;
+import com.huuhv.socialanalytics.repository.UserImportStatisticRepository;
 import com.huuhv.socialanalytics.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +32,7 @@ import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -49,7 +51,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Import({TestcontainersConfiguration.class, ClockConfig.class, CryptoConfig.class, SocialAccountService.class,
-        CurrentUserService.class, PostService.class, SocialMetricService.class, DashboardService.class})
+        CurrentUserService.class, PostService.class, SocialMetricService.class, DashboardService.class,
+        ImportStatisticsService.class, ImportHistoryService.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class OwnershipIsolationTest {
 
@@ -78,6 +81,12 @@ class OwnershipIsolationTest {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private UserImportStatisticRepository userImportStatisticRepository;
+
+    @Autowired
+    private TransactionTemplate transactionTemplate;
 
     private OAuth2AuthenticationToken owner;
     private OAuth2AuthenticationToken attacker;
@@ -150,10 +159,23 @@ class OwnershipIsolationTest {
                 .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "111").orElseThrow().getId();
         socialAccountService.markMetricsUpdated(ownersAccountId, LocalDateTime.of(2026, 11, 7, 3, 0));
 
-        assertThat(dashboardService.findLastUpdatedAt()).isEmpty();
+        assertThat(dashboardService.getDashboard().lastUpdatedAt()).isNull();
 
         authenticate(owner);
-        assertThat(dashboardService.findLastUpdatedAt()).isPresent();
+        assertThat(dashboardService.getDashboard().lastUpdatedAt()).isNotNull();
+    }
+
+    @Test
+    void otherUserDoesNotSeeImportStatisticsOfOwner() {
+        Long ownerUserId = socialAccountRepository
+                .findWithUserByProviderAndProviderUserId(Provider.FACEBOOK, "111").orElseThrow().getUser().getId();
+        transactionTemplate.executeWithoutResult(status -> userImportStatisticRepository.addImport(ownerUserId,
+                10, 8, 2, LocalDateTime.of(2026, 11, 7, 3, 0), LocalDateTime.of(2026, 11, 7, 3, 0, 1)));
+
+        assertThat(dashboardService.getDashboard().importStatistics()).isNull();
+
+        authenticate(owner);
+        assertThat(dashboardService.getDashboard().importStatistics().totalRows()).isEqualTo(10);
     }
 
     @Test

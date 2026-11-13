@@ -23,6 +23,40 @@
         </div>
     </div>
 
+    <!--/* Thống kê import: listener IMPORT_COMPLETED cập nhật bất đồng bộ (vài giây sau khi import); tải lại trang để
+         xem số mới — cập nhật realtime ở giai đoạn 6. Comment parser-level: không gửi ra HTML */-->
+    <div class="card shadow-sm mb-3" id="import-statistics">
+        <div class="card-body">
+            <h2 class="h6 text-muted mb-3">Import statistics</h2>
+            <div th:if="${importStatistics != null}" class="row g-3 text-center">
+                <div class="col-6 col-md-3">
+                    <div class="fs-4 fw-semibold" id="stat-total-imports"
+                         th:text="${#numbers.formatInteger(importStatistics.totalImports, 1, 'COMMA')}">0</div>
+                    <div class="small text-muted">Imports</div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="fs-4 fw-semibold text-success" id="stat-success-rows"
+                         th:text="${#numbers.formatInteger(importStatistics.successRows, 1, 'COMMA')}">0</div>
+                    <div class="small text-muted">Rows imported</div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="fs-4 fw-semibold text-danger" id="stat-failed-rows"
+                         th:text="${#numbers.formatInteger(importStatistics.failedRows, 1, 'COMMA')}">0</div>
+                    <div class="small text-muted">Failed rows</div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="fs-6 fw-semibold mt-md-2">
+                        <time id="stat-last-import-at"
+                              th:datetime="${#temporals.format(importStatistics.lastImportAt, 'yyyy-MM-dd''T''HH:mm:ssXXX')}"
+                              th:text="${#temporals.format(importStatistics.lastImportAt, 'yyyy-MM-dd HH:mm:ss xxx')}">2026-01-01 00:00:00 +07:00</time>
+                    </div>
+                    <div class="small text-muted">Last import</div>
+                </div>
+            </div>
+            <p th:if="${importStatistics == null}" class="mb-0 text-muted">Chưa có lần import nào</p>
+        </div>
+    </div>
+
     <div class="card shadow-sm">
         <div class="card-body text-muted">
             Engagement charts will appear here once metrics are collected.

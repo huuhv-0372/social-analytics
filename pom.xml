@@ -21,6 +21,10 @@
         <poi.version>5.4.1</poi.version>
         <bucket4j.version>8.21.0</bucket4j.version>
         <shedlock.version>7.11.0</shedlock.version>
+        <!-- Ghi đè 2.43.0 của BOM Spring Boot 4.0.7: broker embedded 2.43 không khởi động trên JDK 24+
+             (AuditLogger gọi Subject.getSubject → UnsupportedOperationException). 2.44.0 chuyển sang SecurityManagerShim.
+             Bỏ dòng này khi BOM của Boot đã >= 2.44 -->
+        <artemis.version>2.44.0</artemis.version>
     </properties>
 
     <dependencies>
@@ -84,6 +88,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-artemis</artifactId>
+        </dependency>
+        <!-- Broker Artemis chạy trong JVM (spring.artemis.mode=embedded) cho dev/test — production dùng mode=native.
+             Version theo BOM của Spring Boot (cùng version với artemis-jakarta-client của starter) -->
+        <dependency>
+            <groupId>org.apache.activemq</groupId>
+            <artifactId>artemis-jakarta-server</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

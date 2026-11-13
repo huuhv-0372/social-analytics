@@ -10,6 +10,7 @@ import com.huuhv.socialanalytics.entity.SocialAccount;
 import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.enums.Provider;
 import com.huuhv.socialanalytics.exception.DuplicateResourceException;
+import com.huuhv.socialanalytics.repository.ImportHistoryRepository;
 import com.huuhv.socialanalytics.repository.PostRepository;
 import com.huuhv.socialanalytics.repository.SocialAccountRepository;
 import com.huuhv.socialanalytics.repository.UserRepository;
@@ -61,7 +62,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Import({TestcontainersConfiguration.class, ClockConfig.class, CryptoConfig.class,
-        SocialAccountService.class, CurrentUserService.class, PostService.class, PostUpsertService.class})
+        SocialAccountService.class, CurrentUserService.class, PostService.class, PostUpsertService.class,
+        ImportHistoryService.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class SocialLoginTransactionTest {
 
@@ -87,6 +89,9 @@ class SocialLoginTransactionTest {
     private UserRepository userRepository;
 
     @Autowired
+    private ImportHistoryRepository importHistoryRepository;
+
+    @Autowired
     private DataSource dataSource;
 
     private JdbcTemplate jdbcTemplate;
@@ -100,6 +105,7 @@ class SocialLoginTransactionTest {
     void cleanUp() {
         SecurityContextHolder.clearContext();
         postRepository.deleteAll();
+        importHistoryRepository.deleteAll();
         socialAccountRepository.deleteAll();
         userRepository.deleteAll();
     }
@@ -158,9 +164,11 @@ class SocialLoginTransactionTest {
         authenticate(token);
 
         User owner = currentUserService.getCurrentUser();
-        PostUpsertService.Result result = postUpsertService.upsert(owner, List.of(postRequest()));
+        PostUpsertService.Result result = postUpsertService.saveImport(owner, List.of(postRequest()), 1);
 
         assertThat(result.created()).isEqualTo(1);
+        // Lịch sử import cũng gán được owner là reference lấy ngoài transaction
+        assertThat(importHistoryRepository.findById(result.importId())).isPresent();
         assertThat(postRepository.findAll()).singleElement()
                 .satisfies(post -> assertThat(post.getUser().getId()).isEqualTo(userIdOf(token)));
     }

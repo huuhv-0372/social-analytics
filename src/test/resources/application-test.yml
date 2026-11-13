@@ -2,6 +2,13 @@
 spring:
   main:
     banner-mode: off
+  artemis:
+    # Broker trong JVM, không lưu đĩa — test không cần Artemis ngoài. Mỗi Spring context có server-id riêng.
+    mode: embedded
+    embedded:
+      # application.yml tắt broker embedded (production chạy native) → test bật lại
+      enabled: true
+      persistent: false
   security:
     # Giá trị giả cho test — không gọi Facebook thật
     oauth2:
@@ -26,9 +33,17 @@ logging:
     com.huuhv.socialanalytics: INFO
 
 app:
+  jms:
+    # File chính + file ghi đè của test (giao lại sau 100ms để test retry → DLQ không phải chờ vài giây)
+    embedded-broker-properties:
+      - classpath:artemis/broker.properties
+      - classpath:artemis/broker-test.properties
   jobs:
     update-metrics:
       # Tắt lịch chạy tự động — test gọi UpdateSocialMetricsJob.runOnce() trực tiếp khi cần
+      cron: "-"
+    resend-import-completed:
+      # Tắt lịch — test gọi ResendImportCompletedJob.runOnce() trực tiếp
       cron: "-"
   token-encryption:
     # Key giả chỉ dùng cho test (Base64 của "test-only-key-do-not-use-in-prod", 32 byte)

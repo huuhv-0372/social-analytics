@@ -2,11 +2,14 @@ package com.huuhv.socialanalytics.controller.web;
 
 import com.huuhv.socialanalytics.config.SecurityConfig;
 import com.huuhv.socialanalytics.config.WebConfig;
+import com.huuhv.socialanalytics.dto.response.DashboardResponse;
+import com.huuhv.socialanalytics.dto.response.ImportStatisticsResponse;
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.security.AppOAuth2User;
 import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.DashboardService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -22,7 +25,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
@@ -43,6 +45,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 class DashboardControllerTest {
 
+    private static final DashboardResponse EMPTY_DASHBOARD = new DashboardResponse(null, null);
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -56,6 +60,12 @@ class DashboardControllerTest {
 
     @MockitoBean
     private DashboardService dashboardService;
+
+    @BeforeEach
+    void stubEmptyDashboard() {
+        // Mặc định: chưa có số liệu (test cần dữ liệu cụ thể tự stub lại)
+        when(dashboardService.getDashboard()).thenReturn(EMPTY_DASHBOARD);
+    }
 
     @Test
     void anonymousUserIsRedirectedToLogin() throws Exception {
@@ -71,7 +81,7 @@ class DashboardControllerTest {
         // Job lưu tới micro giây (DATETIME(6)); HTML <time datetime> chỉ cho phép tối đa 3 chữ số lẻ → cắt về giây
         ZonedDateTime lastUpdatedAt = ZonedDateTime.of(2026, 11, 7, 10, 0, 5, 123_456_000,
                 ZoneId.of("Asia/Ho_Chi_Minh"));
-        when(dashboardService.findLastUpdatedAt()).thenReturn(Optional.of(lastUpdatedAt));
+        when(dashboardService.getDashboard()).thenReturn(new DashboardResponse(lastUpdatedAt, null));
 
         mockMvc.perform(get("/dashboard").with(oauth2Login()))
                 .andExpect(status().isOk())
@@ -85,7 +95,7 @@ class DashboardControllerTest {
 
     @Test
     void showsNotUpdatedYetWhenJobHasNotRunForUser() throws Exception {
-        when(dashboardService.findLastUpdatedAt()).thenReturn(Optional.empty());
+        when(dashboardService.getDashboard()).thenReturn(EMPTY_DASHBOARD);
 
         mockMvc.perform(get("/dashboard").with(oauth2Login()))
                 .andExpect(status().isOk())
@@ -95,9 +105,40 @@ class DashboardControllerTest {
     }
 
     @Test
+    void showsImportStatistics() throws Exception {
+        ImportStatisticsResponse statistics = new ImportStatisticsResponse(3, 1_250, 1_200, 50,
+                ZonedDateTime.of(2026, 11, 7, 9, 30, 15, 987_654_000, ZoneId.of("Asia/Ho_Chi_Minh")));
+        when(dashboardService.getDashboard()).thenReturn(new DashboardResponse(null, statistics));
+
+        mockMvc.perform(get("/dashboard").with(oauth2Login()))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("importStatistics", statistics))
+                .andExpect(content().string(containsString("Import statistics")))
+                .andExpect(content().string(containsString("id=\"stat-total-imports\">3</div>")))
+                .andExpect(content().string(containsString("id=\"stat-success-rows\">1,200</div>")))
+                .andExpect(content().string(containsString("id=\"stat-failed-rows\">50</div>")))
+                .andExpect(content().string(containsString("datetime=\"2026-11-07T09:30:15+07:00\"")))
+                .andExpect(content().string(containsString(">2026-11-07 09:30:15 +07:00</time>")))
+                .andExpect(content().string(not(containsString("Chưa có lần import nào"))))
+                // Comment trong template là comment parser-level của Thymeleaf, không lọt ra HTML
+                .andExpect(content().string(not(containsString("IMPORT_COMPLETED"))));
+    }
+
+    @Test
+    void showsNoImportYetWhenStatisticsAreMissing() throws Exception {
+        when(dashboardService.getDashboard()).thenReturn(EMPTY_DASHBOARD);
+
+        mockMvc.perform(get("/dashboard").with(oauth2Login()))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("importStatistics", nullValue()))
+                .andExpect(content().string(containsString("Chưa có lần import nào")))
+                .andExpect(content().string(not(containsString("stat-total-imports"))));
+    }
+
+    @Test
     void sessionNotMappedToKnownUserIsLoggedOutAndSentToLogin() throws Exception {
         // Fail closed: không 500, không vòng lặp /login ↔ /dashboard
-        when(dashboardService.findLastUpdatedAt()).thenThrow(new AuthenticationRequiredException());
+        when(dashboardService.getDashboard()).thenThrow(new AuthenticationRequiredException());
         MockHttpSession session = new MockHttpSession();
 
         mockMvc.perform(get("/dashboard").session(session).with(oauth2Login()))

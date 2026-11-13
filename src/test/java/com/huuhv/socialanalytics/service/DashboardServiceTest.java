@@ -1,6 +1,9 @@
 package com.huuhv.socialanalytics.service;
 
+import com.huuhv.socialanalytics.dto.response.DashboardResponse;
+import com.huuhv.socialanalytics.dto.response.ImportStatisticsResponse;
 import com.huuhv.socialanalytics.entity.User;
+import com.huuhv.socialanalytics.entity.UserImportStatistic;
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,6 +20,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -31,47 +35,80 @@ class DashboardServiceTest {
     @Mock
     private SocialAccountService socialAccountService;
 
+    @Mock
+    private ImportStatisticsService importStatisticsService;
+
     private DashboardService service;
 
     @BeforeEach
     void setUp() {
-        service = new DashboardService(currentUserService, socialAccountService,
+        service = new DashboardService(currentUserService, socialAccountService, importStatisticsService,
                 Clock.fixed(Instant.parse("2026-11-07T05:00:00Z"), SERVER_ZONE));
     }
 
     @Test
     void convertsUtcLastUpdatedAtOfCurrentUserToServerTimeZone() {
-        when(currentUserService.getCurrentUser()).thenReturn(User.builder().id(7L).build());
+        givenCurrentUser(7L);
         when(socialAccountService.findLastMetricsUpdatedAt(7L))
                 .thenReturn(Optional.of(LocalDateTime.of(2026, 11, 7, 3, 0, 5)));
 
-        assertThat(service.findLastUpdatedAt())
-                .contains(ZonedDateTime.of(2026, 11, 7, 10, 0, 5, 0, SERVER_ZONE));
+        assertThat(service.getDashboard().lastUpdatedAt())
+                .isEqualTo(ZonedDateTime.of(2026, 11, 7, 10, 0, 5, 0, SERVER_ZONE));
     }
 
     @Test
     void conversionCrossesDateBoundary() {
-        when(currentUserService.getCurrentUser()).thenReturn(User.builder().id(7L).build());
+        givenCurrentUser(7L);
         when(socialAccountService.findLastMetricsUpdatedAt(7L))
                 .thenReturn(Optional.of(LocalDateTime.of(2026, 11, 6, 20, 30)));
 
-        assertThat(service.findLastUpdatedAt())
-                .contains(ZonedDateTime.of(2026, 11, 7, 3, 30, 0, 0, SERVER_ZONE));
+        assertThat(service.getDashboard().lastUpdatedAt())
+                .isEqualTo(ZonedDateTime.of(2026, 11, 7, 3, 30, 0, 0, SERVER_ZONE));
     }
 
     @Test
-    void emptyWhenNoAccountOfUserHasBeenUpdated() {
-        when(currentUserService.getCurrentUser()).thenReturn(User.builder().id(7L).build());
-        when(socialAccountService.findLastMetricsUpdatedAt(7L)).thenReturn(Optional.empty());
+    void importStatisticsOfCurrentUserWithLastImportInServerTimeZone() {
+        givenCurrentUser(7L);
+        when(importStatisticsService.findByUserId(7L)).thenReturn(Optional.of(UserImportStatistic.builder()
+                .userId(7L).totalImports(3).totalRows(25).successRows(20).failedRows(5)
+                .lastImportAt(LocalDateTime.of(2026, 11, 6, 18, 15)).build()));
 
-        assertThat(service.findLastUpdatedAt()).isEmpty();
+        DashboardResponse dashboard = service.getDashboard();
+
+        assertThat(dashboard.importStatistics()).isEqualTo(new ImportStatisticsResponse(3, 25, 20, 5,
+                ZonedDateTime.of(2026, 11, 7, 1, 15, 0, 0, SERVER_ZONE)));
+        verify(importStatisticsService).findByUserId(7L);
+    }
+
+    @Test
+    void emptyValuesWhenNothingHasBeenCollectedForUser() {
+        givenCurrentUser(7L);
+
+        DashboardResponse dashboard = service.getDashboard();
+
+        assertThat(dashboard.lastUpdatedAt()).isNull();
+        assertThat(dashboard.importStatistics()).isNull();
+    }
+
+    @Test
+    void currentUserIsResolvedOnceForWholePage() {
+        givenCurrentUser(7L);
+
+        service.getDashboard();
+
+        verify(currentUserService).getCurrentUser();
     }
 
     @Test
     void failsClosedWhenCurrentUserIsUnknown() {
         when(currentUserService.getCurrentUser()).thenThrow(new AuthenticationRequiredException());
 
-        assertThatThrownBy(service::findLastUpdatedAt).isInstanceOf(AuthenticationRequiredException.class);
-        verifyNoInteractions(socialAccountService);
+        assertThatThrownBy(service::getDashboard).isInstanceOf(AuthenticationRequiredException.class);
+        verifyNoInteractions(socialAccountService, importStatisticsService);
+    }
+
+    private void givenCurrentUser(long id) {
+        when(currentUserService.getCurrentUser()).thenReturn(User.builder().id(id).build());
+        // Mock trả Optional.empty() mặc định (RETURNS_DEFAULTS của Mockito) cho tài khoản/thống kê chưa stub
     }
 }

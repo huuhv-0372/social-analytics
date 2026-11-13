@@ -2,7 +2,9 @@ package com.huuhv.socialanalytics.util;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 
 /**
@@ -28,5 +30,10 @@ public final class UtcDateTimes {
     /** Giờ UTC đọc từ DB → {@link Instant} trả cho client; {@code null} giữ nguyên. */
     public static Instant toInstant(LocalDateTime utc) {
         return utc == null ? null : utc.toInstant(ZoneOffset.UTC);
+    }
+
+    /** Giờ UTC đọc từ DB → cùng thời điểm theo múi giờ {@code zone} (vd múi giờ server để hiển thị); {@code null} giữ nguyên. */
+    public static ZonedDateTime atZone(LocalDateTime utc, ZoneId zone) {
+        return utc == null ? null : utc.atZone(ZoneOffset.UTC).withZoneSameInstant(zone);
     }
 }

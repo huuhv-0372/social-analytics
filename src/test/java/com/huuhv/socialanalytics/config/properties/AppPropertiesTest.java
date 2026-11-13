@@ -172,6 +172,43 @@ class AppPropertiesTest {
     }
 
     @Test
+    void bindsResendImportCompletedJobSettings() {
+        contextRunner.run(context -> assertThat(context.getBean(AppProperties.class).jobs().resendImportCompleted())
+                .isEqualTo(new AppProperties.ResendImportCompleted(Duration.ofMinutes(10), 100,
+                        Duration.ofMinutes(9), Duration.ofMinutes(1))));
+        contextRunner
+                .withPropertyValues("app.jobs.resend-import-completed.min-age=3m",
+                        "app.jobs.resend-import-completed.batch-size=20",
+                        "app.jobs.resend-import-completed.lock-at-most-for=50s",
+                        "app.jobs.resend-import-completed.lock-at-least-for=10s",
+                        "app.jobs.resend-import-completed.cron=0 * * * * *")
+                .run(context -> assertThat(context.getBean(AppProperties.class).jobs().resendImportCompleted())
+                        .isEqualTo(new AppProperties.ResendImportCompleted(Duration.ofMinutes(3), 20,
+                                Duration.ofSeconds(50), Duration.ofSeconds(10))));
+    }
+
+    @Test
+    void failsStartupWhenResendImportCompletedSettingsAreInvalid() {
+        // min-age 0 → gửi lại cả message đang được broker retry / listener đang xử lý
+        contextRunner
+                .withPropertyValues("app.jobs.resend-import-completed.min-age=0s")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.jobs.resend-import-completed.batch-size=0")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.jobs.resend-import-completed.batch-size=1001")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.jobs.resend-import-completed.lock-at-least-for=10m")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.jobs.resend-import-completed.lock-at-most-for=0s",
+                        "app.jobs.resend-import-completed.lock-at-least-for=0s")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
     void bindsTokenEncryptionKey() {
         contextRunner.run(context -> assertThat(context.getBean(AppProperties.class).tokenEncryption().keyBytes())
                 .hasSize(32)
@@ -243,6 +280,30 @@ class AppPropertiesTest {
                 .run(context -> assertThat(context).hasFailed());
     }
 
+    @Test
+    void bindsEmbeddedBrokerPropertiesInOrder() {
+        // Mặc định: chỉ file chính — cũng là file broker riêng của docker compose nạp
+        contextRunner.run(context -> assertThat(context.getBean(AppProperties.class).jms().embeddedBrokerProperties())
+                .containsExactly("classpath:artemis/broker.properties"));
+        contextRunner
+                .withPropertyValues("app.jms.embedded-broker-properties="
+                        + "classpath:artemis/broker.properties,classpath:artemis/broker-test.properties")
+                .run(context -> assertThat(context.getBean(AppProperties.class).jms().embeddedBrokerProperties())
+                        .containsExactly("classpath:artemis/broker.properties",
+                                "classpath:artemis/broker-test.properties"));
+    }
+
+    @Test
+    void failsStartupWhenEmbeddedBrokerPropertiesAreEmpty() {
+        // Không nạp file nào: broker embedded chạy không có retry/DLQ
+        contextRunner
+                .withPropertyValues("app.jms.embedded-broker-properties=")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner
+                .withPropertyValues("app.jms.embedded-broker-properties[0]= ")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
     /** Giá trị thật trong application.yml / application-dev.yml phải bind + validate được (sai định dạng → app không chạy). */
     @Test
     void applicationYmlAndDevProfileBindValidSettings() {
@@ -252,6 +313,7 @@ class AppPropertiesTest {
                     assertThat(context).hasNotFailed();
                     AppProperties properties = context.getBean(AppProperties.class);
                     assertThat(properties.jobs().updateMetrics().lockAtMostFor()).isEqualTo(Duration.ofMinutes(55));
+                    assertThat(properties.jobs().resendImportCompleted().minAge()).isEqualTo(Duration.ofMinutes(10));
                     assertThat(properties.async().socialCrawler().corePoolSize()).isEqualTo(8);
                 });
         contextRunner

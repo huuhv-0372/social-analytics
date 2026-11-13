@@ -6,7 +6,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -34,9 +36,20 @@ class UtcDateTimesTest {
     }
 
     @Test
+    void atZoneConvertsStoredUtcValueToSameInstantInZone() {
+        ZonedDateTime inVietnam = UtcDateTimes.atZone(LocalDateTime.of(2026, 1, 1, 20, 30), ZoneId.of("Asia/Ho_Chi_Minh"));
+
+        // 20:30 UTC = 03:30 ngày hôm sau ở UTC+7
+        assertThat(inVietnam.toLocalDateTime()).isEqualTo(LocalDateTime.of(2026, 1, 2, 3, 30));
+        assertThat(inVietnam.getZone()).isEqualTo(ZoneId.of("Asia/Ho_Chi_Minh"));
+        assertThat(inVietnam.toInstant()).isEqualTo(Instant.parse("2026-01-01T20:30:00Z"));
+    }
+
+    @Test
     void nullStaysNull() {
         assertThat(UtcDateTimes.toUtc(null)).isNull();
         assertThat(UtcDateTimes.toInstant(null)).isNull();
+        assertThat(UtcDateTimes.atZone(null, ZoneOffset.UTC)).isNull();
     }
 
     @Test

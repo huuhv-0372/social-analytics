@@ -60,11 +60,12 @@ class PostImportApiControllerTest {
 
     @Test
     void importReturnsSummaryWithRowErrors() throws Exception {
-        when(postImportService.importPosts(any(MultipartFile.class))).thenReturn(new ImportResultResponse(3, 1, 1, 1,
+        when(postImportService.importPosts(any(MultipartFile.class))).thenReturn(new ImportResultResponse(42L, 3, 1, 1, 1,
                 List.of(new ImportResultResponse.RowError(4, "URL", "must not be blank"))));
 
         mockMvc.perform(multipart("/api/import-posts").file(FILE).with(oauth2Login()).with(csrf()))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.importId").value(42))
                 .andExpect(jsonPath("$.totalRows").value(3))
                 .andExpect(jsonPath("$.created").value(1))
                 .andExpect(jsonPath("$.updated").value(1))
