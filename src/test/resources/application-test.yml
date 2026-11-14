@@ -33,6 +33,8 @@ logging:
     com.huuhv.socialanalytics: INFO
 
 app:
+  # Cố định múi giờ nghiệp vụ — test không phụ thuộc múi giờ của máy chạy (application.yml lấy từ APP_TZ)
+  time-zone: Asia/Ho_Chi_Minh
   soap:
     exchange-rate:
       mock-endpoint:
@@ -53,6 +55,9 @@ app:
       cron: "-"
     resend-import-completed:
       # Tắt lịch — test gọi ResendImportCompletedJob.runOnce() trực tiếp
+      cron: "-"
+    refresh-exchange-rate:
+      # Tắt lịch — test cần tỷ giá thì gọi ExchangeRateService.refreshIfDue() trực tiếp
       cron: "-"
   token-encryption:
     # Key giả chỉ dùng cho test (Base64 của "test-only-key-do-not-use-in-prod", 32 byte)

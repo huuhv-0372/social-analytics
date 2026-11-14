@@ -18,16 +18,24 @@ import org.springframework.validation.annotation.Validated;
 
 import java.net.URI;
 import java.time.Duration;
+import java.time.ZoneId;
 import java.util.Base64;
 import java.util.List;
 
 /**
  * Cấu hình riêng của ứng dụng, prefix {@code app.*}. Sai giá trị → app không khởi động (fail fast).
  * Giới hạn phân trang dùng {@code spring.data.web.pageable.*} của Boot, không khai ở đây.
+ *
+ * @param timeZone múi giờ nghiệp vụ ({@code app.time-zone} ← env {@code APP_TZ}, tên IANA; sai tên → app không khởi
+ *                 động): bean {@code Clock} ({@code config/ClockConfig}) dùng múi giờ này để chia ngày của biểu đồ, hiểu
+ *                 / ghi giờ trong file Excel và hiển thị giờ — <b>không</b> theo múi giờ JVM. Nhiều instance sau load
+ *                 balancer phải cho cùng kết quả kể cả khi 1 pod quên đặt {@code TZ} (file export ở pod này import ở
+ *                 pod khác không bị lệch giờ). DB luôn lưu UTC nên đổi giá trị không làm sai dữ liệu đã lưu
  */
 @Validated
 @ConfigurationProperties(prefix = "app")
 public record AppProperties(
+        @NotNull @DefaultValue(AppProperties.DEFAULT_TIME_ZONE) ZoneId timeZone,
         // "import" là từ khoá Java → đặt tên khác cho component, bind theo key app.import.*
         @Valid @DefaultValue @Name("import") ImportSettings importSettings,
         @Valid @DefaultValue @Name("export") ExportSettings exportSettings,
@@ -37,6 +45,9 @@ public record AppProperties(
         @Valid @DefaultValue Jobs jobs,
         @Valid @DefaultValue JmsSettings jms,
         @Valid @DefaultValue Soap soap) {
+
+    /** Múi giờ nghiệp vụ mặc định (Việt Nam, không có giờ mùa hè). */
+    public static final String DEFAULT_TIME_ZONE = "Asia/Ho_Chi_Minh";
 
     /**
      * SOAP WebService ({@code app.soap.*}).
@@ -52,16 +63,18 @@ public record AppProperties(
      *                       <b>tắt</b> tỷ giá (không gọi SOAP, dashboard báo không có tỷ giá). Không có mặc định trỏ
      *                       vào chính app: production tắt endpoint mock, client gọi vào đó chỉ bị chain chính chặn
      *                       (CSRF) — dev/test/compose tự đặt url của endpoint mock
-     * @param connectTimeout timeout mở kết nối (OWASP A10 — dịch vụ ngoài treo không giữ thread request)
+     * @param connectTimeout timeout mở kết nối (OWASP A10 — dịch vụ ngoài treo không giữ thread của job làm mới)
      * @param readTimeout    timeout chờ response
      * @param baseCurrency   cặp tỷ giá hiển thị trên dashboard: 1 {@code baseCurrency} = ? {@code quoteCurrency}
      * @param quoteCurrency  (mã ISO 4217, 3 chữ in hoa, khác {@code baseCurrency})
-     * @param cacheTtl       tỷ giá lấy thành công được dùng lại trong khoảng này (không gọi SOAP mỗi lần tải trang)
-     * @param retryAfterFailure sau 1 lần gọi lỗi, không gọi lại trong khoảng này (dashboard không phải chờ timeout
-     *                       mỗi lần tải trang khi dịch vụ đang hỏng); {@code 0} = thử lại ngay lần sau
+     * @param cacheTtl       tỷ giá lấy thành công được dùng lại trong khoảng này; hết hạn thì job nền
+     *                       ({@code scheduler/RefreshExchangeRateJob}) gọi SOAP lấy lại — request dashboard chỉ đọc
+     *                       cache. Quá 2 × giá trị này chưa được làm mới → hiển thị "Dữ liệu cũ"
+     * @param retryAfterFailure sau 1 lần gọi lỗi, job không gọi lại trong khoảng này (không dồn lời gọi tới dịch vụ
+     *                       đang hỏng); {@code 0} = thử lại ở lần chạy job kế tiếp
      * @param mockEndpoint   endpoint mock {@code /services/**} (public, không CSRF) — mặc định tắt
-     * @param warmUpOnStartup lấy sẵn tỷ giá (bất đồng bộ) khi app sẵn sàng, để lần tải dashboard đầu tiên không phải
-     *                       chờ SOAP; test tắt (không có server ở địa chỉ cấu hình)
+     * @param warmUpOnStartup lấy sẵn tỷ giá (bất đồng bộ) khi app sẵn sàng, để lần tải dashboard đầu tiên đã có giá
+     *                       trị (không phải đợi lần chạy job đầu tiên); test tắt (không có server ở địa chỉ cấu hình)
      */
     public record ExchangeRate(
             URI url,

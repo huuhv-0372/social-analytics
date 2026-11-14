@@ -60,7 +60,7 @@ class PostReportServiceTest {
 
     @BeforeEach
     void setUp() {
-        AppProperties properties = new AppProperties(
+        AppProperties properties = new AppProperties(null,
                 new AppProperties.ImportSettings(1000, DataSize.ofMegabytes(20), Duration.ZERO),
                 new AppProperties.ExportSettings(MAX_ROWS, MIN_INTERVAL),
                 // Service không dùng key mã hoá token / timeout OAuth2, thread pool, job, JMS

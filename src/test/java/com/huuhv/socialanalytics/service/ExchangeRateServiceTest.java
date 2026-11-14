@@ -54,7 +54,7 @@ class ExchangeRateServiceTest {
     }
 
     private static AppProperties properties(URI url, boolean warmUpOnStartup) {
-        return new AppProperties(null, null, null, null, null, null, null,
+        return new AppProperties(null, null, null, null, null, null, null, null,
                 new AppProperties.Soap(new AppProperties.ExchangeRate(url, Duration.ofSeconds(2),
                         Duration.ofSeconds(3), "USD", "VND", CACHE_TTL, RETRY_AFTER_FAILURE,
                         new AppProperties.MockEndpoint(false, DataSize.ofKilobytes(16)), warmUpOnStartup)));
@@ -65,10 +65,25 @@ class ExchangeRateServiceTest {
     void disabledWithoutUrlNeverCallsSoap() {
         ExchangeRateService disabled = new ExchangeRateService(client, properties(null, true), clock);
 
-        assertThat(disabled.getCurrentRate()).isNull();
         disabled.warmUp();
+        disabled.refreshIfDue();
 
+        assertThat(disabled.getCurrentRate()).isNull();
         verifyNoInteractions(client);
+    }
+
+    /** Request chỉ đọc cache: chưa có giá trị → null ngay, không gọi SOAP trên thread request. */
+    @Test
+    void getCurrentRateNeverCallsSoap() {
+        assertThat(service.getCurrentRate()).isNull();
+
+        when(client.getExchangeRate("USD", "VND")).thenReturn(QUOTE);
+        service.refreshIfDue();
+        clock.advance(CACHE_TTL.multipliedBy(5));
+        service.getCurrentRate();
+
+        // Chỉ 1 lời gọi (của refreshIfDue) dù cache đã hết hạn từ lâu
+        verify(client, times(1)).getExchangeRate("USD", "VND");
     }
 
     @Test
@@ -90,52 +105,26 @@ class ExchangeRateServiceTest {
         verifyNoInteractions(client);
     }
 
-    /**
-     * Chưa có giá trị và đang có thread lấy lần đầu (SOAP chậm) → request khác trả ngay {@code null}, KHÔNG chờ khoá:
-     * chờ sẽ giữ thread Tomcat trong khi lời gọi SOAP tới endpoint mock của chính app cũng cần 1 thread rảnh.
-     */
     @Test
-    void requestWithoutValueDoesNotWaitWhileFirstFetchIsInProgress() throws Exception {
-        CountDownLatch callStarted = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        when(client.getExchangeRate("USD", "VND")).thenAnswer(invocation -> {
-            callStarted.countDown();
-            release.await(5, TimeUnit.SECONDS);
-            return QUOTE;
-        });
-
-        CompletableFuture<ExchangeRateResponse> first = CompletableFuture.supplyAsync(service::getCurrentRate);
-        assertThat(callStarted.await(5, TimeUnit.SECONDS)).isTrue();
-        // Chạy ở thread khác + timeout ngắn: nếu chờ khoá thì get() hết giờ trước khi release
-        ExchangeRateResponse meanwhile = CompletableFuture.supplyAsync(service::getCurrentRate)
-                .get(1, TimeUnit.SECONDS);
-        release.countDown();
-
-        assertThat(meanwhile).isNull();
-        assertThat(first.get(5, TimeUnit.SECONDS).rate()).isEqualByComparingTo("25400.5");
-        verify(client, times(1)).getExchangeRate("USD", "VND");
-    }
-
-    @Test
-    void fetchesConfiguredPairAndReusesItWithinCacheTtl() {
+    void refreshFetchesConfiguredPairAndSkipsWithinCacheTtl() {
         when(client.getExchangeRate("USD", "VND")).thenReturn(QUOTE);
 
-        ExchangeRateResponse first = service.getCurrentRate();
+        service.refreshIfDue();
         clock.advance(CACHE_TTL.minusSeconds(1));
-        ExchangeRateResponse second = service.getCurrentRate();
+        service.refreshIfDue();
 
-        assertThat(first).isEqualTo(new ExchangeRateResponse("USD", "VND", new BigDecimal("25400.5"),
-                QUOTE.asOf(), START, false));
-        assertThat(second).isEqualTo(first);
+        assertThat(service.getCurrentRate()).isEqualTo(new ExchangeRateResponse("USD", "VND",
+                new BigDecimal("25400.5"), QUOTE.asOf(), START, false));
         verify(client, times(1)).getExchangeRate("USD", "VND");
     }
 
     @Test
-    void refetchesAfterCacheTtl() {
+    void refreshFetchesAgainAfterCacheTtl() {
         when(client.getExchangeRate("USD", "VND")).thenReturn(QUOTE, NEWER_QUOTE);
 
-        service.getCurrentRate();
+        service.refreshIfDue();
         clock.advance(CACHE_TTL);
+        service.refreshIfDue();
         ExchangeRateResponse refreshed = service.getCurrentRate();
 
         assertThat(refreshed.rate()).isEqualByComparingTo("25500.25");
@@ -144,12 +133,13 @@ class ExchangeRateServiceTest {
     }
 
     @Test
-    void failureWithCachedValueReturnsStaleValue() {
+    void failureWithCachedValueKeepsValueMarkedStale() {
         when(client.getExchangeRate("USD", "VND")).thenReturn(QUOTE)
                 .thenThrow(new ExchangeRateUnavailableException("Exchange rate service call failed: X"));
 
-        service.getCurrentRate();
-        clock.advance(CACHE_TTL.plusMinutes(5));
+        service.refreshIfDue();
+        clock.advance(CACHE_TTL);
+        service.refreshIfDue();
         ExchangeRateResponse stale = service.getCurrentRate();
 
         // Giá trị cũ + thời điểm lấy cũ, đánh dấu stale
@@ -158,10 +148,24 @@ class ExchangeRateServiceTest {
         assertThat(stale.stale()).isTrue();
     }
 
+    /** Job làm mới không chạy (hoặc bị chặn) → giá trị quá 2 × cache-ttl hiển thị là dữ liệu cũ dù chưa có lỗi. */
+    @Test
+    void valueNotRefreshedForTwiceCacheTtlIsStale() {
+        when(client.getExchangeRate("USD", "VND")).thenReturn(QUOTE);
+        service.refreshIfDue();
+
+        clock.advance(CACHE_TTL.multipliedBy(2).minusSeconds(1));
+        assertThat(service.getCurrentRate().stale()).isFalse();
+        clock.advance(Duration.ofSeconds(1));
+        assertThat(service.getCurrentRate().stale()).isTrue();
+    }
+
     @Test
     void failureWithoutCachedValueReturnsNull() {
         when(client.getExchangeRate("USD", "VND"))
                 .thenThrow(new ExchangeRateUnavailableException("Exchange rate service call failed: X"));
+
+        service.refreshIfDue();
 
         assertThat(service.getCurrentRate()).isNull();
     }
@@ -169,6 +173,8 @@ class ExchangeRateServiceTest {
     @Test
     void unexpectedErrorIsNotPropagated() {
         when(client.getExchangeRate("USD", "VND")).thenThrow(new IllegalStateException("bug"));
+
+        service.refreshIfDue();
 
         assertThat(service.getCurrentRate()).isNull();
     }
@@ -179,12 +185,14 @@ class ExchangeRateServiceTest {
                 .thenThrow(new ExchangeRateUnavailableException("Exchange rate service call failed: X"))
                 .thenReturn(QUOTE);
 
-        assertThat(service.getCurrentRate()).isNull();
+        service.refreshIfDue();
         clock.advance(RETRY_AFTER_FAILURE.minusSeconds(1));
+        service.refreshIfDue();
         assertThat(service.getCurrentRate()).isNull();
         verify(client, times(1)).getExchangeRate("USD", "VND");
 
         clock.advance(Duration.ofSeconds(1));
+        service.refreshIfDue();
         ExchangeRateResponse recovered = service.getCurrentRate();
 
         assertThat(recovered.stale()).isFalse();
@@ -198,10 +206,12 @@ class ExchangeRateServiceTest {
                 .thenThrow(new ExchangeRateUnavailableException("Exchange rate service call failed: X"))
                 .thenReturn(NEWER_QUOTE);
 
-        service.getCurrentRate();
+        service.refreshIfDue();
         clock.advance(CACHE_TTL);
+        service.refreshIfDue();
         assertThat(service.getCurrentRate().stale()).isTrue();
         clock.advance(RETRY_AFTER_FAILURE);
+        service.refreshIfDue();
 
         ExchangeRateResponse recovered = service.getCurrentRate();
 
@@ -209,9 +219,12 @@ class ExchangeRateServiceTest {
         assertThat(recovered.rate()).isEqualByComparingTo("25500.25");
     }
 
-    /** Đang có thread lấy tỷ giá (SOAP chậm) → request khác dùng ngay giá trị cũ, không chờ, không gọi thêm. */
+    /**
+     * Đang làm mới (SOAP chậm): request đọc ngay giá trị hiện có (không chờ), lần làm mới khác bỏ qua thay vì gọi
+     * thêm / xếp hàng chờ khoá.
+     */
     @Test
-    void concurrentRequestUsesCurrentValueWhileRefreshIsInProgress() throws Exception {
+    void concurrentRefreshIsSkippedAndReadsDoNotWait() throws Exception {
         CountDownLatch callStarted = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         when(client.getExchangeRate("USD", "VND")).thenReturn(QUOTE).thenAnswer(invocation -> {
@@ -219,18 +232,22 @@ class ExchangeRateServiceTest {
             release.await(5, TimeUnit.SECONDS);
             return NEWER_QUOTE;
         });
-        service.getCurrentRate();
+        service.refreshIfDue();
         clock.advance(CACHE_TTL);
 
-        CompletableFuture<ExchangeRateResponse> refreshing = CompletableFuture.supplyAsync(service::getCurrentRate);
+        CompletableFuture<Void> refreshing = CompletableFuture.runAsync(service::refreshIfDue);
         assertThat(callStarted.await(5, TimeUnit.SECONDS)).isTrue();
-        ExchangeRateResponse meanwhile = service.getCurrentRate();
+        // Chạy ở thread khác + timeout ngắn: nếu chờ khoá thì get() hết giờ trước khi release
+        CompletableFuture.runAsync(service::refreshIfDue).get(1, TimeUnit.SECONDS);
+        ExchangeRateResponse meanwhile = CompletableFuture.supplyAsync(service::getCurrentRate)
+                .get(1, TimeUnit.SECONDS);
         release.countDown();
+        refreshing.get(5, TimeUnit.SECONDS);
 
         assertThat(meanwhile.rate()).isEqualByComparingTo("25400.5");
-        // Chưa có lần gọi nào lỗi → không phải "dữ liệu cũ"
+        // Chưa có lần gọi nào lỗi, chưa quá 2 × TTL → không phải "dữ liệu cũ"
         assertThat(meanwhile.stale()).isFalse();
-        assertThat(refreshing.get(5, TimeUnit.SECONDS).rate()).isEqualByComparingTo("25500.25");
+        assertThat(service.getCurrentRate().rate()).isEqualByComparingTo("25500.25");
         verify(client, times(2)).getExchangeRate("USD", "VND");
         verifyNoMoreInteractions(client);
     }

@@ -48,8 +48,9 @@ public class ReportApiController {
     @Operation(summary = "Xuất snapshot metric ra file .xlsx (lọc collectedAt theo khoảng, ISO-8601 có múi giờ; tuỳ chọn)",
             description = "Mỗi snapshot của các bài viết thuộc user đang đăng nhập là 1 dòng (Provider, External ID, "
                     + "Likes, Shares, Comments, Followers, Collected At — giờ theo múi giờ server), sắp theo bài rồi "
-                    + "thời gian. Cùng định dạng với POST /api/import-metrics (import lại nguyên file sẽ tạo snapshot "
-                    + "trùng). from/to tính cả 2 đầu; from > to → 400. Giới hạn dòng app.export.max-rows (vượt → 400, "
+                    + "thời gian. Cùng định dạng với POST /api/import-metrics: import lại nguyên file không tạo trùng "
+                    + "— snapshot đã có báo lỗi 'snapshot already exists' theo dòng, chỉ dòng mới/đã sửa được ghi. "
+                    + "from/to tính cả 2 đầu; from > to → 400. Giới hạn dòng app.export.max-rows (vượt → 400, "
                     + "thu hẹp khoảng thời gian) và tần suất app.export.min-interval (→ 429 + Retry-After).")
     @ApiResponse(responseCode = "200", description = "File snapshot metric",
             content = @Content(mediaType = GenericExcelExporter.XLSX_CONTENT_TYPE,

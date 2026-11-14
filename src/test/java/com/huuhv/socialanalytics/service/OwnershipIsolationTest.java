@@ -241,7 +241,7 @@ class OwnershipIsolationTest {
      */
     @Test
     void otherUserCannotImportMetricsIntoOwnersPost() {
-        AppProperties properties = new AppProperties(new AppProperties.ImportSettings(10, DataSize.ofMegabytes(1), Duration.ZERO),
+        AppProperties properties = new AppProperties(null, new AppProperties.ImportSettings(10, DataSize.ofMegabytes(1), Duration.ZERO),
                 new AppProperties.ExportSettings(100, Duration.ZERO), null, null, null, null, null, null);
         SocialMetricImportService importService;
         try (ValidatorFactory validatorFactory = Validation.buildDefaultValidatorFactory()) {

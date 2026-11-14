@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.time.Duration;
+import java.time.ZoneId;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -24,6 +25,25 @@ class AppPropertiesTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withUserConfiguration(TestConfig.class)
             .withPropertyValues("app.token-encryption.key=" + VALID_KEY);
+
+    /** Múi giờ nghiệp vụ không theo JVM: mặc định Việt Nam, đổi qua app.time-zone (APP_TZ). */
+    @Test
+    void bindsTimeZone() {
+        contextRunner.run(context -> assertThat(context.getBean(AppProperties.class).timeZone())
+                .isEqualTo(ZoneId.of("Asia/Ho_Chi_Minh")));
+        contextRunner
+                .withPropertyValues("app.time-zone=America/New_York")
+                .run(context -> assertThat(context.getBean(AppProperties.class).timeZone())
+                        .isEqualTo(ZoneId.of("America/New_York")));
+    }
+
+    /** Tên múi giờ sai → không khởi động (JVM với TZ sai thì lặng lẽ chạy GMT). */
+    @Test
+    void failsStartupWhenTimeZoneIsInvalid() {
+        contextRunner
+                .withPropertyValues("app.time-zone=Mars/Olympus")
+                .run(context -> assertThat(context).hasFailed());
+    }
 
     @Test
     void bindsImportMaxRows() {

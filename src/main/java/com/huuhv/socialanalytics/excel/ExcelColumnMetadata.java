@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
  * Metadata các cột Excel của 1 DTO, đọc bằng Reflection <b>một lần</b> rồi cache theo class (dùng chung cho importer và
@@ -32,6 +33,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class ExcelColumnMetadata {
 
     private static final Map<Class<?>, List<ColumnMeta>> CACHE = new ConcurrentHashMap<>();
+    /** Tên field → tên cột theo class: {@link #columnName} được gọi cho mỗi vi phạm validate của mỗi dòng import. */
+    private static final Map<Class<?>, Map<String, String>> COLUMN_NAMES = new ConcurrentHashMap<>();
 
     private ExcelColumnMetadata() {
     }
@@ -89,9 +92,19 @@ public final class ExcelColumnMetadata {
         return CACHE.computeIfAbsent(type, ExcelColumnMetadata::scan);
     }
 
-    /** Tên cột Excel của field / component {@code property}; rỗng khi field đó không phải cột. */
+    /**
+     * Tên cột Excel của field / component {@code property}; rỗng khi field đó không phải cột. Tra map dựng 1 lần cho
+     * mỗi class (không quét danh sách cột mỗi lần gọi).
+     */
     public static Optional<String> columnName(Class<?> type, String property) {
-        return of(type).stream().filter(meta -> meta.property().equals(property)).map(ColumnMeta::name).findFirst();
+        return Optional.ofNullable(COLUMN_NAMES.computeIfAbsent(type, ExcelColumnMetadata::columnNamesByProperty)
+                .get(property));
+    }
+
+    private static Map<String, String> columnNamesByProperty(Class<?> type) {
+        // Field trùng tên ở class cha/con: giữ cột đầu tiên theo order (như cách tra tuyến tính trước đây)
+        return of(type).stream().collect(Collectors.toUnmodifiableMap(ColumnMeta::property, ColumnMeta::name,
+                (first, second) -> first));
     }
 
     /**

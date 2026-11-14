@@ -14,6 +14,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.UnsupportedEncodingException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 
@@ -93,10 +94,21 @@ public class RequestBodySizeLimitFilter extends OncePerRequestFilter {
             return stream;
         }
 
+        /**
+         * Như {@code Request.getReader()} của Tomcat: charset client khai báo không hợp lệ / không hỗ trợ →
+         * {@link UnsupportedEncodingException} (IOException — xử lý như body không đọc được), không để
+         * {@code IllegalCharsetNameException}/{@code UnsupportedCharsetException} (RuntimeException) thành 500 + log
+         * ERROR trên endpoint public. Thông điệp không chứa tên charset của client (log injection).
+         */
         @Override
         public BufferedReader getReader() throws IOException {
             String encoding = getCharacterEncoding();
-            Charset charset = encoding == null ? StandardCharsets.ISO_8859_1 : Charset.forName(encoding);
+            Charset charset;
+            try {
+                charset = encoding == null ? StandardCharsets.ISO_8859_1 : Charset.forName(encoding);
+            } catch (IllegalArgumentException e) {
+                throw new UnsupportedEncodingException("Unsupported request charset");
+            }
             return new BufferedReader(new InputStreamReader(getInputStream(), charset));
         }
     }

@@ -17,6 +17,9 @@ import com.huuhv.socialanalytics.excel.GenericExcelImporter;
 import com.huuhv.socialanalytics.excel.TestWorkbooks.Formula;
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.exception.BadRequestException;
+import com.huuhv.socialanalytics.exception.DuplicateResourceException;
+import com.huuhv.socialanalytics.service.SocialMetricService.SnapshotImport;
+import com.huuhv.socialanalytics.service.SocialMetricService.SnapshotKey;
 import jakarta.validation.Validation;
 import jakarta.validation.ValidatorFactory;
 import org.junit.jupiter.api.AfterAll;
@@ -28,6 +31,7 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.util.unit.DataSize;
 
@@ -38,6 +42,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Collection;
@@ -92,7 +97,7 @@ class SocialMetricImportServiceTest {
 
     @BeforeEach
     void setUp() {
-        AppProperties properties = new AppProperties(new AppProperties.ImportSettings(10, DataSize.ofMegabytes(20), Duration.ZERO),
+        AppProperties properties = new AppProperties(null, new AppProperties.ImportSettings(10, DataSize.ofMegabytes(20), Duration.ZERO),
                 new AppProperties.ExportSettings(10000, Duration.ZERO), null, null, null, null, null, null);
         service = new SocialMetricImportService(new ExcelImportSupport(new GenericExcelImporter(),
                 VALIDATOR_FACTORY.getValidator(), properties), postService, socialMetricService, currentUserService,
@@ -109,12 +114,16 @@ class SocialMetricImportServiceTest {
     }
 
     private void givenOwnedPosts() {
+        givenOwnedPostRefs();
+        when(socialMetricService.importSnapshots(eq(OWNER_ID), anyList()))
+                .thenAnswer(invocation -> new SnapshotImport(((List<?>) invocation.getArgument(1)).size(), Set.of()));
+    }
+
+    private void givenOwnedPostRefs() {
         when(currentUserService.getCurrentUser()).thenReturn(owner);
         // Tra bài theo lô — chỉ bài của owner (bài của user khác không bao giờ được trả về)
         when(postService.findOwnedPostRefs(eq(OWNER_ID), eq(Provider.FACEBOOK), anyCollection()))
                 .thenReturn(List.of(new PostRef(10L, "fb-1"), new PostRef(11L, "fb-2")));
-        when(socialMetricService.importSnapshots(eq(OWNER_ID), anyList()))
-                .thenAnswer(invocation -> ((List<?>) invocation.getArgument(1)).size());
     }
 
     @Test
@@ -197,7 +206,7 @@ class SocialMetricImportServiceTest {
                     .toList();
         });
         when(socialMetricService.importSnapshots(eq(OWNER_ID), anyList()))
-                .thenAnswer(invocation -> ((List<?>) invocation.getArgument(1)).size());
+                .thenAnswer(invocation -> new SnapshotImport(((List<?>) invocation.getArgument(1)).size(), Set.of()));
         byte[] template;
         try (InputStream in = service.getTemplate().getInputStream()) {
             template = in.readAllBytes();
@@ -338,6 +347,97 @@ class SocialMetricImportServiceTest {
         assertThatThrownBy(() -> service.importMetrics(file(new byte[]{1, 2, 3})))
                 .isInstanceOf(AuthenticationRequiredException.class);
         verifyNoInteractions(socialMetricService, postService);
+    }
+
+    /**
+     * Bài bị xoá giữa lúc tra và lúc ghi: snapshot không được lưu và dòng đó vẫn có lỗi kèm số dòng (mọi dòng tính vào
+     * failed đều giải thích được), xếp đúng thứ tự dòng cùng các lỗi khác.
+     */
+    @Test
+    void rowsOfPostDeletedDuringImportAreReportedAsPostNotFound() {
+        givenOwnedPostRefs();
+        when(socialMetricService.importSnapshots(eq(OWNER_ID), anyList()))
+                .thenReturn(new SnapshotImport(1, Set.of(11L)));
+        byte[] content = xlsx(HEADER,
+                new Object[]{"FACEBOOK", "fb-2", 5, 1, 1, 1, AT},
+                new Object[]{"FACEBOOK", "fb-1", -1, 2, 3, 400, AT},
+                new Object[]{"FACEBOOK", "fb-1", 10, 2, 3, 400, AT.plusHours(1)},
+                new Object[]{"FACEBOOK", "fb-2", 6, 1, 1, 1, AT.plusHours(1)});
+
+        MetricImportResultResponse result = service.importMetrics(file(content));
+
+        assertThat(result.imported()).isEqualTo(1);
+        assertThat(result.failed()).isEqualTo(3);
+        assertThat(result.errors()).extracting(RowError::row, RowError::column, RowError::message).containsExactly(
+                tuple(2, "External ID", "post not found"),
+                tuple(3, "Likes", "must be greater than or equal to 0"),
+                tuple(5, "External ID", "post not found"));
+    }
+
+    /**
+     * Request khác ghi cùng (bài, thời điểm) xen giữa lúc kiểm tra và lúc ghi → unique index chặn, cả file rollback →
+     * 409 với thông điệp chung (không lộ chi tiết DB).
+     */
+    @Test
+    void concurrentWriteOfSameSnapshotRejectsWholeFileWithConflict() {
+        givenOwnedPostRefs();
+        when(socialMetricService.importSnapshots(eq(OWNER_ID), anyList()))
+                .thenThrow(new DataIntegrityViolationException("Duplicate entry '10-2026-03-01' for key"));
+        byte[] content = xlsx(HEADER, new Object[]{"FACEBOOK", "fb-1", 10, 2, 3, 400, AT});
+
+        assertThatThrownBy(() -> service.importMetrics(file(content)))
+                .isInstanceOf(DuplicateResourceException.class)
+                .hasMessage(SocialMetricImportService.CONCURRENT_WRITE_MESSAGE);
+    }
+
+    /**
+     * Giờ local lặp lại khi lùi đồng hồ (DST, America/New_York 2025-11-02 01:30 = 05:30Z hoặc 06:30Z): dòng được hiểu
+     * theo offset sớm hơn, nhưng kiểm tra "đã có" với cả 2 thời điểm → file export (snapshot lúc 06:30Z ghi thành
+     * "01:30") import lại không tạo snapshot trùng lệch 1 giờ.
+     */
+    @Test
+    void ambiguousDstTimeIsCheckedAgainstBothOffsets() {
+        Clock newYork = Clock.fixed(Instant.parse("2025-11-10T00:00:00Z"), ZoneId.of("America/New_York"));
+        AppProperties properties = new AppProperties(null,
+                new AppProperties.ImportSettings(10, DataSize.ofMegabytes(20), Duration.ZERO),
+                new AppProperties.ExportSettings(10000, Duration.ZERO), null, null, null, null, null, null);
+        SocialMetricImportService newYorkService = new SocialMetricImportService(new ExcelImportSupport(
+                new GenericExcelImporter(), VALIDATOR_FACTORY.getValidator(), properties), postService,
+                socialMetricService, currentUserService, userRateLimiter, properties, newYork);
+        givenOwnedPosts();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<SnapshotKey>> keys = ArgumentCaptor.forClass(List.class);
+        // Khoá thứ 2 (offset muộn của dòng 2) đã có trong DB; dòng 3 không lặp giờ → 1 khoá
+        when(socialMetricService.findExistingSnapshotIndexes(keys.capture())).thenReturn(Set.of(1));
+        byte[] content = xlsx(HEADER,
+                new Object[]{"FACEBOOK", "fb-1", 10, 2, 3, 400, LocalDateTime.of(2025, 11, 2, 1, 30)},
+                new Object[]{"FACEBOOK", "fb-2", 5, 1, 1, 1, LocalDateTime.of(2025, 11, 2, 3, 0)});
+
+        MetricImportResultResponse result = newYorkService.importMetrics(file(content));
+
+        assertThat(keys.getValue()).containsExactly(
+                new SnapshotKey(10L, Instant.parse("2025-11-02T05:30:00Z")),
+                new SnapshotKey(10L, Instant.parse("2025-11-02T06:30:00Z")),
+                new SnapshotKey(11L, Instant.parse("2025-11-02T08:00:00Z")));
+        assertThat(result.errors()).extracting(RowError::row, RowError::column, RowError::message)
+                .containsExactly(tuple(2, "Collected At", "snapshot already exists"));
+        verify(socialMetricService).importSnapshots(eq(OWNER_ID), saved.capture());
+        assertThat(saved.getValue()).extracting(SocialMetricRequest::postId).containsExactly(11L);
+    }
+
+    /** Không có dòng cần ghi → không mở transaction ghi, không tốn lượt. */
+    @Test
+    void nothingToWriteDoesNotCallWriteStep() {
+        givenOwnedPostRefs();
+        when(socialMetricService.findExistingSnapshotIndexes(anyList())).thenReturn(Set.of(0));
+
+        MetricImportResultResponse result = service.importMetrics(file(xlsx(HEADER,
+                new Object[]{"FACEBOOK", "fb-1", 10, 2, 3, 400, AT})));
+
+        assertThat(result.imported()).isZero();
+        assertThat(result.failed()).isEqualTo(1);
+        verify(socialMetricService, never()).importSnapshots(any(), anyList());
+        verifyNoInteractions(userRateLimiter);
     }
 
     @Test

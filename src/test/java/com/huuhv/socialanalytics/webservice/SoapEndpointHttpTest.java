@@ -152,7 +152,7 @@ class SoapEndpointHttpTest {
 
     @Test
     void productionClientGetsRateFromEndpointOverHttp() throws Exception {
-        AppProperties properties = new AppProperties(null, null, null, null, null, null, null,
+        AppProperties properties = new AppProperties(null, null, null, null, null, null, null, null,
                 new AppProperties.Soap(new AppProperties.ExchangeRate(
                         URI.create("http://localhost:" + port + "/services"), Duration.ofSeconds(2),
                         Duration.ofSeconds(3), "USD", "VND", Duration.ofMinutes(10), Duration.ofMinutes(1),

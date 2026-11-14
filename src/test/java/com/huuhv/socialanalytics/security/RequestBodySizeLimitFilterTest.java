@@ -9,6 +9,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -93,6 +94,38 @@ class RequestBodySizeLimitFilterTest {
         ServletRequest limited = chain.getRequest();
         assertThatThrownBy(() -> limited.getReader().read(new char[MAX_BYTES * 4]))
                 .isInstanceOf(RequestBodySizeLimitFilter.BodyTooLargeException.class);
+    }
+
+    /**
+     * Charset client khai báo sai cú pháp / không hỗ trợ → {@link UnsupportedEncodingException} như Tomcat (IOException,
+     * xử lý như body không đọc được), không phải RuntimeException (500 + log ERROR) trên endpoint public.
+     */
+    @Test
+    void readerWithInvalidOrUnsupportedCharsetThrowsUnsupportedEncoding() throws Exception {
+        for (String charset : new String[]{"xxx?", "x-unknown-charset"}) {
+            MockHttpServletRequest request = post("<a/>".getBytes(StandardCharsets.US_ASCII));
+            request.setCharacterEncoding(charset);
+            MockFilterChain chain = new MockFilterChain();
+
+            filter.doFilter(request, new MockHttpServletResponse(), chain);
+
+            ServletRequest limited = chain.getRequest();
+            assertThatThrownBy(limited::getReader)
+                    .isInstanceOf(UnsupportedEncodingException.class)
+                    // Không echo giá trị do client gửi
+                    .hasMessage("Unsupported request charset");
+        }
+    }
+
+    @Test
+    void readerUsesDeclaredCharset() throws Exception {
+        MockHttpServletRequest request = post("Việt".getBytes(StandardCharsets.UTF_8));
+        request.setCharacterEncoding("UTF-8");
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(request, new MockHttpServletResponse(), chain);
+
+        assertThat(chain.getRequest().getReader().readLine()).isEqualTo("Việt");
     }
 
     @Test

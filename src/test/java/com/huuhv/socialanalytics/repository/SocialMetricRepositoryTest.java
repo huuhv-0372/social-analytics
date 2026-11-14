@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -27,6 +28,7 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
 @DataJpaTest
@@ -185,8 +187,9 @@ class SocialMetricRepositoryTest {
                 .externalId("tw-2")
                 .url("https://x.com/owner/status/2")
                 .build());
-        LocalDateTime collectedAt = LocalDateTime.of(2026, 11, 10, 3, 0, 0, 123_456_000);
-        // Nhiều hơn 1 câu INSERT (ROWS_PER_STATEMENT dòng/câu) để kiểm tra cả phần chia lô
+        LocalDateTime collectedAt = LocalDateTime.of(2026, 11, 10, 3, 0, 0, 123_000_000);
+        // Nhiều hơn 1 câu INSERT (ROWS_PER_STATEMENT dòng/câu) để kiểm tra cả phần chia lô; mỗi snapshot 1 thời điểm
+        // riêng (unique (post_id, collected_at)), likes = số giây lệch so với collectedAt
         int count = SocialMetricRepositoryImpl.ROWS_PER_STATEMENT + 1;
         List<SocialMetric> snapshots = IntStream.range(0, count)
                 .mapToObj(i -> SocialMetric.builder()
@@ -195,7 +198,7 @@ class SocialMetricRepositoryTest {
                         .shares(i + 1)
                         .comments(i + 2)
                         .followers(i + 3)
-                        .collectedAt(collectedAt)
+                        .collectedAt(collectedAt.plusSeconds(i))
                         .build())
                 .toList();
 
@@ -208,7 +211,7 @@ class SocialMetricRepositoryTest {
                     assertThat(metric.getShares()).isEqualTo(metric.getLikes() + 1);
                     assertThat(metric.getComments()).isEqualTo(metric.getLikes() + 2);
                     assertThat(metric.getFollowers()).isEqualTo(metric.getLikes() + 3);
-                    assertThat(metric.getCollectedAt()).isEqualTo(collectedAt);
+                    assertThat(metric.getCollectedAt()).isEqualTo(collectedAt.plusSeconds(metric.getLikes()));
                 });
         // 3 snapshot của setUp + phần mới
         assertThat(socialMetricRepository.search(post.getId(), null, null, PageRequest.of(0, 1000)))
@@ -261,12 +264,35 @@ class SocialMetricRepositoryTest {
         assertThat(rows(other, BASE.plusHours(3))).containsExactly("1 TWITTER 5000 500 1000 7000");
     }
 
+    /**
+     * Mỗi bài tối đa 1 snapshot tại 1 thời điểm (Flyway V8): lớp chặn cuối khi 2 request / 2 instance cùng qua bước
+     * kiểm tra trùng ở Service rồi cùng ghi. Bài khác cùng thời điểm vẫn ghi được.
+     */
     @Test
-    void perDayQueryCountsOneSnapshotPerPostWhenCollectedAtTies() {
-        // Cùng collectedAt với snapshot 30 likes → lấy bản id lớn hơn, không cộng cả 2
-        saveSnapshot(BASE.plusHours(2), 35);
+    void uniqueIndexRejectsSecondSnapshotOfPostAtSameTime() {
+        Post other = savePost(owner, Provider.FACEBOOK, "fb-1");
+        saveSnapshot(other, BASE.plusHours(2), 1);
 
-        assertThat(rows(owner, BASE.plusHours(3))).containsExactly("1 TWITTER 35 3 7 1000");
+        assertThatThrownBy(() -> saveSnapshot(BASE.plusHours(2), 35))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    /** Ghi theo lô (job crawl, import Excel) cũng bị chặn → Service rollback cả lô, đổi thành 409. */
+    @Test
+    void insertAllRejectsSnapshotOfPostAtExistingTime() {
+        List<SocialMetric> duplicate = List.of(SocialMetric.builder()
+                .post(post).likes(35).collectedAt(BASE.plusHours(2)).build());
+
+        assertThatThrownBy(() -> socialMetricRepository.insertAll(duplicate))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void existsByPostIdAndCollectedAtMatchesExactTime() {
+        assertThat(socialMetricRepository.existsByPostIdAndCollectedAt(post.getId(), BASE.plusHours(2))).isTrue();
+        assertThat(socialMetricRepository.existsByPostIdAndCollectedAt(post.getId(), BASE.plusHours(2).plusNanos(1_000_000)))
+                .isFalse();
+        assertThat(socialMetricRepository.existsByPostIdAndCollectedAt(-1L, BASE.plusHours(2))).isFalse();
     }
 
     @Test

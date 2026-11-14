@@ -73,7 +73,7 @@ public interface PostRepository extends JpaRepository<Post, Long> {
      * Hai snapshot cùng {@code collectedAt} thì lấy bản có id lớn hơn để mỗi bài đúng 1 dòng.
      * <p>
      * Hiệu năng: subquery {@code ORDER BY collectedAt DESC, id DESC LIMIT 1} theo từng bài đi lùi trên index
-     * {@code idx_social_metrics_post_collected (post_id, collected_at)} (InnoDB tự nối PK {@code id} vào cuối index)
+     * {@code uk_social_metrics_post_collected (post_id, collected_at)} (InnoDB tự nối PK {@code id} vào cuối index)
      * nên chỉ đọc 1 entry/bài, sau đó JOIN theo PK — chi phí O(số bài), không phụ thuộc số snapshot của mỗi bài.
      * Outer query lọc + sắp theo unique index {@code (user_id, provider, external_id)} nên không filesort và
      * dừng ngay khi đủ {@code limit}.

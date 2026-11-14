@@ -14,6 +14,7 @@ import com.huuhv.socialanalytics.excel.GenericExcelImporter;
 import com.huuhv.socialanalytics.repository.SocialAccountRepository;
 import com.huuhv.socialanalytics.repository.UserRepository;
 import com.huuhv.socialanalytics.scheduler.UpdateSocialMetricsJob;
+import com.huuhv.socialanalytics.service.ExchangeRateService;
 import com.huuhv.socialanalytics.websocket.StompDestinations;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -83,6 +84,8 @@ import static org.awaitility.Awaitility.await;
  * <p>
  * {@code retry-after-failure=0}: context riêng cho class này (không dùng chung cache context với test khác — tỷ giá
  * có thể đã bị cache lỗi trong context khác) và client SOAP được trỏ tới cổng ngẫu nhiên trước request đầu tiên.
+ * Request dashboard chỉ đọc cache tỷ giá (job làm mới tắt trong profile test) → test gọi
+ * {@link ExchangeRateService#refreshIfDue()} như {@code RefreshExchangeRateJob}.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = "app.soap.exchange-rate.retry-after-failure=0")
@@ -124,6 +127,9 @@ class EndToEndFlowTest {
     @Autowired
     private ExchangeRateSoapClient exchangeRateSoapClient;
 
+    @Autowired
+    private ExchangeRateService exchangeRateService;
+
     EndToEndFlowTest() {
         stompClient.setMessageConverter(new JacksonJsonMessageConverter());
     }
@@ -141,6 +147,10 @@ class EndToEndFlowTest {
 
     @Test
     void importJmsStatisticsWebSocketCrawlChartAndExportFlow() throws Exception {
+        // Tỷ giá: job nền làm mới cache (request dashboard chỉ đọc) — gọi trước khi đăng nhập vì loggedInBrowser() đã
+        // tải /dashboard (lấy CSRF) và giữ HTML đó
+        exchangeRateService.refreshIfDue();
+
         // --- Đăng nhập: owner có tài khoản Facebook (token còn hạn) để job crawl; other là user đối chứng ---
         Browser owner = loggedInBrowser();
         Browser other = loggedInBrowser();

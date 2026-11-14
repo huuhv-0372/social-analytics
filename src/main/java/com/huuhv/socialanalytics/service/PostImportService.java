@@ -33,8 +33,9 @@ import java.util.Map;
  * bước ghi ({@link PostUpsertService#saveImport}) giữ connection DB.
  * <p>
  * Tần suất ({@code app.import.min-interval}, action {@value #RATE_LIMIT_ACTION} → 429) tính ngay trước bước ghi —
- * mỗi lần ghi là 1 lần import (lịch sử + message JMS + thống kê); file bị từ chối cả file (sai định dạng, thiếu cột...)
- * không tốn lượt, user sửa file rồi gửi lại ngay được.
+ * mỗi lần ghi là 1 lần import (lịch sử + message JMS + thống kê). File không có dòng hợp lệ nào (mọi dòng lỗi) không
+ * được ghi (không lịch sử, không thống kê, {@code importId = null}) và không tốn lượt — cùng quy tắc với import metric;
+ * file bị từ chối cả file (sai định dạng, thiếu cột...) cũng vậy: user sửa file rồi gửi lại ngay được.
  */
 @Slf4j
 @Service
@@ -60,7 +61,8 @@ public class PostImportService {
     /**
      * @throws BadRequestException khi file rỗng, không phải .xlsx (đuôi hoặc nội dung), vượt dung lượng giải nén,
      *                             thiếu cột, không có dòng dữ liệu nào (chỉ có header) hoặc quá số dòng
-     * @throws TooManyRequestsException khi user vừa import bài viết trong vòng {@code app.import.min-interval}
+     * @throws TooManyRequestsException khi file có dòng hợp lệ nhưng user vừa import bài viết trong vòng
+     *                                  {@code app.import.min-interval}
      */
     public ImportResultResponse importPosts(MultipartFile file) {
         // Fail closed: kiểm tra owner trước khi parse (POI). Request ẩn danh đã bị SecurityConfig chặn từ filter chain,
@@ -75,7 +77,16 @@ public class PostImportService {
 
         List<ExcelRowError> errors = new ArrayList<>();
         List<PostRequest> validRows = validate(result.rows(), errors);
-        // Chặn tần suất ghi (OWASP A06): mỗi lần ghi tạo 1 lịch sử import + 1 message JMS, kể cả khi mọi dòng lỗi
+        List<ImportResultResponse.RowError> rowErrors = errors.stream()
+                .map(error -> new ImportResultResponse.RowError(error.rowNumber(), error.column(), error.message()))
+                .toList();
+        if (validRows.isEmpty()) {
+            // Không có gì để ghi: không lịch sử / message JMS / thống kê, không tốn lượt tần suất
+            log.info("User {} import of posts not saved: total={}, all rows invalid", owner.getId(),
+                    result.totalRows());
+            return new ImportResultResponse(null, result.totalRows(), 0, 0, result.totalRows(), rowErrors);
+        }
+        // Chặn tần suất ghi (OWASP A06): mỗi lần ghi tạo 1 lịch sử import + 1 message JMS
         userRateLimiter.acquire(RATE_LIMIT_ACTION, owner.getId(), appProperties.importSettings().minInterval());
         PostUpsertService.Result counts = postUpsertService.saveImport(owner, validRows, result.totalRows());
 
@@ -85,9 +96,7 @@ public class PostImportService {
         // Audit (OWASP A09): ai import, bao nhiêu dòng — không log tên file hay nội dung
         log.info("User {} imported posts: importId={}, total={}, created={}, updated={}, failed={}",
                 owner.getId(), counts.importId(), result.totalRows(), created, updated, failed);
-        return new ImportResultResponse(counts.importId(), result.totalRows(), created, updated, failed, errors.stream()
-                .map(error -> new ImportResultResponse.RowError(error.rowNumber(), error.column(), error.message()))
-                .toList());
+        return new ImportResultResponse(counts.importId(), result.totalRows(), created, updated, failed, rowErrors);
     }
 
     /** File .xlsx mẫu đúng định dạng import (header + vài dòng dữ liệu giả + sheet hướng dẫn). */

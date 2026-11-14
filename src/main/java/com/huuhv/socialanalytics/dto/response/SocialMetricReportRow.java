@@ -9,11 +9,12 @@ import java.time.ZoneId;
 
 /**
  * 1 dòng file export snapshot metric (projection {@code SELECT new}, không load Entity). Cùng tên cột với file import
- * ({@code SocialMetricImportRow}) → sửa rồi import lại được; import lại nguyên file sẽ tạo snapshot trùng (snapshot là
- * bản ghi theo thời gian, không upsert).
+ * ({@code SocialMetricImportRow}) → sửa rồi import lại được. Import lại nguyên file <b>không</b> tạo snapshot trùng:
+ * dòng có (bài, Collected At) đã tồn tại báo lỗi {@code snapshot already exists}, chỉ dòng mới được ghi (snapshot là
+ * bản ghi theo thời gian, không upsert — sửa số liệu của snapshot đã có phải xoá rồi nhập lại).
  * <p>
- * Query trả {@code collectedAt} theo giờ UTC (như DB); trước khi ghi file đổi sang múi giờ của server bằng
- * {@link #inZone(ZoneId)}.
+ * Query trả {@code collectedAt} theo giờ UTC (như DB); trước khi ghi file đổi sang múi giờ nghiệp vụ
+ * ({@code app.time-zone}) bằng {@link #inZone(ZoneId)}.
  */
 public record SocialMetricReportRow(
         @ExcelColumn(name = "Provider", order = 1) Provider provider,

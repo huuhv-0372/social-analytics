@@ -67,19 +67,6 @@ class PostRepositoryTest {
     }
 
     @Test
-    void reportHasOneRowWhenSnapshotsShareCollectedAt() {
-        User owner = saveUser("owner@example.com");
-        Post post = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));
-        LocalDateTime at = LocalDateTime.of(2026, 1, 1, 0, 0);
-        saveMetric(post, 1, at);
-        saveMetric(post, 2, at);
-
-        List<PostReportRow> rows = postRepository.findReportRows(owner.getId(), Limit.unlimited());
-
-        assertThat(rows).singleElement().extracting(PostReportRow::likes).isEqualTo(2L);
-    }
-
-    @Test
     void findRefsByExternalIdsReturnsOnlyOwnPostsOfProviderIgnoringCase() {
         User owner = saveUser("owner@example.com");
         User other = saveUser("other@example.com");

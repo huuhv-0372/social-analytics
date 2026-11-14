@@ -65,9 +65,11 @@ services:
       <<: *app-env
       # Compose dùng cho môi trường local → mặc định profile dev (bật Swagger, log DEBUG)
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
-      # Múi giờ server (image chạy UTC nếu không đặt): ngày của biểu đồ, giờ Excel import/export, giờ hiển thị và log
-      # theo múi giờ này (bean Clock = múi giờ JVM). DB luôn lưu UTC nên đổi giá trị không làm sai dữ liệu đã lưu.
-      # Không đặt cho service maven/maven-testcontainers — test không phụ thuộc múi giờ máy chạy.
+      # Múi giờ nghiệp vụ (app.time-zone): ngày của biểu đồ, giờ Excel import/export, giờ hiển thị — bean Clock dùng
+      # APP_TZ, không theo múi giờ JVM. TZ chỉ để giờ in trong log khớp (image mặc định UTC). DB luôn lưu UTC nên đổi
+      # giá trị không làm sai dữ liệu đã lưu. Không đặt cho service maven/maven-testcontainers — test cố định
+      # app.time-zone trong application-test.yml.
+      APP_TZ: ${APP_TZ:-Asia/Ho_Chi_Minh}
       TZ: ${APP_TZ:-Asia/Ho_Chi_Minh}
       # Profile dev mặc định chạy Artemis embedded → container app dùng broker riêng của compose
       # (đổi mode thì tắt luôn broker embedded — 2 biến phải đi cùng nhau, xem application-dev.yml)
@@ -83,10 +85,13 @@ services:
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
       # Trống khi truy cập trực tiếp; "native" khi đặt sau reverse proxy tin cậy (xem .env.example)
       FORWARD_HEADERS_STRATEGY: ${FORWARD_HEADERS_STRATEGY:-}
-      # Endpoint SOAP mock tỷ giá (/services/**, public) — app gọi chính nó qua localhost:8080 trong container.
-      # Đặt SOAP_EXCHANGE_RATE_URL để dùng dịch vụ SOAP khác (khi đó có thể tắt mock)
-      SOAP_MOCK_ENDPOINT_ENABLED: ${SOAP_MOCK_ENDPOINT_ENABLED:-true}
-      SOAP_EXCHANGE_RATE_URL: ${SOAP_EXCHANGE_RATE_URL:-http://localhost:8080/services}
+      # Endpoint SOAP mock tỷ giá (/services/**, PUBLIC: không đăng nhập, không CSRF) — app gọi chính nó qua
+      # localhost:8080 trong container. Compose chỉ dành cho môi trường LOCAL (port bind 127.0.0.1, profile dev).
+      # Chạy profile khác / mở app ra ngoài (sau load balancer): .env đặt SOAP_MOCK_ENDPOINT_ENABLED=false và
+      # SOAP_EXCHANGE_RATE_URL= (trống = tắt tỷ giá) hoặc URL dịch vụ SOAP thật. Dùng "-" (không phải ":-") để giá trị
+      # trống trong .env được giữ nguyên thay vì bị thay bằng mặc định.
+      SOAP_MOCK_ENDPOINT_ENABLED: ${SOAP_MOCK_ENDPOINT_ENABLED-true}
+      SOAP_EXCHANGE_RATE_URL: ${SOAP_EXCHANGE_RATE_URL-http://localhost:8080/services}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     depends_on:

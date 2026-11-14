@@ -175,7 +175,7 @@ Package thấp nhất (line): `exception` 87% (nhánh hiếm của `ApiException
 | 7 | Chờ tới mốc 5 phút kế tiếp | Log `Update social metrics finished … succeeded …`. Tab 1 tự làm mới: "Last updated time" đổi, biểu đồ có điểm hôm nay cho provider bạn đã đăng nhập (job chỉ crawl bài cùng provider với tài khoản) | `@Scheduled` + ShedLock, `@Async` đa luồng, mock API |
 | 8 | Tab 2: `GET /api/import-metrics/template` → `POST /api/import-metrics` | `{"totalRows":8,"imported":8,"failed":0}`; Tab 1 tự cập nhật — đổi `<select>` sang 30 ngày / Followers để xem các series | Excel generic cho model thứ 2, event `METRICS_UPDATED` |
 | 9 | Tab 2: `GET /api/export-report`, `GET /api/export-metrics` → mở bằng Excel; gọi lại ngay trong 10 giây | 2 file `.xlsx` (giờ theo múi giờ server; Content `=1+1` của bước 6 hiện nguyên văn, không tính thành 2); lần gọi thứ 2 → `429` + `Retry-After` | Export streaming, chống Formula Injection, rate limit Bucket4j |
-| 10 | Import lại chính file `metrics-report-….xlsx` vừa export | Thành công (round-trip cùng 7 cột) — tạo thêm snapshot trùng thời điểm | Import/export đối xứng |
+| 10 | Import lại chính file `metrics-report-….xlsx` vừa export; sửa Collected At của 1 dòng rồi import lần nữa | Lần 1: mọi dòng báo `snapshot already exists` ở cột Collected At (`imported: 0`) — không tạo trùng; lần 2: chỉ dòng đã sửa được ghi | Import/export đối xứng (round-trip cùng 7 cột), chống trùng snapshot |
 | 11 | Mở cửa sổ ẩn danh, đăng nhập tài khoản **khác** (vd X), làm bước 4 | Dashboard cửa sổ thường **không** đổi; `GET /api/posts/{id}` với id bài của user kia → `404` | Event theo user, chống IDOR |
 | 12 | Gọi `POST /api/posts` bằng curl có cookie `SESSION` nhưng thiếu header `X-XSRF-TOKEN` | `403` | CSRF |
 | 13 | Dừng app, chạy lại với `SOAP_EXCHANGE_RATE_URL=http://localhost:9/services` | Dashboard vẫn hoạt động, card tỷ giá hiện *Không lấy được tỷ giá* (đang có số trong cache mà dịch vụ lỗi thì hiện số cũ + nhãn **Dữ liệu cũ** — xem `ExchangeRateServiceTest`) | Timeout + fail-safe |
@@ -230,7 +230,7 @@ src/main/resources/
 | `config/OpenApiConfig` | Thông tin tài liệu OpenAPI (title, version); không khai security scheme — Swagger UI dùng session cookie sau khi đăng nhập OAuth2 |
 | `src/test/resources/application-test.yml` | Profile `test` chỉ dành cho test, không đóng gói vào JAR (`@ActiveProfiles("test")`): log gọn, chỉ ra console |
 | `logback-spring.xml` | Log console + file theo ngày trong `logs/` (giữ 30 ngày), pattern kèm MDC `jobId` / `importId` |
-| `config/properties/AppProperties` | Bind cấu hình `app.*` (record + validation): `app.import.max-rows` / `max-uncompressed-size` / `min-interval`, `app.export.max-rows` / `min-interval`, `app.token-encryption.key`, `app.async.social-crawler.*`, `app.jobs.*` (cron, timeout, khoá ShedLock), `app.oauth2.*` (timeout), `app.soap.exchange-rate.*` (URL, timeout, cặp tiền, cache, nạp sẵn lúc khởi động, giới hạn body endpoint mock) |
+| `config/properties/AppProperties` | Bind cấu hình `app.*` (record + validation): `app.time-zone` (múi giờ nghiệp vụ), `app.import.max-rows` / `max-uncompressed-size` / `min-interval`, `app.export.max-rows` / `min-interval`, `app.token-encryption.key`, `app.async.social-crawler.*`, `app.jobs.*` (cron, timeout, khoá ShedLock; `app.jobs.refresh-exchange-rate.cron` làm mới tỷ giá), `app.oauth2.*` (timeout), `app.soap.exchange-rate.*` (URL, timeout, cặp tiền, cache, nạp sẵn lúc khởi động, giới hạn body endpoint mock) |
 | `.env` | Giá trị bí mật cho môi trường local — copy từ `.env.example` |
 | `docker-compose.yaml` | MySQL 8.4 + ActiveMQ Artemis + app, và service `maven` (JDK 25) để chạy lệnh Maven |
 | `src/main/resources/artemis/broker.properties` | Retry + DLQ của queue `import-completed` (6 lần giao, 2s ×2, tối đa 30s ≈ 1 phút → `DLQ.import-completed`; DLQ giao lại vô hạn khi lỗi DB, 5s ×2 tối đa 5 phút) và address multicast `dashboard-events` (event realtime cho dashboard) — nguồn duy nhất: broker Artemis của compose mount file này, broker embedded (dev/test) nạp từ classpath. Test ghi đè delay bằng `src/test/resources/artemis/broker-test.properties` |
@@ -245,7 +245,7 @@ src/main/resources/
 | `DB_HOST` / `DB_PORT` / `DB_NAME` | — | Mặc định `localhost` / `33069` / `social_analytics`. `DB_PORT` là port MySQL mở ra máy host; app chạy trong Docker luôn dùng `mysql:3306` |
 | `APP_PORT` | — | Port app mở ra máy host khi chạy bằng Docker (mặc định `8080`) |
 | `SPRING_PROFILES_ACTIVE` | — | Profile của container `app` (mặc định `dev`). Đặt profile khác (vd `prod`) để chạy cấu hình production-safe, Swagger tắt |
-| `APP_TZ` | — | Múi giờ server của container `app` (compose truyền vào `TZ`, mặc định `Asia/Ho_Chi_Minh`; image không đặt thì chạy UTC). Quyết định ranh giới ngày của biểu đồ, giờ trong file Excel import/export, giờ hiển thị và log — DB luôn lưu UTC. Chạy image không qua compose thì đặt `-e TZ=Asia/Ho_Chi_Minh`; app chạy bằng JDK local dùng múi giờ của máy. Tên sai thì JVM lặng lẽ dùng `GMT` — kiểm tra dòng log `Server time zone` lúc khởi động |
+| `APP_TZ` | — | Múi giờ nghiệp vụ (`app.time-zone`, tên IANA, mặc định `Asia/Ho_Chi_Minh`): ranh giới ngày của biểu đồ, giờ trong file Excel import/export, giờ hiển thị — bean `Clock` dùng giá trị này, **không** theo múi giờ JVM/máy, nên mọi instance cho cùng kết quả kể cả khi 1 pod quên đặt `TZ`. Tên sai → app không khởi động. DB luôn lưu UTC. Compose đặt thêm `TZ` cùng giá trị chỉ để giờ trong log khớp; dòng log `Server time zone` lúc khởi động in cả 2 |
 | `LOG_PATH` | — | Thư mục log file (mặc định `logs`; trong Docker là `/app/logs`) |
 | `FORWARD_HEADERS_STRATEGY` | — | Đặt `native` khi app chạy sau reverse proxy / load balancer tin cậy (kết thúc HTTPS) để link `Location` và cờ `Secure` của cookie theo `X-Forwarded-*`. Để trống khi truy cập trực tiếp — bật khi không có proxy thì client giả được scheme/host |
 | `ARTEMIS_USER` / `ARTEMIS_PASSWORD` | ✅ | Tài khoản broker Artemis |
@@ -255,10 +255,25 @@ src/main/resources/
 | `ARTEMIS_MODE` | — | Chỉ profile `dev`: `embedded` (mặc định, broker trong JVM) hoặc `native` (broker của compose). Container `app` luôn `native`; production luôn `native` |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | ✅ | OAuth2 credentials (App ID / App Secret) từ Facebook Developers — xem Quick Start. Test dùng giá trị giả trong `application-test.yml` |
 | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | ✅ | OAuth 2.0 Client ID / Secret từ X Developer Portal — xem Quick Start. Test dùng giá trị giả |
-| `SOAP_MOCK_ENDPOINT_ENABLED` | — | Bật endpoint SOAP mock tỷ giá `/services/**` (public, không đăng nhập/CSRF — chỉ dữ liệu giả). Mặc định `false` (production); profile `dev` và container `app` của compose mặc định `true` |
-| `SOAP_EXCHANGE_RATE_URL` | — | Địa chỉ dịch vụ SOAP tỷ giá mà dashboard gọi (chỉ `http`/`https`). Trống = **tắt** tỷ giá (không gọi SOAP). Production không có mặc định — endpoint mock tắt nên trỏ vào chính app chỉ bị chặn (CSRF); profile `dev` và container `app` của compose mặc định `http://localhost:8080/services` = endpoint mock của chính app |
+| `SOAP_MOCK_ENDPOINT_ENABLED` | — | Bật endpoint SOAP mock tỷ giá `/services/**` (public, không đăng nhập/CSRF — chỉ dữ liệu giả). Mặc định `false` (production); profile `dev` và container `app` của compose mặc định `true` — compose chỉ dành cho local; chạy profile khác / mở app ra ngoài thì đặt `false` |
+| `SOAP_EXCHANGE_RATE_URL` | — | Địa chỉ dịch vụ SOAP tỷ giá mà dashboard gọi (chỉ `http`/`https`). Trống = **tắt** tỷ giá (không gọi SOAP). Production không có mặc định — endpoint mock tắt nên trỏ vào chính app chỉ bị chặn (CSRF); profile `dev` và container `app` của compose mặc định `http://localhost:8080/services` = endpoint mock của chính app (đặt `SOAP_EXCHANGE_RATE_URL=` trong `.env` để tắt — compose giữ nguyên giá trị trống) |
 
 > Không commit bất kỳ secret nào. Nếu lỡ commit, **thu hồi/đổi secret ngay** — xem [SECURITY.md](.github/SECURITY.md).
+
+### Chạy nhiều instance sau load balancer
+
+Trạng thái dùng chung nằm ở MySQL / broker, nên các instance thay thế được cho nhau. Khi triển khai cần:
+
+| Hạng mục | Cơ chế trong app | Việc cần làm khi triển khai |
+|---|---|---|
+| Session HTTP, state/PKCE OAuth2 | Spring Session JDBC (bảng `SPRING_SESSION`) | Không cần sticky session cho HTTP |
+| Múi giờ nghiệp vụ | `app.time-zone` ← `APP_TZ`, không theo `TZ` của JVM | Mọi instance đặt **cùng** `APP_TZ` |
+| Job crawl metrics, gửi lại `IMPORT_COMPLETED` | ShedLock (bảng `scheduler_locks`) — mỗi lịch 1 instance chạy | Đồng bộ giờ (NTP) |
+| Làm mới tỷ giá | Cache trong bộ nhớ mỗi instance, `RefreshExchangeRateJob` chạy nền ở **mọi** instance (không ShedLock); request dashboard chỉ đọc cache | Trỏ `SOAP_EXCHANGE_RATE_URL` tới dịch vụ SOAP thật (hoặc để trống = tắt), `SOAP_MOCK_ENDPOINT_ENABLED=false` |
+| Giới hạn tần suất import/export | Bucket4j lưu MySQL (`rate_limit_buckets`) | Đồng bộ giờ (NTP) |
+| Snapshot metric trùng | Unique `(post_id, collected_at)` (Flyway `V8`) chặn 2 request ghi cùng lúc → 409 | — |
+| Event realtime | JMS topic `dashboard-events` fan-out tới mọi instance → WebSocket của user | Broker Artemis riêng (`ARTEMIS_MODE=native`, embedded tắt); transport dự phòng SockJS cần sticky session |
+| HTTPS sau proxy | `server.forward-headers-strategy` | `FORWARD_HEADERS_STRATEGY=native`, giữ `SESSION_COOKIE_SECURE=true` |
 
 ## Database Migrations
 
@@ -266,14 +281,14 @@ Dùng **Flyway**, tự chạy khi ứng dụng khởi động. File đặt tại
 
 Quy ước: tên bảng số nhiều, snake_case (`users`, `posts`, `social_metrics`...); `ddl-auto=validate` nên schema chỉ thay đổi qua migration. **Không sửa migration đã commit** — muốn đổi schema thì thêm file version mới.
 
-Schema hiện tại (`V1` → `V7`):
+Schema hiện tại (`V1` → `V8`):
 
 | Bảng | Mô tả | Ràng buộc / index chính |
 |---|---|---|
 | `users` | Người dùng (email có thể NULL vì X không trả email), `role` USER/ADMIN | `uk_users_email` |
 | `social_accounts` | Tài khoản Facebook/X của user, upsert mỗi lần đăng nhập: `provider_user_id`, `access_token` (**mã hoá AES-GCM**), `token_expires_at` | `uk_social_accounts_provider_user (provider, provider_user_id)`, FK `users` |
 | `posts` | Bài viết FB/X, `user_id` là chủ sở hữu (phân quyền theo owner) | `uk_posts_user_provider_external_id (user_id, provider, external_id)` — nhiều user theo dõi được cùng 1 bài, FK `users` |
-| `social_metrics` | Snapshot likes/shares/comments/followers theo `collected_at` — mỗi lần crawl thêm 1 dòng | `idx_social_metrics_post_collected (post_id, collected_at)`, FK `posts` `ON DELETE CASCADE` |
+| `social_metrics` | Snapshot likes/shares/comments/followers theo `collected_at` (giờ UTC, cắt về mili giây) — mỗi lần crawl thêm 1 dòng | `uk_social_metrics_post_collected (post_id, collected_at)` — mỗi bài tối đa 1 snapshot tại 1 thời điểm (V8), FK `posts` `ON DELETE CASCADE` |
 | `rate_limit_buckets` | Trạng thái bucket Bucket4j (giới hạn tần suất export theo user, dùng chung giữa các instance) — do Bucket4j đọc/ghi, không sửa tay | PK `id` (`action:userId:intervalMs`) |
 | `SPRING_SESSION` / `SPRING_SESSION_ATTRIBUTES` | Session HTTP (Spring Session JDBC) — nhiều instance dùng chung, restart không đăng xuất | Tên bảng do thư viện quy định (chữ hoa) |
 | `scheduler_locks` | Khoá ShedLock của job `@Scheduled` (mỗi lịch chỉ 1 instance chạy) | PK `name` |
@@ -302,7 +317,7 @@ Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); ch�
 | GET | `/api/metrics?postId=1&from=2026-01-01T00:00:00Z&to=...` | Snapshot của 1 bài viết (phân trang; sort: `collectedAt`, `likes`, `shares`, `comments`, `followers`) |
 | GET | `/api/metrics/latest?postId=1` | Snapshot mới nhất |
 | GET | `/api/metrics/{id}` | Chi tiết snapshot |
-| POST | `/api/metrics` | Ghi nhận snapshot thủ công (snapshot bất biến — không có PUT) |
+| POST | `/api/metrics` | Ghi nhận snapshot thủ công (snapshot bất biến — không có PUT). `collectedAt` lưu tới mili giây; bài đã có snapshot đúng thời điểm đó → 409 |
 | DELETE | `/api/metrics/{id}` | Xoá snapshot |
 | POST | `/api/import-posts` | Import bài viết từ file `.xlsx` (multipart, field `file`) — xem bên dưới |
 | GET | `/api/import-posts/template` | Tải file `.xlsx` mẫu (header + dữ liệu giả + sheet hướng dẫn) |
@@ -340,9 +355,10 @@ File `.xlsx`, sheet đầu tiên, dòng 1 là header (không phân biệt hoa th
 | `FACEBOOK` / `TWITTER` | chữ, số, `_`, `-` (≤ 100) | https, đúng domain của provider | tuỳ chọn (≤ 5000) | tuỳ chọn — ô kiểu ngày hoặc `yyyy-MM-dd HH:mm:ss` |
 
 - Giới hạn: tối đa **5MB** (`spring.servlet.multipart.max-file-size`, vượt → 413) và **1000 dòng** (`app.import.max-rows`).
-- Mỗi user import cách nhau tối thiểu **10 giây** (`app.import.min-interval`, gọi sớm hơn → 429 kèm `Retry-After`; bucket riêng cho bài viết và metric). Chỉ tính lượt ở bước ghi: file bị từ chối cả file (sai định dạng, thiếu cột, không có dòng dữ liệu) không tốn lượt — sửa file rồi gửi lại ngay được.
+- Mỗi user import cách nhau tối thiểu **10 giây** (`app.import.min-interval`, gọi sớm hơn → 429 kèm `Retry-After`; bucket riêng cho bài viết và metric). Chỉ tính lượt ở bước ghi: file bị từ chối cả file (sai định dạng, thiếu cột, không có dòng dữ liệu) và file **mọi dòng đều lỗi** không tốn lượt — sửa file rồi gửi lại ngay được.
+- File mọi dòng đều lỗi không được ghi: response có `importId: null`, `failed = totalRows` kèm danh sách lỗi; không có lịch sử import, không cộng "Import statistics".
 - Chỉ nhận `.xlsx` thật (kiểm tra cả nội dung); ô chứa công thức bị từ chối.
-- Ô ngày giờ trong Excel không có múi giờ → **Published At hiểu theo múi giờ của server** (biến `TZ` của JVM/container), cùng quy ước với file export; DB lưu giờ UTC.
+- Ô ngày giờ trong Excel không có múi giờ → **Published At hiểu theo múi giờ nghiệp vụ** (`APP_TZ` → `app.time-zone`, không theo múi giờ JVM), cùng quy ước với file export; DB lưu giờ UTC.
 - Dòng lỗi trả về kèm số dòng, dòng hợp lệ vẫn được lưu. Bài đã có (cùng provider + External ID, không phân biệt hoa thường) được **cập nhật**.
 
 ```bash
@@ -360,7 +376,7 @@ curl -b "SESSION=$SESSION_ID; XSRF-TOKEN=$XSRF" -X POST http://localhost:8080/ap
 
 - Cột metric lấy từ snapshot mới nhất của bài; bài chưa có snapshot để trống.
 - 5 cột đầu đúng định dạng file import → có thể sửa file báo cáo rồi import lại (các cột metric bị bỏ qua khi import).
-- Published At / Metrics Collected At ghi theo **múi giờ của server** (DB lưu UTC, đổi khi xuất file) — import lại trên cùng server giữ nguyên thời điểm.
+- Published At / Metrics Collected At ghi theo **múi giờ nghiệp vụ** (`app.time-zone`; DB lưu UTC, đổi khi xuất file) — mọi instance dùng cùng múi giờ nên file export ở instance này import lại ở instance khác vẫn giữ nguyên thời điểm.
 - Tối đa **10000 dòng** (`app.export.max-rows`, vượt → 400).
 - Mỗi user export cách nhau tối thiểu **10 giây** (`app.export.min-interval`, gọi sớm hơn → 429 kèm header `Retry-After`). Mốc chặn lưu ở MySQL (Bucket4j) nên vẫn đúng khi chạy nhiều instance hoặc sau restart.
 - Tải file tối đa **60 giây** (`spring.mvc.async.request-timeout`, tính cả lúc dựng file) — quá hạn thì kết nối bị đóng. Đo với 10.000 dòng: dữ liệu thực tế (content ~200 ký tự) ~0,5 MB, dựng ~6s → dư nhiều kể cả mạng 1 Mbps; trường hợp xấu nhất (mọi cột chạm giới hạn, content 5000 ký tự) ~45 MB, dựng ~29s, cần mạng > ~10 Mbps — chấp nhận không phủ, nếu cần thì giảm `app.export.max-rows` thay vì tăng timeout.
@@ -381,9 +397,10 @@ File metric:
 
 | Provider | External ID | Likes | Shares | Comments | Followers | Collected At |
 |---|---|---|---|---|---|---|
-| `FACEBOOK` / `TWITTER` | bài viết **của bạn** (không phân biệt hoa thường; chỉ chữ/số/`_`/`-` như External ID của bài) | số nguyên ≥ 0 | ≥ 0 | ≥ 0 | ≥ 0 | không ở tương lai — ô kiểu ngày hoặc `yyyy-MM-dd HH:mm:ss`, theo múi giờ server |
+| `FACEBOOK` / `TWITTER` | bài viết **của bạn** (không phân biệt hoa thường; chỉ chữ/số/`_`/`-` như External ID của bài) | số nguyên ≥ 0 | ≥ 0 | ≥ 0 | ≥ 0 | không ở tương lai — ô kiểu ngày hoặc `yyyy-MM-dd HH:mm:ss`, theo múi giờ nghiệp vụ (`app.time-zone`) |
 
-- `POST /api/import-metrics`: mỗi dòng tạo 1 snapshot (snapshot là bản ghi theo thời gian, không cập nhật bản cũ). Bài không có trong các bài của bạn → lỗi `post not found`; trùng bài + Collected At trong file → lỗi ở dòng sau; snapshot **đã có trong DB** (cùng bài, cùng Collected At tới mili giây — độ chính xác của ô Excel) → lỗi `snapshot already exists` ở cột Collected At, không ghi lại. Cùng giới hạn file / số dòng / tần suất với import bài viết (file không có snapshot nào cần ghi thì không tốn lượt). Lưu xong → dashboard của bạn tự làm mới (event `METRICS_UPDATED`). Không tính vào "Import statistics" (thống kê đó chỉ cho import bài viết).
+- `POST /api/import-metrics`: mỗi dòng tạo 1 snapshot (snapshot là bản ghi theo thời gian, không cập nhật bản cũ). Bài không có trong các bài của bạn → lỗi `post not found`; trùng bài + Collected At trong file → lỗi ở dòng sau; snapshot **đã có trong DB** (cùng bài, cùng Collected At tới mili giây — độ chính xác của ô Excel) → lỗi `snapshot already exists` ở cột Collected At, không ghi lại. Bài bị xoá trong lúc import → dòng đó báo `post not found` (mọi dòng tính vào `failed` đều có lỗi kèm số dòng). Request khác ghi cùng bài + thời điểm đúng lúc đang import (instance khác, `POST /api/metrics`) → unique index chặn, cả file không được ghi → 409; gửi lại file thì dòng đó báo `snapshot already exists`. Cùng giới hạn file / số dòng / tần suất với import bài viết (file không có snapshot nào cần ghi thì không tốn lượt). Lưu xong → dashboard của bạn tự làm mới (event `METRICS_UPDATED`). Không tính vào "Import statistics" (thống kê đó chỉ cho import bài viết).
+- Múi giờ có giờ mùa hè (DST): giờ local lặp lại khi lùi đồng hồ (vd 01:30 ở New York ngày đổi giờ) được ghi theo offset sớm hơn, nhưng kiểm tra "đã có" với **cả 2** offset → file export import lại không sinh snapshot lệch 1 giờ. Giới hạn: trong giờ lặp lại, 2 dòng cùng bài cùng giờ local bị coi là trùng (`Asia/Ho_Chi_Minh` không có DST).
 - `GET /api/export-metrics?from=2026-11-01T00:00:00Z&to=2026-11-13T00:00:00Z` → `metrics-report-yyyyMMdd-HHmmss.xlsx`, cùng 7 cột → sửa rồi import lại được (dòng không sửa Collected At bị báo `snapshot already exists`, không tạo trùng). `from`/`to` tuỳ chọn, tính cả 2 đầu; tối đa 10000 dòng (vượt → 400, thu hẹp khoảng thời gian — bị 400 **không** tốn lượt export, gửi lại ngay được); tần suất như export báo cáo (bucket riêng).
 
 ```bash
@@ -439,11 +456,11 @@ curl -OJ -b "SESSION=$SESSION_ID" "http://localhost:8080/api/export-metrics?from
 
 App vừa **host** 1 endpoint SOAP mock (Spring-WS, contract-first từ `src/main/resources/xsd/exchange-rate.xsd`) vừa **gọi lại** nó bằng client `WebServiceGatewaySupport`. Class JAXB sinh tự động khi build (`./mvnw generate-sources` để sinh riêng) vào `target/generated-sources/jaxb` — không sửa tay, không commit.
 
-- Bật bằng `SOAP_MOCK_ENDPOINT_ENABLED=true` (profile `dev`, `test`, container `app` của compose đã bật). Tắt (mặc định production) thì `/services/**` thuộc chain bảo mật chính như mọi đường dẫn khác.
+- Bật bằng `SOAP_MOCK_ENDPOINT_ENABLED=true` (profile `dev`, `test`, container `app` của compose đã bật). Tắt (mặc định production) thì `/services/**` thuộc chain bảo mật chính như mọi đường dẫn khác. Không bật trên môi trường mở ra ngoài (sau load balancer public): endpoint không đăng nhập, không giới hạn tần suất.
 - WSDL: `http://localhost:8080/services/exchangeRate.wsdl`. Endpoint public, stateless, không CSRF (chỉ trả dữ liệu giả, không có dữ liệu user) — ngoại lệ thứ 2 của deny-by-default, cạnh `/ws/**`. Body request tối đa **16KB** (`app.soap.exchange-rate.mock-endpoint.max-request-size`, vượt → 413, kể cả request chunked): SAAJ đọc cả message vào bộ nhớ trước khi validate.
 - Tỷ giá giả: USD, EUR, GBP, JPY, VND; cùng 1 giờ cùng 1 số, mỗi giờ dao động ±0,5%. Cặp không hỗ trợ → SOAP Fault `Client` `Unsupported currency pair`; request sai XSD (mã tiền không phải 3 chữ in hoa...) → Fault `Client` `Validation error`; lỗi khác → Fault `Server` `Internal error`. Request có DOCTYPE / XML hỏng → 400 (chống XXE).
 - Client: URL `app.soap.exchange-rate.url` (trống = tắt tỷ giá; production không có mặc định), connect timeout 2s / read timeout 3s, không theo redirect, validate response theo XSD + kiểm cặp tiền và `asOf`.
-- **Trên `/dashboard`:** card "Exchange rate" hiện `1 USD = … VND` (cặp tiền: `app.soap.exchange-rate.base-currency` / `quote-currency`) và thời điểm lấy theo múi giờ server. Tỷ giá được cache 10 phút (`cache-ttl`) mỗi instance; dịch vụ SOAP lỗi/timeout thì trang vẫn hiển thị bình thường — còn giá trị cũ thì hiện kèm nhãn **Dữ liệu cũ**, chưa từng lấy được thì hiện "Không lấy được tỷ giá"; sau 1 lần lỗi không gọi lại trong 1 phút (`retry-after-failure`) để trang không phải chờ timeout. Đang có request lấy tỷ giá thì request khác không chờ (dùng giá trị cũ, chưa có thì "Không lấy được tỷ giá"); app vừa sẵn sàng thì lấy sẵn 1 lần ở thread nền (`warm-up-on-startup`). Thử: chạy dev rồi đặt `SOAP_EXCHANGE_RATE_URL=http://localhost:9/services` (cổng không có dịch vụ) và khởi động lại → "Không lấy được tỷ giá".
+- **Trên `/dashboard`:** card "Exchange rate" hiện `1 USD = … VND` (cặp tiền: `app.soap.exchange-rate.base-currency` / `quote-currency`) và thời điểm lấy theo múi giờ nghiệp vụ. Request tải trang **chỉ đọc cache** trong bộ nhớ của instance, không bao giờ gọi SOAP (không phải chờ timeout của dịch vụ ngoài). Job nền `RefreshExchangeRateJob` (mỗi 30 giây, `app.jobs.refresh-exchange-rate.cron`, chạy ở mọi instance) gọi SOAP khi giá trị cũ hơn 10 phút (`cache-ttl`); app vừa sẵn sàng thì lấy sẵn 1 lần (`warm-up-on-startup`). Dịch vụ SOAP lỗi/timeout thì trang vẫn hiển thị bình thường — còn giá trị cũ thì hiện kèm nhãn **Dữ liệu cũ** (cũng hiện khi giá trị quá 2 × `cache-ttl` chưa được làm mới), chưa từng lấy được thì hiện "Không lấy được tỷ giá"; sau 1 lần lỗi job không gọi lại trong 1 phút (`retry-after-failure`). Thử: chạy dev rồi đặt `SOAP_EXCHANGE_RATE_URL=http://localhost:9/services` (cổng không có dịch vụ) và khởi động lại → "Không lấy được tỷ giá".
 
 ```bash
 curl -s http://localhost:8080/services -H 'Content-Type: text/xml; charset=utf-8' -d '

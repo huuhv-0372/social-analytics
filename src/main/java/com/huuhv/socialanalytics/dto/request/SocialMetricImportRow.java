@@ -18,7 +18,8 @@ import java.time.ZoneId;
  * dùng chung 1 bộ quy tắc. Tên field số liệu trùng tên component của {@link SocialMetricRequest}. Cùng tên cột với file
  * export ({@code SocialMetricReportRow}) → file export import lại được.
  * <p>
- * Ô ngày giờ Excel không có múi giờ: {@code collectedAt} là giờ theo múi giờ của server (như file export).
+ * Ô ngày giờ Excel không có múi giờ: {@code collectedAt} là giờ theo múi giờ nghiệp vụ ({@code app.time-zone}, như
+ * file export).
  */
 @Getter
 @Setter
@@ -49,7 +50,9 @@ public class SocialMetricImportRow {
     /**
      * @param postId id bài viết đã tra theo (provider, externalId) trong các bài của owner; {@code null} khi không tìm
      *               thấy (Service báo lỗi riêng ở cột External ID)
-     * @param zone   múi giờ dùng để hiểu giá trị ô ngày giờ (múi giờ của server, lấy từ bean {@code Clock})
+     * @param zone   múi giờ dùng để hiểu giá trị ô ngày giờ (múi giờ nghiệp vụ, lấy từ bean {@code Clock}). Giờ
+     *               local lặp lại khi lùi đồng hồ (DST) được hiểu theo offset <b>sớm hơn</b> ({@code atZone}); Service
+     *               kiểm tra snapshot đã có với cả offset muộn hơn ({@code SocialMetricImportService})
      */
     public SocialMetricRequest toRequest(Long postId, ZoneId zone) {
         return new SocialMetricRequest(postId, likes, shares, comments, followers,

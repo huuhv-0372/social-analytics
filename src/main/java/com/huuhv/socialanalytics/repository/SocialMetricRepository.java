@@ -22,6 +22,12 @@ public interface SocialMetricRepository extends JpaRepository<SocialMetric, Long
     /** Tìm theo id kèm điều kiện chủ sở hữu của bài viết — chống IDOR. */
     Optional<SocialMetric> findByIdAndPostUserId(Long id, Long userId);
 
+    /**
+     * Bài đã có snapshot đúng thời điểm này (giờ UTC) — tra trên unique index {@code uk_social_metrics_post_collected}.
+     * Chỉ là kiểm tra sớm để trả lỗi rõ ràng; request song song vẫn có thể ghi xen giữa → unique index chặn.
+     */
+    boolean existsByPostIdAndCollectedAt(Long postId, LocalDateTime collectedAt);
+
     /** Snapshot của 1 bài viết, lọc khoảng thời gian tuỳ chọn (giờ UTC; {@code null} = không giới hạn). */
     @Query(value = """
             SELECT m FROM SocialMetric m
@@ -46,7 +52,7 @@ public interface SocialMetricRepository extends JpaRepository<SocialMetric, Long
      * sắp theo bài rồi thời gian. Caller truyền {@code limit} = giới hạn + 1 để biết có vượt giới hạn hay không.
      * <p>
      * Hiệu năng: JOIN từ {@code posts} (unique index bắt đầu bằng {@code user_id}) sang
-     * {@code idx_social_metrics_post_collected (post_id, collected_at)} — lọc khoảng thời gian bằng range trên index của
+     * {@code uk_social_metrics_post_collected (post_id, collected_at)} — lọc khoảng thời gian bằng range trên index của
      * từng bài; sắp xếp cần filesort (top-N vì có LIMIT) trên các snapshot khớp điều kiện → khoảng thời gian càng hẹp
      * càng rẻ.
      */
@@ -90,7 +96,7 @@ public interface SocialMetricRepository extends JpaRepository<SocialMetric, Long
      * {@code snapshotsJson} = mảng JSON {@code [{"postId": 1, "from": "yyyy-MM-dd HH:mm:ss.SSSSSS", "to": "..."}]} —
      * snapshot trùng khi cùng bài và {@code collected_at} thuộc {@code [from, to)} (giờ UTC). 1 query cho cả danh sách:
      * {@code JSON_TABLE} (MySQL 8) dựng bảng tạm, mỗi ứng viên 1 lần tra range trên
-     * {@code idx_social_metrics_post_collected (post_id, collected_at)}.
+     * {@code uk_social_metrics_post_collected (post_id, collected_at)}.
      * <p>
      * JSON do Service dựng từ id bài đã kiểm tra quyền sở hữu + giờ đã parse (không có chuỗi người dùng nhập) và vẫn
      * truyền dạng tham số bind.
