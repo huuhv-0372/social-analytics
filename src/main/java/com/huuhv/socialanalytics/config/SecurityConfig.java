@@ -1,10 +1,12 @@
 package com.huuhv.socialanalytics.config;
 
+import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.security.ApiAuthenticationEntryPoint;
 import com.huuhv.socialanalytics.security.CsrfCookies;
 import com.huuhv.socialanalytics.security.CsrfHeaderOrFormTokenRequestHandler;
 import com.huuhv.socialanalytics.security.LoggingAccessDeniedHandler;
 import com.huuhv.socialanalytics.security.OAuth2LoginResultHandler;
+import com.huuhv.socialanalytics.security.RequestBodySizeLimitFilter;
 import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.websocket.StompDestinations;
@@ -13,10 +15,14 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
@@ -25,11 +31,13 @@ import org.springframework.security.web.authentication.logout.SimpleUrlLogoutSuc
 import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfToken;
+import org.springframework.security.web.header.HeaderWriterFilter;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.util.matcher.AnyRequestMatcher;
 import org.springframework.security.web.util.matcher.OrRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
+import org.springframework.util.unit.DataSize;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -56,6 +64,9 @@ import java.util.List;
  *     danh.</li>
  *     <li>Security header: CSP, {@code X-Content-Type-Options}, {@code Referrer-Policy}, {@code frame-ancestors 'none'}
  *     + {@code X-Frame-Options: DENY}; HSTS mặc định của Spring (chỉ gửi qua HTTPS).</li>
+ *     <li>Ngoại lệ thứ 2 (cạnh {@code /ws/**}): endpoint SOAP mock {@code /services/**} có chain riêng public,
+ *     stateless, không CSRF — chỉ khi bật {@code app.soap.exchange-rate.mock-endpoint.enabled}
+ *     ({@link #soapFilterChain}).</li>
  * </ul>
  * Chỉ có đăng nhập OAuth2: không có HTTP Basic / form login / user mặc định của Boot. Gọi API (Swagger UI, Postman)
  * dùng session cookie sau khi đăng nhập trên trình duyệt.
@@ -89,6 +100,50 @@ public class SecurityConfig {
     static final String SESSION_COOKIE_NAME = "SESSION";
 
     static final List<String> STATIC_RESOURCE_PATTERNS = List.of("/css/**", "/js/**", "/images/**", "/favicon.ico");
+
+    /** Đường dẫn {@code MessageDispatcherServlet} của Spring-WS ({@code spring.webservices.path} mặc định). */
+    static final String SOAP_PATH_PATTERN = "/services/**";
+
+    /** Endpoint SOAP chỉ trả XML/WSDL — không có tài nguyên nào được phép nhúng hay tải thêm. */
+    static final String SOAP_CONTENT_SECURITY_POLICY = "default-src 'none'; frame-ancestors 'none'";
+
+    /**
+     * Chain riêng cho endpoint SOAP mock {@code /services/**}, chỉ tồn tại khi bật
+     * {@code app.soap.exchange-rate.mock-endpoint.enabled} (mặc định tắt → {@code /services/**} rơi vào chain chính,
+     * phải đăng nhập). Xét trước chain chính ({@code @Order}).
+     * <p>
+     * Ngoại lệ có chủ đích của deny-by-default (OWASP A01): client là chính app gọi qua HTTP (không có session OAuth2,
+     * không có token CSRF); endpoint chỉ đọc dữ liệu tỷ giá giả, không có dữ liệu user, không đổi trạng thái — nên
+     * {@code permitAll}, không CSRF, stateless (không tạo/đọc session, không ghi {@code SecurityContext}).
+     * Input được validate theo XSD ({@code WebServiceConfig}); SAAJ từ chối DOCTYPE (XXE). SAAJ đọc cả message vào bộ
+     * nhớ trước khi validate → body bị giới hạn {@code mock-endpoint.max-request-size} trước khi tới servlet
+     * ({@link RequestBodySizeLimitFilter}, vượt → 413): request ẩn danh lớn không làm tràn heap (OWASP A06).
+     */
+    @Bean
+    @Order(1)
+    @ConditionalOnBooleanProperty(AppProperties.ExchangeRate.MOCK_ENDPOINT_ENABLED_PROPERTY)
+    SecurityFilterChain soapFilterChain(HttpSecurity http, ObjectProvider<AppProperties> appProperties)
+            throws Exception {
+        // App luôn có AppProperties; test slice (@WebMvcTest) không bind app.* → dùng mặc định, vẫn có giới hạn
+        AppProperties properties = appProperties.getIfAvailable();
+        long maxRequestBytes = (properties == null
+                ? DataSize.parse(AppProperties.MockEndpoint.DEFAULT_MAX_REQUEST_SIZE)
+                : properties.soap().exchangeRate().mockEndpoint().maxRequestSize()).toBytes();
+        http
+                .securityMatcher(SOAP_PATH_PATTERN)
+                // Sau HeaderWriterFilter: response 413 vẫn có security header
+                .addFilterAfter(new RequestBodySizeLimitFilter(maxRequestBytes), HeaderWriterFilter.class)
+                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .csrf(csrf -> csrf.disable())
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .requestCache(cache -> cache.disable())
+                .securityContext(context -> context.requireExplicitSave(true))
+                .headers(headers -> headers
+                        .contentSecurityPolicy(csp -> csp.policyDirectives(SOAP_CONTENT_SECURITY_POLICY))
+                        .frameOptions(frame -> frame.deny())
+                        .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.NO_REFERRER)));
+        return http.build();
+    }
 
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, CustomOAuth2UserService oauth2UserService,

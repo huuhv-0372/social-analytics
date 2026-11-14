@@ -1,6 +1,7 @@
 package com.huuhv.socialanalytics.repository;
 
 import com.huuhv.socialanalytics.TestcontainersConfiguration;
+import com.huuhv.socialanalytics.dto.response.SocialMetricReportRow;
 import com.huuhv.socialanalytics.entity.Post;
 import com.huuhv.socialanalytics.entity.SocialMetric;
 import com.huuhv.socialanalytics.entity.User;
@@ -12,6 +13,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -25,6 +28,8 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -97,6 +102,75 @@ class SocialMetricRepositoryTest {
     }
 
     @Test
+    void reportRowsListOwnSnapshotsSortedByPostThenTimeWithinRange() {
+        Post facebook = postRepository.save(Post.builder().user(owner).provider(Provider.FACEBOOK)
+                .externalId("fb-1").url("https://facebook.com/posts/1").build());
+        saveSnapshot(facebook, BASE.plusHours(1), 7);
+        User other = userRepository.save(User.builder().email("other@example.com").displayName("Other").build());
+        Post othersPost = postRepository.save(Post.builder().user(other).provider(Provider.FACEBOOK)
+                .externalId("fb-1").url("https://facebook.com/posts/1").build());
+        saveSnapshot(othersPost, BASE.plusHours(1), 999);
+
+        List<SocialMetricReportRow> all = socialMetricRepository.findReportRows(owner.getId(), null, null,
+                Limit.unlimited());
+
+        // FACEBOOK trước TWITTER (thứ tự enum lưu chuỗi → theo chữ cái), trong 1 bài theo thời gian; không có bài user khác
+        assertThat(all).extracting(SocialMetricReportRow::provider, SocialMetricReportRow::likes,
+                SocialMetricReportRow::collectedAt).containsExactly(
+                tuple(Provider.FACEBOOK, 7L, BASE.plusHours(1)),
+                tuple(Provider.TWITTER, 10L, BASE),
+                tuple(Provider.TWITTER, 20L, BASE.plusHours(1)),
+                tuple(Provider.TWITTER, 30L, BASE.plusHours(2)));
+        assertThat(all.get(1)).isEqualTo(new SocialMetricReportRow(Provider.TWITTER, "tw-1", 10L, 1L, 2L, 1000L, BASE));
+        // 2 đầu khoảng tính cả
+        assertThat(socialMetricRepository.findReportRows(owner.getId(), BASE.plusHours(1), BASE.plusHours(1),
+                Limit.unlimited())).extracting(SocialMetricReportRow::likes).containsExactly(7L, 20L);
+        assertThat(socialMetricRepository.findReportRows(owner.getId(), null, null, Limit.of(2)))
+                .extracting(SocialMetricReportRow::likes).containsExactly(7L, 10L);
+    }
+
+    /** Đếm có chặn trên, cùng điều kiện lọc với findReportRows (user, 2 đầu khoảng tính cả) — chạy trên MySQL. */
+    @Test
+    void countReportRowsStopsAtMaxCountAndMatchesReportFilter() {
+        User other = userRepository.save(User.builder().email("other@example.com").displayName("Other").build());
+        Post othersPost = postRepository.save(Post.builder().user(other).provider(Provider.TWITTER)
+                .externalId("tw-1").url("https://x.com/other/status/1").build());
+        saveSnapshot(othersPost, BASE.plusHours(1), 999);
+        entityManager.flush();
+
+        assertThat(socialMetricRepository.countReportRowsUpTo(owner.getId(), null, null, 100)).isEqualTo(3);
+        // Dừng ở maxCount (service truyền max-rows + 1 để biết có vượt hay không)
+        assertThat(socialMetricRepository.countReportRowsUpTo(owner.getId(), null, null, 2)).isEqualTo(2);
+        assertThat(socialMetricRepository.countReportRowsUpTo(owner.getId(), BASE.plusHours(1), BASE.plusHours(2),
+                100)).isEqualTo(2);
+        assertThat(socialMetricRepository.countReportRowsUpTo(owner.getId(), BASE.plusHours(3), null, 100)).isZero();
+    }
+
+    /**
+     * Snapshot trùng = cùng bài + collected_at trong [from, to): DB lưu micro giây, file Excel chỉ có mili giây → khoảng
+     * 1ms vẫn nhận ra snapshot đã có. Bài khác / ngoài khoảng không tính.
+     */
+    @Test
+    void existingSnapshotPositionsMatchPostAndMillisecondWindow() {
+        saveSnapshot(BASE.plusMinutes(5).plusNanos(123_456_000), 1);
+        entityManager.flush();
+
+        List<Number> positions = socialMetricRepository.findExistingSnapshotPositions("["
+                + window(post.getId(), BASE.plusMinutes(5).plusNanos(123_000_000)) + ","
+                + window(post.getId(), BASE.plusMinutes(6)) + ","
+                + window(post.getId() + 1000, BASE) + ","
+                + window(post.getId(), BASE) + "]");
+
+        assertThat(positions).extracting(Number::intValue).containsExactlyInAnyOrder(1, 4);
+    }
+
+    private static String window(Long postId, LocalDateTime from) {
+        DateTimeFormatter format = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+        return "{\"postId\":" + postId + ",\"from\":\"" + format.format(from) + "\",\"to\":\""
+                + format.format(from.plusNanos(1_000_000)) + "\"}";
+    }
+
+    @Test
     void findByIdAndPostUserIdReturnsEmptyForOtherUser() {
         SocialMetric metric = saveSnapshot(BASE.plusHours(3), 40);
         User other = userRepository.save(User.builder().email("other@example.com").displayName("Other").build());
@@ -113,8 +187,9 @@ class SocialMetricRepositoryTest {
                 .externalId("tw-2")
                 .url("https://x.com/owner/status/2")
                 .build());
-        LocalDateTime collectedAt = LocalDateTime.of(2026, 11, 10, 3, 0, 0, 123_456_000);
-        // Nhiều hơn 1 câu INSERT (ROWS_PER_STATEMENT dòng/câu) để kiểm tra cả phần chia lô
+        LocalDateTime collectedAt = LocalDateTime.of(2026, 11, 10, 3, 0, 0, 123_000_000);
+        // Nhiều hơn 1 câu INSERT (ROWS_PER_STATEMENT dòng/câu) để kiểm tra cả phần chia lô; mỗi snapshot 1 thời điểm
+        // riêng (unique (post_id, collected_at)), likes = số giây lệch so với collectedAt
         int count = SocialMetricRepositoryImpl.ROWS_PER_STATEMENT + 1;
         List<SocialMetric> snapshots = IntStream.range(0, count)
                 .mapToObj(i -> SocialMetric.builder()
@@ -123,7 +198,7 @@ class SocialMetricRepositoryTest {
                         .shares(i + 1)
                         .comments(i + 2)
                         .followers(i + 3)
-                        .collectedAt(collectedAt)
+                        .collectedAt(collectedAt.plusSeconds(i))
                         .build())
                 .toList();
 
@@ -136,7 +211,7 @@ class SocialMetricRepositoryTest {
                     assertThat(metric.getShares()).isEqualTo(metric.getLikes() + 1);
                     assertThat(metric.getComments()).isEqualTo(metric.getLikes() + 2);
                     assertThat(metric.getFollowers()).isEqualTo(metric.getLikes() + 3);
-                    assertThat(metric.getCollectedAt()).isEqualTo(collectedAt);
+                    assertThat(metric.getCollectedAt()).isEqualTo(collectedAt.plusSeconds(metric.getLikes()));
                 });
         // 3 snapshot của setUp + phần mới
         assertThat(socialMetricRepository.search(post.getId(), null, null, PageRequest.of(0, 1000)))
@@ -189,12 +264,35 @@ class SocialMetricRepositoryTest {
         assertThat(rows(other, BASE.plusHours(3))).containsExactly("1 TWITTER 5000 500 1000 7000");
     }
 
+    /**
+     * Mỗi bài tối đa 1 snapshot tại 1 thời điểm (Flyway V8): lớp chặn cuối khi 2 request / 2 instance cùng qua bước
+     * kiểm tra trùng ở Service rồi cùng ghi. Bài khác cùng thời điểm vẫn ghi được.
+     */
     @Test
-    void perDayQueryCountsOneSnapshotPerPostWhenCollectedAtTies() {
-        // Cùng collectedAt với snapshot 30 likes → lấy bản id lớn hơn, không cộng cả 2
-        saveSnapshot(BASE.plusHours(2), 35);
+    void uniqueIndexRejectsSecondSnapshotOfPostAtSameTime() {
+        Post other = savePost(owner, Provider.FACEBOOK, "fb-1");
+        saveSnapshot(other, BASE.plusHours(2), 1);
 
-        assertThat(rows(owner, BASE.plusHours(3))).containsExactly("1 TWITTER 35 3 7 1000");
+        assertThatThrownBy(() -> saveSnapshot(BASE.plusHours(2), 35))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    /** Ghi theo lô (job crawl, import Excel) cũng bị chặn → Service rollback cả lô, đổi thành 409. */
+    @Test
+    void insertAllRejectsSnapshotOfPostAtExistingTime() {
+        List<SocialMetric> duplicate = List.of(SocialMetric.builder()
+                .post(post).likes(35).collectedAt(BASE.plusHours(2)).build());
+
+        assertThatThrownBy(() -> socialMetricRepository.insertAll(duplicate))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void existsByPostIdAndCollectedAtMatchesExactTime() {
+        assertThat(socialMetricRepository.existsByPostIdAndCollectedAt(post.getId(), BASE.plusHours(2))).isTrue();
+        assertThat(socialMetricRepository.existsByPostIdAndCollectedAt(post.getId(), BASE.plusHours(2).plusNanos(1_000_000)))
+                .isFalse();
+        assertThat(socialMetricRepository.existsByPostIdAndCollectedAt(-1L, BASE.plusHours(2))).isFalse();
     }
 
     @Test

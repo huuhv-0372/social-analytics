@@ -84,6 +84,10 @@ spring:
       mode: force
     scheduling:
       thread-name-prefix: scheduler-
+      pool:
+        # Mặc định 1 thread: UpdateSocialMetricsJob giữ thread đó suốt lần crawl (chờ các task trên
+        # socialCrawlerExecutor) → các job khác (gửi lại IMPORT_COMPLETED, làm mới tỷ giá) phải xếp hàng chờ
+        size: 4
 
   # Session HTTP lưu MySQL (Spring Session JDBC, config/SessionConfig): nhiều instance sau load balancer dùng chung
   # session (state/PKCE của OAuth2, SecurityContext), restart không đăng xuất user. Mỗi request đọc + ghi bảng session.
@@ -119,6 +123,14 @@ spring:
       # Số consumer song song mỗi @JmsListener (listener phải idempotent — có thể nhận lại message)
       min-concurrency: 1
       max-concurrency: 3
+
+  webservices:
+    # MessageDispatcherServlet của Spring-WS (endpoint SOAP mock + WSDL) ở /services/* (mặc định của Boot)
+    path: /services
+    servlet:
+      init:
+        # WSDL ghi địa chỉ endpoint theo scheme/host/port của request (định nghĩa WSDL chỉ khai đường dẫn tương đối)
+        transformWsdlLocations: true
 
   data:
     web:
@@ -171,11 +183,19 @@ logging:
 # Cấu hình riêng của ứng dụng — bind vào com.huuhv.socialanalytics.config.properties.AppProperties
 # (giới hạn phân trang dùng spring.data.web.pageable.* của Boot ở trên, không khai trong app.*)
 app:
+  # Múi giờ nghiệp vụ (tên IANA): ngày trên biểu đồ, giờ trong file Excel import/export, giờ hiển thị — bean Clock
+  # (config/ClockConfig) dùng giá trị này, KHÔNG theo múi giờ JVM (TZ) → mọi instance sau load balancer cho cùng kết
+  # quả kể cả khi 1 pod quên đặt TZ. Sai tên → app không khởi động. DB luôn lưu UTC.
+  time-zone: ${APP_TZ:Asia/Ho_Chi_Minh}
   import:
     # Số dòng dữ liệu tối đa mỗi file import Excel
     max-rows: 1000
     # Tổng dung lượng sau giải nén của file .xlsx — chặn file nén cao (zip bomb) làm tràn heap
     max-uncompressed-size: 20MB
+    # Khoảng cách tối thiểu giữa 2 lần import của cùng 1 user, tính riêng cho bài viết và metric — gọi sớm hơn trả
+    # 429 (0 = tắt). Chỉ tính lượt ngay trước bước ghi: file bị từ chối cả file (sai định dạng, thiếu cột...) và file
+    # không có dòng nào cần ghi (mọi dòng lỗi; với metric: mọi snapshot đã có) thì không tốn lượt
+    min-interval: 10s
   export:
     # Số dòng tối đa mỗi báo cáo export Excel — vượt thì trả 400
     max-rows: 10000
@@ -208,6 +228,33 @@ app:
     # (spring.artemis.embedded.enabled=true — dev/test); production tắt broker embedded nên không đọc.
     embedded-broker-properties:
       - classpath:artemis/broker.properties
+  soap:
+    exchange-rate:
+      # Endpoint SOAP tỷ giá mà client (client/soap/ExchangeRateSoapClient) gọi. Chỉ http/https, không chứa
+      # user:password. Trống = TẮT tỷ giá (không gọi SOAP, dashboard báo không có tỷ giá) — production không có mặc định
+      # trỏ vào chính app vì endpoint mock tắt: client sẽ bị chain chính chặn (CSRF) mỗi phút. Dev/test và container
+      # app của compose đặt url của endpoint mock (http://localhost:8080/services)
+      url: ${SOAP_EXCHANGE_RATE_URL:}
+      # Timeout gọi SOAP (OWASP A10): dịch vụ treo không giữ thread request của dashboard lâu
+      connect-timeout: 2s
+      read-timeout: 3s
+      # Cặp tỷ giá hiển thị trên dashboard: 1 USD = ? VND
+      base-currency: USD
+      quote-currency: VND
+      # Request dashboard chỉ đọc cache trong bộ nhớ (mỗi instance 1 cache), không bao giờ gọi SOAP. Job nền
+      # RefreshExchangeRateJob (app.jobs.refresh-exchange-rate.cron) gọi SOAP khi giá trị đã cũ hơn cache-ttl
+      cache-ttl: 10m
+      # Gọi lỗi → job không thử lại trong khoảng này, dashboard hiện giá trị cũ (nếu có) kèm nhãn "Dữ liệu cũ"
+      retry-after-failure: 1m
+      # Lấy sẵn tỷ giá ở thread nền khi app sẵn sàng → lần tải dashboard đầu tiên đã có giá trị
+      warm-up-on-startup: true
+      mock-endpoint:
+        # Endpoint mock /services/** + WSDL: public (không đăng nhập, không CSRF — chỉ trả dữ liệu giả) nên mặc định
+        # TẮT ở production. Dev/test bật; container app của compose đặt SOAP_MOCK_ENDPOINT_ENABLED=true.
+        enabled: ${SOAP_MOCK_ENDPOINT_ENABLED:false}
+        # Body tối đa của request /services/** (public): SAAJ đọc cả message vào bộ nhớ trước khi validate XSD →
+        # chặn request lớn trước (413). Request hợp lệ chỉ vài trăm byte
+        max-request-size: 16KB
   jobs:
     update-metrics:
       # Crawl metrics mọi tài khoản (UpdateSocialMetricsJob). Cron Spring 6 trường: giây phút giờ ngày tháng thứ.
@@ -236,3 +283,8 @@ app:
       # Khoá ShedLock như update-metrics: lock-at-most-for < chu kỳ cron 10 phút; lock-at-least-for ≤ lock-at-most-for
       lock-at-most-for: 9m
       lock-at-least-for: 1m
+    refresh-exchange-rate:
+      # Làm mới cache tỷ giá của instance này (RefreshExchangeRateJob → ExchangeRateService.refreshIfDue): chỉ gọi SOAP
+      # khi giá trị cũ hơn app.soap.exchange-rate.cache-ttl hoặc đã hết retry-after-failure — lịch dày chỉ để giá trị
+      # mới kịp sau khi hết hạn. Mỗi instance tự chạy (cache trong bộ nhớ, không ShedLock). "-" = tắt
+      cron: "*/30 * * * * *"

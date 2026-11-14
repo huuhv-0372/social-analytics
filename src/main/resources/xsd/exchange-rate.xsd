@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Hợp đồng SOAP "exchange rate" (Spring-WS, contract-first).
+    - Class JAXB sinh từ file này bằng jaxb2-maven-plugin (package com.huuhv.socialanalytics.soap.exchangerate,
+      target/generated-sources/jaxb) — không sửa tay, không commit.
+    - Endpoint mock (webservice/ExchangeRateEndpoint) validate request + response theo schema này
+      (PayloadValidatingInterceptor); client (client/soap/ExchangeRateSoapClient) validate response khi unmarshal.
+    - WSDL sinh từ schema: /services/exchangeRate.wsdl (khi bật app.soap.exchange-rate.mock-endpoint.enabled).
+    Đổi/xoá phần tử làm client cũ gọi lỗi — chỉ thêm phần tử tuỳ chọn (minOccurs="0").
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:tns="urn:social-analytics:exchange-rate"
+           targetNamespace="urn:social-analytics:exchange-rate"
+           elementFormDefault="qualified">
+
+    <!-- Mã tiền tệ ISO 4217: đúng 3 chữ in hoa (whitelist định dạng — OWASP A06) -->
+    <xs:simpleType name="CurrencyCode">
+        <xs:restriction base="xs:string">
+            <xs:pattern value="[A-Z]{3}"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- Số đơn vị quoteCurrency đổi được 1 đơn vị baseCurrency: dương, tối đa 6 chữ số thập phân -->
+    <xs:simpleType name="Rate">
+        <xs:restriction base="xs:decimal">
+            <xs:minExclusive value="0"/>
+            <xs:totalDigits value="18"/>
+            <xs:fractionDigits value="6"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:element name="GetExchangeRateRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="baseCurrency" type="tns:CurrencyCode"/>
+                <xs:element name="quoteCurrency" type="tns:CurrencyCode"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="GetExchangeRateResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="baseCurrency" type="tns:CurrencyCode"/>
+                <xs:element name="quoteCurrency" type="tns:CurrencyCode"/>
+                <xs:element name="rate" type="tns:Rate"/>
+                <!-- Mốc tỷ giá có hiệu lực, luôn kèm múi giờ (endpoint ghi UTC "Z") -->
+                <xs:element name="asOf" type="xs:dateTime"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+</xs:schema>

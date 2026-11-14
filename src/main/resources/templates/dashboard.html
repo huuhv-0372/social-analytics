@@ -64,6 +64,32 @@
         </div>
     </div>
 
+    <!--/* Tỷ giá lấy qua SOAP lúc tải trang (không cập nhật realtime). stale = lần gọi gần nhất lỗi, đang hiện giá trị
+         cũ trong cache. Rate ≥ 1 hiện 2 chữ số lẻ, nhỏ hơn (vd VND/USD) hiện đủ 6 chữ số lẻ của dịch vụ */-->
+    <div class="card shadow-sm mb-3" id="exchange-rate">
+        <div class="card-body">
+            <h2 class="h6 text-muted mb-1">Exchange rate</h2>
+            <th:block th:if="${exchangeRate != null}">
+                <p class="fs-5 mb-1">
+                    <span id="exchange-rate-value"
+                          th:text="|1 ${exchangeRate.baseCurrency} = ${exchangeRate.rate >= 1
+                              ? #numbers.formatDecimal(exchangeRate.rate, 1, 'COMMA', 2, 'POINT')
+                              : #numbers.formatDecimal(exchangeRate.rate, 1, 'COMMA', 6, 'POINT')} ${exchangeRate.quoteCurrency}|">1 USD = 25,400.00 VND</span>
+                    <span id="exchange-rate-stale" class="badge text-bg-warning align-middle ms-1"
+                          th:if="${exchangeRate.stale}">Dữ liệu cũ</span>
+                </p>
+                <p class="small text-muted mb-0">
+                    Lấy lúc
+                    <time id="exchange-rate-fetched-at"
+                          th:datetime="${#temporals.format(exchangeRate.fetchedAt.atZone(zone), 'yyyy-MM-dd''T''HH:mm:ssXXX')}"
+                          th:text="${#temporals.format(exchangeRate.fetchedAt.atZone(zone), 'yyyy-MM-dd HH:mm:ss xxx')}">2026-01-01 00:00:00 +07:00</time>
+                    <span th:if="${exchangeRate.stale}">— không kết nối được dịch vụ tỷ giá, đang hiển thị giá trị cũ</span>
+                </p>
+            </th:block>
+            <p id="exchange-rate-unavailable" class="mb-0 text-muted" th:if="${exchangeRate == null}">Không lấy được tỷ giá</p>
+        </div>
+    </div>
+
     <div class="card shadow-sm" id="engagement">
         <div class="card-body">
             <div class="d-flex flex-wrap align-items-center gap-2 mb-3">

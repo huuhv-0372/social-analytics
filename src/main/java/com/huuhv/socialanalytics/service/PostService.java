@@ -24,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -44,6 +45,7 @@ public class PostService {
 
     private final PostRepository postRepository;
     private final CurrentUserService currentUserService;
+    private final DashboardEventService dashboardEventService;
 
     @Transactional(readOnly = true)
     public PageResponse<PostResponse> findAll(Pageable pageable) {
@@ -88,9 +90,12 @@ public class PostService {
     @Transactional
     public void delete(Long id) {
         Post post = getOwnedPost(id);
-        // Snapshot social_metrics bị xoá theo nhờ FK ON DELETE CASCADE
+        Long ownerId = post.getUser().getId();
+        // Snapshot social_metrics bị xoá theo nhờ FK ON DELETE CASCADE → số liệu biểu đồ đổi: báo dashboard của owner
+        // làm mới (gửi sau commit) như khi thêm/xoá snapshot
         postRepository.delete(post);
-        log.info("User {} deleted post {}", post.getUser().getId(), id);
+        dashboardEventService.metricsUpdated(Set.of(ownerId));
+        log.info("User {} deleted post {}", ownerId, id);
     }
 
     /**
@@ -133,6 +138,22 @@ public class PostService {
     @Transactional(readOnly = true)
     public List<PostRef> findPostRefs(Long userId, Provider provider) {
         return postRepository.findRefsByUserIdAndProvider(userId, provider);
+    }
+
+    /**
+     * Bài của owner trên 1 provider theo lô externalId (import snapshot metric). {@code ownerId} lấy từ user đang đăng
+     * nhập ở Service gọi tới — bài của user khác không bao giờ được trả về (chống IDOR). Tra theo lô
+     * {@value #LOCK_BATCH_SIZE} externalId để câu {@code IN (...)} không quá dài.
+     */
+    @Transactional(readOnly = true)
+    public List<PostRef> findOwnedPostRefs(Long ownerId, Provider provider, Collection<String> externalIds) {
+        List<String> ids = List.copyOf(externalIds);
+        List<PostRef> refs = new ArrayList<>(ids.size());
+        for (int from = 0; from < ids.size(); from += LOCK_BATCH_SIZE) {
+            refs.addAll(postRepository.findRefsByUserIdAndProviderAndExternalIdIn(ownerId, provider,
+                    ids.subList(from, Math.min(from + LOCK_BATCH_SIZE, ids.size()))));
+        }
+        return refs;
     }
 
     /**

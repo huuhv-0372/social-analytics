@@ -11,6 +11,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 
+import java.time.ZoneId;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,8 +32,9 @@ class BrokerRetrySettingsVerifierTest {
     void brokerLoadedWithBrokerPropertiesPassesVerification(CapturedOutput output) {
         embeddedBroker
                 .withUserConfiguration(ArtemisEmbeddedConfig.class)
-                .withBean(AppProperties.class, () -> new AppProperties(null, null, null, null, null, null,
-                        new AppProperties.JmsSettings(List.of("classpath:artemis/broker.properties"))))
+                .withBean(AppProperties.class, () -> new AppProperties(ZoneId.of(AppProperties.DEFAULT_TIME_ZONE),
+                        null, null, null, null, null, null,
+                        new AppProperties.JmsSettings(List.of("classpath:artemis/broker.properties")), null))
                 .run(context -> {
                     BrokerRetrySettingsVerifier verifier = verifier(context.getBean(ConnectionFactory.class));
 

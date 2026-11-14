@@ -63,7 +63,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @ActiveProfiles("test")
 @Import({TestcontainersConfiguration.class, ClockConfig.class, CryptoConfig.class,
         SocialAccountService.class, CurrentUserService.class, PostService.class, PostUpsertService.class,
-        ImportHistoryService.class})
+        ImportHistoryService.class, DashboardEventService.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class SocialLoginTransactionTest {
 

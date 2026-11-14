@@ -1,6 +1,6 @@
 package com.huuhv.socialanalytics.excel;
 
-import com.huuhv.socialanalytics.excel.ExcelColumnMetadata.FieldMeta;
+import com.huuhv.socialanalytics.excel.ExcelColumnMetadata.ColumnMeta;
 import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream;
 import org.apache.poi.ooxml.POIXMLTypeLoader;
 import org.apache.poi.openxml4j.exceptions.OpenXML4JException;
@@ -47,7 +47,9 @@ import java.util.stream.Collectors;
  * Đọc sheet đầu tiên của file .xlsx thành danh sách DTO: dòng 1 là header, cột map vào field có {@link ExcelColumn}
  * theo tên. Lỗi chuyển kiểu được ghi theo dòng thay vì làm hỏng cả file; validate nghiệp vụ là việc của Service.
  * <p>
- * DTO phải có constructor không tham số. Kiểu field hỗ trợ: String, Long, Integer, LocalDate, LocalDateTime, Enum.
+ * Dùng chung cho mọi DTO import (vd {@code PostImportRow}, {@code SocialMetricImportRow}). DTO phải có constructor không
+ * tham số và setter public cho mọi cột — giá trị gán qua setter ({@link ExcelColumnMetadata}, metadata cache theo class).
+ * Kiểu field hỗ trợ: String, Long, Integer, LocalDate, LocalDateTime, Enum.
  * <p>
  * Giới hạn tài nguyên (OWASP A06): tổng dung lượng giải nén bị chặn trước khi POI mở file (cùng cấu hình chống
  * zip bomb mặc định của {@code ZipSecureFile}); sheet được đọc streaming (SAX) và dừng ngay khi vượt {@code maxRows},
@@ -68,7 +70,7 @@ public class GenericExcelImporter {
      * @throws ExcelFileException khi không đọc được file, vượt giới hạn dung lượng, thiếu cột hoặc vượt {@code maxRows}
      */
     public <T> ExcelReadResult<T> read(InputStream in, Class<T> type, int maxRows, long maxUncompressedBytes) {
-        List<FieldMeta> fields = ExcelColumnMetadata.of(type);
+        List<ColumnMeta> fields = ExcelColumnMetadata.of(type);
         Constructor<T> constructor = noArgConstructor(type, fields);
         byte[] content = readAll(in);
         checkUncompressedSize(content, maxUncompressedBytes);
@@ -154,20 +156,23 @@ public class GenericExcelImporter {
         }
     }
 
-    private static <T> Constructor<T> noArgConstructor(Class<T> type, List<FieldMeta> fields) {
-        for (FieldMeta meta : fields) {
+    private static <T> Constructor<T> noArgConstructor(Class<T> type, List<ColumnMeta> fields) {
+        for (ColumnMeta meta : fields) {
             if (!SUPPORTED_TYPES.contains(meta.type()) && !meta.type().isEnum()) {
                 throw new IllegalArgumentException("Unsupported @ExcelColumn type " + meta.type().getName()
-                        + " on " + type.getName() + "." + meta.field().getName());
+                        + " on " + type.getName() + "." + meta.property());
             }
         }
+        Constructor<T> constructor;
         try {
-            Constructor<T> constructor = type.getDeclaredConstructor();
+            constructor = type.getDeclaredConstructor();
             constructor.setAccessible(true);
-            return constructor;
         } catch (NoSuchMethodException e) {
             throw new IllegalArgumentException(type.getName() + " must have a no-arg constructor", e);
         }
+        // Giá trị ô được gán qua setter → mọi cột phải có setter
+        ExcelColumnMetadata.requireWritable(type);
+        return constructor;
     }
 
     private enum Kind { BLANK, STRING, NUMERIC, BOOLEAN, ERROR, FORMULA }
@@ -209,13 +214,13 @@ public class GenericExcelImporter {
     private static final class SheetHandler<T> extends DefaultHandler {
 
         private final WorkbookSource source;
-        private final List<FieldMeta> fields;
+        private final List<ColumnMeta> fields;
         private final Constructor<T> constructor;
         private final int maxRows;
         private final Map<Integer, Boolean> dateStyleCache = new HashMap<>();
 
         private final List<ExcelRow<T>> rows = new ArrayList<>();
-        private Map<FieldMeta, Integer> columns; // null cho tới khi đọc xong header
+        private Map<ColumnMeta, Integer> columns; // null cho tới khi đọc xong header
         private Set<Integer> wantedColumns;
         private int dataRowCount;
 
@@ -232,7 +237,7 @@ public class GenericExcelImporter {
         private boolean inPhonetic;
         private final StringBuilder cellText = new StringBuilder();
 
-        SheetHandler(WorkbookSource source, List<FieldMeta> fields, Constructor<T> constructor, int maxRows) {
+        SheetHandler(WorkbookSource source, List<ColumnMeta> fields, Constructor<T> constructor, int maxRows) {
             this.source = source;
             this.fields = fields;
             this.constructor = constructor;
@@ -404,7 +409,7 @@ public class GenericExcelImporter {
         }
     }
 
-    private static Map<FieldMeta, Integer> mapHeader(Map<Integer, CellValue> header, List<FieldMeta> fields) {
+    private static Map<ColumnMeta, Integer> mapHeader(Map<Integer, CellValue> header, List<ColumnMeta> fields) {
         Map<String, Integer> indexByName = new HashMap<>();
         header.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
@@ -414,9 +419,9 @@ public class GenericExcelImporter {
                         indexByName.putIfAbsent(name, entry.getKey());
                     }
                 });
-        Map<FieldMeta, Integer> columns = new HashMap<>();
+        Map<ColumnMeta, Integer> columns = new HashMap<>();
         List<String> missing = new ArrayList<>();
-        for (FieldMeta meta : fields) {
+        for (ColumnMeta meta : fields) {
             Integer index = indexByName.get(meta.name().toLowerCase(Locale.ROOT));
             if (index == null) {
                 missing.add(meta.name());
@@ -434,20 +439,19 @@ public class GenericExcelImporter {
      * Ô lỗi chuyển kiểu để field tương ứng là null và ghi lỗi; dòng vẫn được trả về để Service validate tiếp
      * các cột còn lại (user thấy đủ lỗi của dòng trong 1 lần import).
      */
-    private static <T> ExcelRow<T> mapRow(int rowNumber, Map<Integer, CellValue> cells, List<FieldMeta> fields,
-                                          Map<FieldMeta, Integer> columns, Constructor<T> constructor) {
+    private static <T> ExcelRow<T> mapRow(int rowNumber, Map<Integer, CellValue> cells, List<ColumnMeta> fields,
+                                          Map<ColumnMeta, Integer> columns, Constructor<T> constructor) {
         T instance = newInstance(constructor);
         List<ExcelRowError> errors = new ArrayList<>();
-        for (FieldMeta meta : fields) {
+        for (ColumnMeta meta : fields) {
             try {
+                // Chuyển kiểu theo kiểu field, gán qua setter (Method.invoke)
                 Object value = convert(cells.get(columns.get(meta)), meta.type());
                 if (value != null) {
-                    meta.field().set(instance, value);
+                    meta.write(instance, value);
                 }
             } catch (CellConversionException e) {
                 errors.add(new ExcelRowError(rowNumber, meta.name(), e.getMessage()));
-            } catch (IllegalAccessException e) {
-                throw new IllegalStateException("Cannot set field " + meta.field().getName(), e);
             }
         }
         return new ExcelRow<>(rowNumber, instance, List.copyOf(errors));

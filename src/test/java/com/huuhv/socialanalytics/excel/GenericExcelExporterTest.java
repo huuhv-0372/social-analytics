@@ -5,6 +5,7 @@ import com.huuhv.socialanalytics.dto.response.PostReportRow;
 import com.huuhv.socialanalytics.enums.Provider;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.DateUtil;
@@ -53,6 +54,7 @@ class GenericExcelExporterTest {
 
     /** DTO import cùng tên cột với {@link Sample} (trừ Active) để kiểm tra round-trip. */
     @Getter
+    @Setter
     @NoArgsConstructor
     static class ImportedSample {
         @ExcelColumn(name = "Name", order = 1)
@@ -170,6 +172,29 @@ class GenericExcelExporterTest {
                         tuple(Provider.FACEBOOK, "-fb-1", "https://facebook.com/posts/1", "=cmd|' /C calc'!A0",
                                 AT.toInstant(ZoneOffset.UTC)),
                         tuple(Provider.TWITTER, "tw-1", "https://x.com/a/status/1", null, null));
+    }
+
+    /** Class thường (không phải record): giá trị lấy qua getter, không đọc thẳng field. */
+    static class Labelled {
+        @ExcelColumn(name = "Label", order = 1)
+        private final String label;
+
+        Labelled(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return "[" + label + "]";
+        }
+    }
+
+    @Test
+    void readsValuesThroughGetter() throws IOException {
+        byte[] file = export(List.of(new Labelled("a")), Labelled.class);
+
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(file))) {
+            assertThat(workbook.getSheetAt(0).getRow(1).getCell(0).getStringCellValue()).isEqualTo("[a]");
+        }
     }
 
     @Test

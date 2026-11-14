@@ -67,16 +67,20 @@ class PostRepositoryTest {
     }
 
     @Test
-    void reportHasOneRowWhenSnapshotsShareCollectedAt() {
+    void findRefsByExternalIdsReturnsOnlyOwnPostsOfProviderIgnoringCase() {
         User owner = saveUser("owner@example.com");
-        Post post = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));
-        LocalDateTime at = LocalDateTime.of(2026, 1, 1, 0, 0);
-        saveMetric(post, 1, at);
-        saveMetric(post, 2, at);
+        User other = saveUser("other@example.com");
+        Post fb1 = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-1"));
+        Post fb2 = postRepository.save(newPost(owner, Provider.FACEBOOK, "fb-2"));
+        postRepository.save(newPost(owner, Provider.TWITTER, "fb-3"));
+        postRepository.save(newPost(other, Provider.FACEBOOK, "fb-9"));
 
-        List<PostReportRow> rows = postRepository.findReportRows(owner.getId(), Limit.unlimited());
+        // Không phân biệt hoa thường (collation như unique index); bài TWITTER / bài của user khác không lọt vào
+        List<PostRef> refs = postRepository.findRefsByUserIdAndProviderAndExternalIdIn(owner.getId(),
+                Provider.FACEBOOK, List.of("FB-1", "fb-2", "fb-3", "fb-9", "missing"));
 
-        assertThat(rows).singleElement().extracting(PostReportRow::likes).isEqualTo(2L);
+        assertThat(refs).extracting(PostRef::id, PostRef::externalId)
+                .containsExactlyInAnyOrder(tuple(fb1.getId(), "fb-1"), tuple(fb2.getId(), "fb-2"));
     }
 
     @Test

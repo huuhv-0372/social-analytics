@@ -12,6 +12,7 @@ import org.springframework.core.io.ClassPathResource;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.time.ZoneId;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,8 +27,9 @@ class ArtemisEmbeddedBrokerActivationTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(ArtemisAutoConfiguration.class))
             .withUserConfiguration(ArtemisEmbeddedConfig.class)
-            .withBean(AppProperties.class, () -> new AppProperties(null, null, null, null, null, null,
-                    new AppProperties.JmsSettings(List.of("classpath:artemis/broker.properties"))))
+            .withBean(AppProperties.class, () -> new AppProperties(ZoneId.of(AppProperties.DEFAULT_TIME_ZONE),
+                    null, null, null, null, null, null,
+                    new AppProperties.JmsSettings(List.of("classpath:artemis/broker.properties")), null))
             .withPropertyValues("ARTEMIS_USER=test", "ARTEMIS_PASSWORD=test");
 
     @Test

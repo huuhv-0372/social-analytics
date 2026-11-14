@@ -19,6 +19,9 @@ import java.time.LocalDateTime;
 
 /**
  * Snapshot số liệu tương tác tại thời điểm {@code collectedAt}. Mỗi lần crawl tạo bản ghi mới, không cập nhật bản cũ.
+ * Mỗi bài tối đa 1 snapshot tại 1 thời điểm: unique {@code uk_social_metrics_post_collected (post_id, collected_at)}
+ * (Flyway {@code V8}); {@code collectedAt} luôn cắt về mili giây trước khi ghi
+ * ({@code SocialMetricService.toSnapshotTime}).
  */
 @Entity
 @Table(name = "social_metrics")
@@ -49,7 +52,7 @@ public class SocialMetric {
     @Column(name = "followers", nullable = false)
     private long followers;
 
-    // Giờ UTC (util/UtcDateTimes)
+    // Giờ UTC (util/UtcDateTimes), độ chính xác mili giây (SocialMetricService.toSnapshotTime)
     @Column(name = "collected_at", nullable = false)
     private LocalDateTime collectedAt;
 }
