@@ -245,7 +245,7 @@ src/main/resources/
 | `DB_HOST` / `DB_PORT` / `DB_NAME` | — | Mặc định `localhost` / `33069` / `social_analytics`. `DB_PORT` là port MySQL mở ra máy host; app chạy trong Docker luôn dùng `mysql:3306` |
 | `APP_PORT` | — | Port app mở ra máy host khi chạy bằng Docker (mặc định `8080`) |
 | `SPRING_PROFILES_ACTIVE` | — | Profile của container `app` (mặc định `dev`). Đặt profile khác (vd `prod`) để chạy cấu hình production-safe, Swagger tắt |
-| `APP_TZ` | — | Múi giờ nghiệp vụ (`app.time-zone`, tên IANA, mặc định `Asia/Ho_Chi_Minh`): ranh giới ngày của biểu đồ, giờ trong file Excel import/export, giờ hiển thị — bean `Clock` dùng giá trị này, **không** theo múi giờ JVM/máy, nên mọi instance cho cùng kết quả kể cả khi 1 pod quên đặt `TZ`. Tên sai → app không khởi động. DB luôn lưu UTC. Compose đặt thêm `TZ` cùng giá trị chỉ để giờ trong log khớp; dòng log `Server time zone` lúc khởi động in cả 2 |
+| `APP_TZ` | — | Múi giờ nghiệp vụ (`app.time-zone`, tên IANA, mặc định `Asia/Ho_Chi_Minh`): ranh giới ngày của biểu đồ, giờ trong file Excel import/export, giờ hiển thị — bean `Clock` dùng giá trị này, **không** theo múi giờ JVM/máy, nên mọi instance cho cùng kết quả kể cả khi 1 pod quên đặt `TZ`. Tên sai → app không khởi động. DB luôn lưu UTC. Giờ in trong log (`logback-spring.xml`) cũng theo `APP_TZ`, kèm offset (vd `2026-11-16 09:30:00.123+07:00`), file log sang ngày lúc 0h theo múi giờ này — không cần đặt `TZ`; dòng log `Server time zone` lúc khởi động in cả múi giờ nghiệp vụ lẫn múi giờ JVM |
 | `LOG_PATH` | — | Thư mục log file (mặc định `logs`; trong Docker là `/app/logs`) |
 | `FORWARD_HEADERS_STRATEGY` | — | Đặt `native` khi app chạy sau reverse proxy / load balancer tin cậy (kết thúc HTTPS) để link `Location` và cờ `Secure` của cookie theo `X-Forwarded-*`. Để trống khi truy cập trực tiếp — bật khi không có proxy thì client giả được scheme/host |
 | `ARTEMIS_USER` / `ARTEMIS_PASSWORD` | ✅ | Tài khoản broker Artemis |
@@ -267,7 +267,7 @@ Trạng thái dùng chung nằm ở MySQL / broker, nên các instance thay th�
 | Hạng mục | Cơ chế trong app | Việc cần làm khi triển khai |
 |---|---|---|
 | Session HTTP, state/PKCE OAuth2 | Spring Session JDBC (bảng `SPRING_SESSION`) | Không cần sticky session cho HTTP |
-| Múi giờ nghiệp vụ | `app.time-zone` ← `APP_TZ`, không theo `TZ` của JVM | Mọi instance đặt **cùng** `APP_TZ` |
+| Múi giờ nghiệp vụ | `app.time-zone` ← `APP_TZ`, không theo `TZ` của JVM (cả `Clock` lẫn giờ trong log) | Mọi instance đặt **cùng** `APP_TZ` — log gom từ nhiều pod cùng múi giờ, có offset |
 | Job crawl metrics, gửi lại `IMPORT_COMPLETED` | ShedLock (bảng `scheduler_locks`) — mỗi lịch 1 instance chạy | Đồng bộ giờ (NTP) |
 | Làm mới tỷ giá | Cache trong bộ nhớ mỗi instance, `RefreshExchangeRateJob` chạy nền ở **mọi** instance (không ShedLock); request dashboard chỉ đọc cache | Trỏ `SOAP_EXCHANGE_RATE_URL` tới dịch vụ SOAP thật (hoặc để trống = tắt), `SOAP_MOCK_ENDPOINT_ENABLED=false` |
 | Giới hạn tần suất import/export | Bucket4j lưu MySQL (`rate_limit_buckets`) | Đồng bộ giờ (NTP) |
