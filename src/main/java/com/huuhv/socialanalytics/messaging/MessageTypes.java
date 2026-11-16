@@ -12,8 +12,11 @@ public final class MessageTypes {
 
     public static final String IMPORT_COMPLETED = "importCompleted";
 
+    public static final String DASHBOARD_EVENT = "dashboardEvent";
+
     public static final Map<String, Class<?>> TYPE_ID_MAPPINGS = Map.of(
-            IMPORT_COMPLETED, ImportCompletedMessage.class);
+            IMPORT_COMPLETED, ImportCompletedMessage.class,
+            DASHBOARD_EVENT, DashboardEventMessage.class);
 
     private MessageTypes() {
     }

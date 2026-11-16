@@ -1,5 +1,7 @@
 package com.huuhv.socialanalytics.config;
 
+import com.huuhv.socialanalytics.messaging.TopicNames;
+import jakarta.jms.Topic;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.artemis.autoconfigure.ArtemisAutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -39,13 +41,39 @@ class JmsConfigTest {
             assertThat(context.getBean(JmsTemplate.class).getMessageConverter())
                     .isInstanceOf(AliasOnlyJsonMessageConverter.class);
 
-            DefaultJmsListenerContainerFactory factory = context.getBean(DefaultJmsListenerContainerFactory.class);
+            DefaultJmsListenerContainerFactory factory =
+                    context.getBean("jmsListenerContainerFactory", DefaultJmsListenerContainerFactory.class);
             DefaultMessageListenerContainer container = factory.createListenerContainer(endpoint());
+            // Factory mặc định (mọi @JmsListener không ghi containerFactory) vẫn dùng cho queue
+            assertThat(container.isPubSubDomain()).isFalse();
             assertThat(container.getMessageConverter()).isInstanceOf(AliasOnlyJsonMessageConverter.class);
             // Listener lỗi → rollback session → broker giao lại message (cơ sở cho retry + DLQ)
             assertThat(container.isSessionTransacted()).isTrue();
             // Factory của app thay bean của Boot: vẫn nhận spring.jms.listener.* qua configurer, thêm ErrorHandler
             assertThat(container.getErrorHandler()).isInstanceOf(JmsListenerErrorHandler.class);
+        });
+    }
+
+    @Test
+    void topicListenerFactoryIsNonDurableSingleConsumerWithoutTransaction() {
+        contextRunner.run(context -> {
+            DefaultJmsListenerContainerFactory factory = context.getBean(TopicNames.LISTENER_CONTAINER_FACTORY,
+                    DefaultJmsListenerContainerFactory.class);
+            DefaultMessageListenerContainer container = factory.createListenerContainer(endpoint());
+
+            assertThat(container.isPubSubDomain()).isTrue();
+            // Instance tắt không giữ subscription → không dồn message cũ
+            assertThat(container.isSubscriptionDurable()).isFalse();
+            // Subscription không chia sẻ: >1 consumer trong cùng instance sẽ nhận trùng event
+            assertThat(container.getConcurrentConsumers()).isEqualTo(1);
+            assertThat(container.getMaxConcurrentConsumers()).isEqualTo(1);
+            // Không lấy spring.jms.listener.session.transacted=true của queue: event lỗi không cần giao lại / DLQ
+            assertThat(container.isSessionTransacted()).isFalse();
+            assertThat(container.getMessageConverter()).isInstanceOf(AliasOnlyJsonMessageConverter.class);
+            assertThat(container.getErrorHandler()).isInstanceOf(JmsListenerErrorHandler.class);
+            // JmsTemplate dùng chung vẫn gửi tên chuỗi vào queue — topic phải gửi qua bean Topic
+            assertThat(context.getBean(JmsTemplate.class).isPubSubDomain()).isFalse();
+            assertThat(context.getBean(Topic.class).getTopicName()).isEqualTo(TopicNames.DASHBOARD_EVENTS);
         });
     }
 

@@ -79,7 +79,7 @@ class AccountMetricsCrawlerTest {
 
         CrawlResult result = crawler.crawlNow(ACCOUNT_ID, DEADLINE);
 
-        assertThat(result).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, 3));
+        assertThat(result).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, USER_ID, 3));
         verify(socialMetricService).recordSnapshots(ACCOUNT_ID, List.of(
                 new CrawledMetric(1L, 10, 1, 2, 100),
                 new CrawledMetric(2L, 20, 1, 2, 100),
@@ -101,7 +101,7 @@ class AccountMetricsCrawlerTest {
         when(postService.findPostRefs(USER_ID, Provider.FACEBOOK)).thenReturn(List.of());
         when(socialPlatformClients.get(Provider.FACEBOOK)).thenReturn(client);
 
-        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, 0));
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, USER_ID, 0));
         verifyNoInteractions(client);
         verify(socialMetricService).recordSnapshots(ACCOUNT_ID, List.of(), NOW_UTC, NOW_UTC);
     }
@@ -178,7 +178,7 @@ class AccountMetricsCrawlerTest {
                 new PostMetrics("b", 1, -1, 0, 0)));
         givenSavedSnapshots(1);
 
-        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, 1));
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, USER_ID, 1));
         ArgumentCaptor<List<CrawledMetric>> saved = ArgumentCaptor.captor();
         verify(socialMetricService).recordSnapshots(eq(ACCOUNT_ID), saved.capture(), any(), any());
         assertThat(saved.getValue()).containsExactly(new CrawledMetric(1L, 10, 1, 2, 100));
@@ -192,7 +192,7 @@ class AccountMetricsCrawlerTest {
         when(client.fetchMetrics(TOKEN, List.of("a", "b"))).thenReturn(List.of(metrics("a", 10), metrics("b", 20)));
         givenSavedSnapshots(1);
 
-        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, 1));
+        assertThat(crawler.crawlNow(ACCOUNT_ID, DEADLINE)).isEqualTo(CrawlResult.succeeded(ACCOUNT_ID, USER_ID, 1));
     }
 
     @Test

@@ -5,6 +5,7 @@ import com.huuhv.socialanalytics.config.CryptoConfig;
 import com.huuhv.socialanalytics.config.SchedulerLockConfig;
 import com.huuhv.socialanalytics.config.properties.AppProperties;
 import com.huuhv.socialanalytics.service.AccountMetricsCrawler;
+import com.huuhv.socialanalytics.service.DashboardEventService;
 import com.huuhv.socialanalytics.service.SocialAccountService;
 import net.javacrumbs.shedlock.core.DefaultLockingTaskExecutor;
 import net.javacrumbs.shedlock.core.LockConfiguration;
@@ -128,13 +129,14 @@ class UpdateSocialMetricsJobLockTest {
 
         private final SocialAccountService accounts = mock(SocialAccountService.class);
         private final AccountMetricsCrawler crawler = mock(AccountMetricsCrawler.class);
+        private final DashboardEventService dashboardEvents = mock(DashboardEventService.class);
         private final UpdateSocialMetricsJob job;
 
         private Instance(String lockedBy, Duration lockAtMostFor, Duration lockAtLeastFor) {
             LockProvider lockProvider = SchedulerLockConfig.lockProvider(dataSource, lockedBy);
             AppProperties properties = new AppProperties(null, null, null, null, null, new AppProperties.Jobs(
                     new AppProperties.UpdateMetrics(100, TIMEOUT, lockAtMostFor, lockAtLeastFor), null), null);
-            job = new UpdateSocialMetricsJob(accounts, crawler, properties, Clock.systemUTC(),
+            job = new UpdateSocialMetricsJob(accounts, crawler, dashboardEvents, properties, Clock.systemUTC(),
                     new DefaultLockingTaskExecutor(lockProvider));
         }
     }

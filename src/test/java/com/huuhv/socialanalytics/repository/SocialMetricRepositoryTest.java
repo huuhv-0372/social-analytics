@@ -18,7 +18,10 @@ import org.springframework.data.domain.Sort;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -146,13 +149,105 @@ class SocialMetricRepositoryTest {
         assertThat(socialMetricRepository.count()).isEqualTo(3);
     }
 
+    @Test
+    void perDayQueryAddsLatestSnapshotOfEachPostBeforeEveryCutoffInOneQuery() {
+        Post secondTweet = savePost(owner, Provider.TWITTER, "tw-2");
+        Post facebookPost = savePost(owner, Provider.FACEBOOK, "fb-1");
+        saveSnapshot(secondTweet, BASE.plusMinutes(90), 100);
+        saveSnapshot(facebookPost, BASE.plusMinutes(30), 7);
+
+        // Mốc 1 (BASE + 1h): snapshot đúng bằng mốc (likes 20) không được tính; tw-2 chưa có snapshot trước mốc.
+        // Mốc 2 (BASE + 3h): fb-1 không có snapshot mới → giữ giá trị cũ (carry-forward); 2 tweet cộng lại.
+        assertThat(rows(owner, BASE.plusHours(1), BASE.plusHours(3))).containsExactly(
+                "1 FACEBOOK 7 0 1 1000",
+                "1 TWITTER 10 1 2 1000",
+                "2 FACEBOOK 7 0 1 1000",
+                "2 TWITTER 130 13 26 1000");
+    }
+
+    @Test
+    void followersComeFromMostRecentSnapshotOfProviderNotFromLargestOrSum() {
+        Post secondTweet = savePost(owner, Provider.TWITTER, "tw-2");
+        // tw-1: snapshot mới nhất lúc BASE + 2h, tác giả có 1000 followers. tw-2 crawl sau (BASE + 2h30) — tác giả đã
+        // giảm còn 900: lấy 900 (MAX sẽ ra 1000 cũ, SUM sẽ đếm lặp thành 1900)
+        saveSnapshot(secondTweet, BASE.plusMinutes(150), 100, 900);
+
+        assertThat(rows(owner, BASE.plusHours(3))).containsExactly("1 TWITTER 130 13 26 900");
+    }
+
+    @Test
+    void cutoffBeforeFirstSnapshotHasNoRow() {
+        assertThat(rows(owner, BASE, BASE.plusHours(3))).containsExactly("2 TWITTER 30 3 6 1000");
+    }
+
+    @Test
+    void perDayQueryExcludesPostsOfOtherUsers() {
+        User other = userRepository.save(User.builder().email("other@example.com").displayName("Other").build());
+        saveSnapshot(savePost(other, Provider.TWITTER, "tw-1"), BASE, 5000, 7000);
+
+        assertThat(rows(owner, BASE.plusHours(3))).containsExactly("1 TWITTER 30 3 6 1000");
+        assertThat(rows(other, BASE.plusHours(3))).containsExactly("1 TWITTER 5000 500 1000 7000");
+    }
+
+    @Test
+    void perDayQueryCountsOneSnapshotPerPostWhenCollectedAtTies() {
+        // Cùng collectedAt với snapshot 30 likes → lấy bản id lớn hơn, không cộng cả 2
+        saveSnapshot(BASE.plusHours(2), 35);
+
+        assertThat(rows(owner, BASE.plusHours(3))).containsExactly("1 TWITTER 35 3 7 1000");
+    }
+
+    @Test
+    void cutoffsKeepMicrosecondPrecision() {
+        // Mốc truyền qua JSON tới DATETIME(6): snapshot sớm hơn mốc 1 micro giây vẫn được tính
+        LocalDateTime cutoff = BASE.plusHours(5);
+        saveSnapshot(cutoff.minusNanos(1_000), 50);
+
+        assertThat(rows(owner, cutoff)).containsExactly("1 TWITTER 50 5 10 1000");
+    }
+
+    /** Kết quả dạng {@code "dayIndex PROVIDER likes shares comments followers"} để so sánh gọn. */
+    private List<String> rows(User user, LocalDateTime... cutoffs) {
+        return socialMetricRepository.sumLatestByProviderPerDay(user.getId(), json(cutoffs)).stream()
+                .map(row -> row.getDayIndex() + " " + row.getProvider() + " " + row.getLikes() + " "
+                        + row.getShares() + " " + row.getComments() + " " + row.getFollowers())
+                .toList();
+    }
+
+    /** Cùng định dạng {@code SocialMetricService} dựng cho JSON_TABLE. */
+    private static String json(LocalDateTime... cutoffs) {
+        DateTimeFormatter format = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+        return Arrays.stream(cutoffs).map(cutoff -> "\"" + format.format(cutoff) + "\"")
+                .collect(Collectors.joining(",", "[", "]"));
+    }
+
+    private Post savePost(User user, Provider provider, String externalId) {
+        String url = provider == Provider.FACEBOOK
+                ? "https://facebook.com/posts/" + externalId
+                : "https://x.com/owner/status/" + externalId;
+        return postRepository.save(Post.builder()
+                .user(user)
+                .provider(provider)
+                .externalId(externalId)
+                .url(url)
+                .build());
+    }
+
     private SocialMetric saveSnapshot(LocalDateTime collectedAt, long likes) {
+        return saveSnapshot(post, collectedAt, likes);
+    }
+
+    private SocialMetric saveSnapshot(Post target, LocalDateTime collectedAt, long likes) {
+        return saveSnapshot(target, collectedAt, likes, 1000);
+    }
+
+    private SocialMetric saveSnapshot(Post target, LocalDateTime collectedAt, long likes, long followers) {
         return socialMetricRepository.save(SocialMetric.builder()
-                .post(post)
+                .post(target)
                 .likes(likes)
                 .shares(likes / 10)
                 .comments(likes / 5)
-                .followers(1000)
+                .followers(followers)
                 .collectedAt(collectedAt)
                 .build());
     }

@@ -15,6 +15,7 @@ import com.huuhv.socialanalytics.repository.UserRepository;
 import com.huuhv.socialanalytics.service.ImportHistoryService;
 import com.huuhv.socialanalytics.service.ImportStatisticsService;
 import com.huuhv.socialanalytics.service.PostUpsertService;
+import com.huuhv.socialanalytics.websocket.DashboardEventBroadcaster;
 import jakarta.jms.TextMessage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -89,6 +90,10 @@ class ImportCompletedDlqIntegrationTest {
 
     @MockitoSpyBean
     private ImportHistoryService importHistoryService;
+
+    // Không dùng trong class này — giữ cùng bộ spy để dùng chung context đã cache
+    @MockitoSpyBean
+    private DashboardEventBroadcaster dashboardEventBroadcaster;
 
     private User owner;
 

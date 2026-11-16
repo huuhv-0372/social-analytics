@@ -11,9 +11,9 @@ Mini project khoá **Java Advance**: ứng dụng web giúp admin tổng hợp v
 | CRUD bài viết & metrics | REST API `/api/posts`, `/api/metrics` + Swagger UI | 1 | ✅ |
 | Import / Export Excel | Upload danh sách bài viết (`/api/import-posts`), xuất báo cáo (`/api/export-report`) bằng Apache POI + Reflection | 2 | ✅ |
 | Social Login | Đăng nhập Facebook & Twitter/X qua OAuth2, bảo vệ CSRF | 3 | ✅ |
-| Background job | `updateSocialMetricsJob` chạy mỗi giờ, crawl metrics (mock API) đa luồng | 4 | ⏳ |
+| Background job | `updateSocialMetricsJob` chạy mỗi giờ, crawl metrics (mock API) đa luồng | 4 | ✅ |
 | JMS | Import xong → message `IMPORT_COMPLETED` → listener cập nhật thống kê (hiển thị trên dashboard), có retry + DLQ | 5 | ✅ |
-| Dashboard realtime | Chart.js cập nhật qua WebSocket (STOMP + SockJS), API `/api/chart-data` | 6 | ⏳ |
+| Dashboard realtime | Chart.js cập nhật qua WebSocket (STOMP + SockJS), API `/api/chart-data` | 6 | ✅ |
 | SOAP WebService | Gọi WebService tỷ giá mock (Spring-WS), hiển thị trên dashboard | 7 | ⏳ |
 
 ## Tech Stack
@@ -137,7 +137,7 @@ Kiến trúc 3 lớp (3-Tier), package gốc `com.huuhv.socialanalytics`:
 
 ```
 src/main/java/com/huuhv/socialanalytics/
-├── config/          # SecurityConfig, AsyncConfig, JmsConfig, WebSocketConfig, WebServiceConfig, OpenApiConfig, RateLimitConfig
+├── config/          # SecurityConfig, AsyncConfig, JmsConfig, WebSocketConfig, WebSocketSecurityConfig, WebServiceConfig, OpenApiConfig, RateLimitConfig
 │   └── properties/  # AppProperties (cấu hình app.*)
 ├── controller/
 │   ├── web/         # Controller Thymeleaf: /login, /dashboard, /posts ...
@@ -154,10 +154,10 @@ src/main/java/com/huuhv/socialanalytics/
 │   └── soap/        # Spring-WS client
 ├── scheduler/       # Background job (@Scheduled)
 ├── messaging/       # JMS producer, listener, tên queue
-├── websocket/       # Publisher gửi event STOMP
+├── websocket/       # Đường dẫn STOMP (StompDestinations), publisher gửi event
 ├── excel/           # Import/export Excel generic bằng Reflection
 ├── exception/       # ApiExceptionHandler, WebExceptionHandler + exception nghiệp vụ
-├── security/        # Entry point / handler 401-403, CSRF, kết quả đăng nhập OAuth2, principal, lọc deserialize session
+├── security/        # Entry point / handler 401-403 (HTTP + ERROR frame STOMP), CSRF, kết quả đăng nhập OAuth2, principal, lọc deserialize session
 └── util/
 
 src/main/resources/
@@ -181,7 +181,7 @@ src/main/resources/
 | `config/properties/AppProperties` | Bind cấu hình `app.*` (record + validation): `app.import.max-rows` / `max-uncompressed-size`, `app.export.max-rows` / `min-interval`, `app.token-encryption.key` |
 | `.env` | Giá trị bí mật cho môi trường local — copy từ `.env.example` |
 | `docker-compose.yaml` | MySQL 8.4 + ActiveMQ Artemis + app, và service `maven` (JDK 25) để chạy lệnh Maven |
-| `src/main/resources/artemis/broker.properties` | Retry + DLQ của queue `import-completed` (6 lần giao, 2s ×2, tối đa 30s ≈ 1 phút → `DLQ.import-completed`; DLQ giao lại vô hạn khi lỗi DB, 5s ×2 tối đa 5 phút) — nguồn duy nhất: broker Artemis của compose mount file này, broker embedded (dev/test) nạp từ classpath. Test ghi đè delay bằng `src/test/resources/artemis/broker-test.properties` |
+| `src/main/resources/artemis/broker.properties` | Retry + DLQ của queue `import-completed` (6 lần giao, 2s ×2, tối đa 30s ≈ 1 phút → `DLQ.import-completed`; DLQ giao lại vô hạn khi lỗi DB, 5s ×2 tối đa 5 phút) và address multicast `dashboard-events` (event realtime cho dashboard) — nguồn duy nhất: broker Artemis của compose mount file này, broker embedded (dev/test) nạp từ classpath. Test ghi đè delay bằng `src/test/resources/artemis/broker-test.properties` |
 | `Dockerfile` | Build multi-stage: JDK 25 build JAR → JRE 25 chạy app bằng user không phải root |
 
 ### Biến môi trường
@@ -193,6 +193,7 @@ src/main/resources/
 | `DB_HOST` / `DB_PORT` / `DB_NAME` | — | Mặc định `localhost` / `33069` / `social_analytics`. `DB_PORT` là port MySQL mở ra máy host; app chạy trong Docker luôn dùng `mysql:3306` |
 | `APP_PORT` | — | Port app mở ra máy host khi chạy bằng Docker (mặc định `8080`) |
 | `SPRING_PROFILES_ACTIVE` | — | Profile của container `app` (mặc định `dev`). Đặt profile khác (vd `prod`) để chạy cấu hình production-safe, Swagger tắt |
+| `APP_TZ` | — | Múi giờ server của container `app` (compose truyền vào `TZ`, mặc định `Asia/Ho_Chi_Minh`; image không đặt thì chạy UTC). Quyết định ranh giới ngày của biểu đồ, giờ trong file Excel import/export, giờ hiển thị và log — DB luôn lưu UTC. Chạy image không qua compose thì đặt `-e TZ=Asia/Ho_Chi_Minh`; app chạy bằng JDK local dùng múi giờ của máy. Tên sai thì JVM lặng lẽ dùng `GMT` — kiểm tra dòng log `Server time zone` lúc khởi động |
 | `LOG_PATH` | — | Thư mục log file (mặc định `logs`; trong Docker là `/app/logs`) |
 | `FORWARD_HEADERS_STRATEGY` | — | Đặt `native` khi app chạy sau reverse proxy / load balancer tin cậy (kết thúc HTTPS) để link `Location` và cờ `Secure` của cookie theo `X-Forwarded-*`. Để trống khi truy cập trực tiếp — bật khi không có proxy thì client giả được scheme/host |
 | `ARTEMIS_USER` / `ARTEMIS_PASSWORD` | ✅ | Tài khoản broker Artemis |
@@ -223,7 +224,7 @@ Schema hiện tại (`V1__init_schema.sql` + `V1_1__rate_limit_buckets.sql` + `V
 
 ## REST API
 
-Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); chỉ `/login`, `/oauth2/**` và static resource là public. Gọi `/api/**` khi chưa đăng nhập trả 401 `ProblemDetail`; trang web chưa đăng nhập được redirect về `/login`. Chỉ đăng nhập bằng **Facebook hoặc X** (không có HTTP Basic / tài khoản mật khẩu); lần đăng nhập đầu tiên tạo user mới, các lần sau cập nhật access token. API dùng chung session cookie (`SESSION`, Spring Session lưu ở MySQL) của trình duyệt — Swagger UI tự gửi; với curl/Postman, copy cookie `SESSION` sau khi đăng nhập (DevTools → Application → Cookies). Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
+Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); chỉ `/login`, `/oauth2/**` và static resource là public. Gọi `/api/**` (và handshake WebSocket `/ws/**`) khi chưa đăng nhập trả 401 `ProblemDetail`; trang web chưa đăng nhập được redirect về `/login`. Chỉ đăng nhập bằng **Facebook hoặc X** (không có HTTP Basic / tài khoản mật khẩu); lần đăng nhập đầu tiên tạo user mới, các lần sau cập nhật access token. API dùng chung session cookie (`SESSION`, Spring Session lưu ở MySQL) của trình duyệt — Swagger UI tự gửi; với curl/Postman, copy cookie `SESSION` sau khi đăng nhập (DevTools → Application → Cookies). Mỗi user chỉ thấy/sửa dữ liệu của mình (dữ liệu của user khác trả 404).
 
 Đăng xuất: `POST /logout` (kèm CSRF) → redirect `/login?logout`, session bị huỷ. `GET /logout` không đăng xuất.
 
@@ -246,6 +247,7 @@ Mọi đường dẫn mặc định phải đăng nhập (deny-by-default); ch�
 | POST | `/api/import-posts` | Import bài viết từ file `.xlsx` (multipart, field `file`) — xem bên dưới |
 | GET | `/api/import-posts/template` | Tải file `.xlsx` mẫu (header + dữ liệu giả + sheet hướng dẫn) |
 | GET | `/api/export-report` | Tải báo cáo `.xlsx`: mỗi bài viết 1 dòng kèm snapshot metric mới nhất — xem bên dưới |
+| GET | `/api/chart-data?days=7` | Dữ liệu biểu đồ dashboard: metric theo provider, theo ngày (`days` 1–30, mặc định 7) — xem bên dưới |
 
 Ví dụ:
 
@@ -304,6 +306,48 @@ curl -b "SESSION=$SESSION_ID; XSRF-TOKEN=$XSRF" -X POST http://localhost:8080/ap
 ```bash
 curl -OJ -b "SESSION=$SESSION_ID" http://localhost:8080/api/export-report
 ```
+
+### Dữ liệu biểu đồ
+
+`GET /api/chart-data?days=7` trả metric của user đang đăng nhập, tổng hợp theo provider và theo ngày (`days` ngoài 1–30 → 400):
+
+```json
+{
+  "zone": "Asia/Ho_Chi_Minh",
+  "labels": ["2026-11-06", "2026-11-07"],
+  "series": [
+    {"provider": "FACEBOOK", "likes": [null, 120], "shares": [null, 8], "comments": [null, 15], "followers": [null, 3400]},
+    {"provider": "TWITTER", "likes": [40, 55], "shares": [2, 3], "comments": [5, 6], "followers": [900, 910]}
+  ],
+  "lastUpdatedAt": "2026-11-07T03:00:05Z",
+  "importStatistics": {"totalImports": 3, "totalRows": 25, "successRows": 20, "failedRows": 5, "lastImportAt": "2026-11-06T18:15:00Z"}
+}
+```
+
+- Ngày tính theo múi giờ server (`zone`). Mỗi bài lấy **snapshot mới nhất tính tới hết ngày đó** — snapshot là số tích luỹ nên không cộng mọi lần crawl; bài không được crawl trong ngày giữ giá trị trước đó. `likes`/`shares`/`comments` = tổng các bài; `followers` = của **snapshot mới nhất theo thời gian** trong các bài (là số người theo dõi tác giả: cộng theo bài sẽ đếm lặp, lấy lớn nhất sẽ giữ số cũ). Bài không còn được crawl (vd đã xoá trên nền tảng) vẫn giữ số cuối cùng; xoá bài trong app thì số liệu của bài bị xoá theo.
+- Cả biểu đồ tính trong **1 query** (MySQL 8 `JSON_TABLE` + window function), không phải 1 query/ngày.
+- `null` = provider chưa có bài nào có snapshot tới ngày đó (khác 0). Mỗi provider luôn có 1 phần tử trong `series`.
+- `lastUpdatedAt` / `importStatistics` (`null` nếu chưa có) đi kèm để dashboard cập nhật mọi số liệu bằng 1 request khi nhận event WebSocket.
+
+## WebSocket (realtime dashboard)
+
+**Luồng event:** job crawl metrics xong (ít nhất 1 tài khoản thành công) hoặc listener `IMPORT_COMPLETED` vừa cộng 1 lần import vào thống kê → event phát lên JMS topic `dashboard-events` **sau khi transaction commit** (rollback → không có event) → mỗi instance app nhận 1 bản và chỉ đẩy xuống **các user có dữ liệu vừa đổi** (chủ tài khoản vừa crawl xong / chủ lần import) đang kết nối với nó, trên đích riêng `/user/queue/metrics`:
+
+```json
+{"type": "METRICS_UPDATED", "occurredAt": "2026-11-12T03:00:00Z"}
+```
+
+`type` hiện là `METRICS_UPDATED` hoặc `IMPORT_PROCESSED` (client làm mới với mọi `type`). User khác không nhận event — không phải gọi lại API vô ích, không biết thời điểm import của người khác. Payload không chứa số liệu — client nhận event rồi gọi lại `GET /api/chart-data` (chỉ trả dữ liệu của mình). Event chỉ là tín hiệu làm mới: gửi lỗi / instance đang tắt thì bỏ qua, không retry; client tải lại dữ liệu khi có event sau hoặc khi kết nối lại.
+
+**Trên `/dashboard`:** biểu đồ đường Chart.js theo provider/ngày (chọn metric và 7/14/30 ngày), "Last updated time" và thống kê import tự cập nhật không cần tải lại trang; badge góc phải cho biết trạng thái kết nối (`Live` / `Reconnecting…`). Nhận event → chờ 0,5–3,5s (ngẫu nhiên, tránh mọi dashboard gọi API cùng lúc khi server khởi động lại) → gọi lại `/api/chart-data`. Mỗi lần kết nối xong (kể cả lần đầu) đều tải lại dữ liệu để không lỡ event; mất kết nối thì tự nối lại sau 5s.
+
+**Kiểm tra thủ công** (chưa có test JS tự động): chạy profile `dev` (cron metrics 5 phút) → đăng nhập → mở `/dashboard` (badge `Live`) → import 1 file Excel ở tab khác: card thống kê đổi sau vài giây; chờ job chạy: biểu đồ + "Last updated time" đổi. DevTools → Console không có lỗi CSP; Network → WS: frame `CONNECT` có header `X-XSRF-TOKEN`.
+
+- Endpoint STOMP `/ws` (SockJS), broker prefix `/queue`, user prefix `/user`, app prefix `/app`. Client chỉ được `SUBSCRIBE /user/queue/metrics` (Spring chỉ giao event của chính user đó); mọi `SEND` và destination khác (kể cả `SUBSCRIBE` thẳng `/queue/**`) bị từ chối bằng ERROR frame `Access denied` rồi đóng kết nối.
+- Phải đăng nhập: handshake dùng session cookie `SESSION` của trình duyệt — chưa đăng nhập thì `/ws/**` trả 401 `ProblemDetail`.
+- **CSRF ở frame `CONNECT`:** header `X-XSRF-TOKEN` chứa token đã mask (`<meta name="_csrf">`) **hoặc** giá trị raw của cookie `XSRF-TOKEN` — giống header HTTP; handshake phải mang cookie `XSRF-TOKEN` (trình duyệt tự gửi). Dashboard đọc cookie hiện tại trước mỗi lần kết nối (`currentCsrfHeaders()` trong `static/js/csrf.js`) nên vẫn kết nối lại được sau khi đăng nhập lại ở tab khác. Request HTTP dưới `/ws/**` (POST của transport dự phòng SockJS) không kiểm CSRF — đây là ngoại lệ duy nhất, vì kết nối không qua được `CONNECT` thì không frame nào được xử lý.
+- Chạy nhiều instance sau load balancer: transport WebSocket không cần gì thêm; transport dự phòng của SockJS (xhr-streaming/polling) giữ session SockJS trong RAM nên cần **sticky session**. Transport iframe của SockJS không dùng được (`X-Frame-Options: DENY`).
+- Kết nối WebSocket không gia hạn session HTTP và không tự đóng khi logout / session hết hạn (Spring Session JDBC không phát sự kiện huỷ session) — payload event không chứa số liệu, client gọi API gặp 401 thì chuyển về `/login`.
 
 ## Xử Lý Lỗi
 

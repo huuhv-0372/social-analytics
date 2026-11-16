@@ -1,11 +1,13 @@
 package com.huuhv.socialanalytics.config;
 
 import com.huuhv.socialanalytics.security.ApiAuthenticationEntryPoint;
+import com.huuhv.socialanalytics.security.CsrfCookies;
 import com.huuhv.socialanalytics.security.CsrfHeaderOrFormTokenRequestHandler;
 import com.huuhv.socialanalytics.security.LoggingAccessDeniedHandler;
 import com.huuhv.socialanalytics.security.OAuth2LoginResultHandler;
 import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
+import com.huuhv.socialanalytics.websocket.StompDestinations;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -39,12 +41,14 @@ import java.util.List;
  *     <li><b>Deny-by-default</b>: chỉ {@code /login}, {@code /oauth2/**}, {@code /error} và static resource là public;
  *     mọi đường dẫn khác (kể cả {@code /api/**}, Swagger) phải đăng nhập. Dispatch {@code ERROR} (trang lỗi) luôn được
  *     cho qua để giữ đúng mã lỗi gốc.</li>
- *     <li>Chưa đăng nhập: REST ({@code /api/**}, {@code /v3/api-docs/**}) nhận 401 {@code ProblemDetail};
+ *     <li>Chưa đăng nhập: REST ({@code /api/**}, {@code /v3/api-docs/**}) và handshake WebSocket ({@code /ws/**})
+ *     nhận 401 {@code ProblemDetail};
  *     trang web (kể cả Swagger UI) được redirect về {@code /login}. Bị từ chối (403, gồm lỗi CSRF): REST nhận
  *     {@code ProblemDetail}, trang web nhận trang lỗi 403.</li>
  *     <li>CSRF bật cho mọi request ghi: token nằm trong cookie {@code XSRF-TOKEN}, client gửi lại qua header
  *     {@code X-XSRF-TOKEN} (Swagger UI tự làm qua {@code springdoc.swagger-ui.csrf.enabled}); trang Thymeleaf đọc
- *     token từ {@code <meta name="_csrf">} / form {@code th:action} chèn hidden {@code _csrf}.</li>
+ *     token từ {@code <meta name="_csrf">} / form {@code th:action} chèn hidden {@code _csrf}. Ngoại lệ: {@code /ws/**}
+ *     (POST của transport SockJS) — CSRF kiểm ở frame STOMP CONNECT ({@link WebSocketSecurityConfig}).</li>
  *     <li>Đăng nhập OAuth2 (Facebook, X): {@code /oauth2/authorization/{registrationId}} → callback
  *     {@code /login/oauth2/code/{registrationId}} → luôn redirect {@code /dashboard}; lỗi → {@code /login?error}.</li>
  *     <li>Logout chỉ nhận POST (có CSRF), redirect cố định về {@code /login?logout} (không open redirect).</li>
@@ -111,8 +115,13 @@ public class SecurityConfig {
                         .accessDeniedHandler(new LoggingAccessDeniedHandler(restRequestMatcher)))
                 // Như csrf.spa() (cookie XSRF-TOKEN đọc được bằng JS) nhưng header nhận cả token đã mask từ <meta>
                 .csrf(csrf -> csrf
-                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                        .csrfTokenRequestHandler(new CsrfHeaderOrFormTokenRequestHandler()))
+                        .csrfTokenRepository(csrfTokenRepository())
+                        .csrfTokenRequestHandler(new CsrfHeaderOrFormTokenRequestHandler())
+                        // Ngoại lệ duy nhất: transport dự phòng của SockJS (xhr_send, xhr_streaming...) là POST do thư
+                        // viện SockJS tự gửi, không gắn được header CSRF. CSRF của kết nối WebSocket được kiểm ở frame
+                        // STOMP CONNECT (WebSocketSecurityConfig) — CONNECT bị từ chối thì không frame nào được xử lý.
+                        // CsrfFilter vẫn nạp token cho các request này nên handshake đọc được token để so ở CONNECT.
+                        .ignoringRequestMatchers(StompDestinations.ENDPOINT_PATTERN))
                 .addFilterAfter(new CsrfCookieFilter(), CsrfFilter.class)
                 // Session đã đăng nhập nhưng user không còn trong DB → logout rồi xử lý như request ẩn danh
                 .addFilterBefore(new StaleSessionFilter(currentUserService), AnonymousAuthenticationFilter.class)
@@ -140,6 +149,12 @@ public class SecurityConfig {
         return http.build();
     }
 
+    private static CookieCsrfTokenRepository csrfTokenRepository() {
+        CookieCsrfTokenRepository repository = CookieCsrfTokenRepository.withHttpOnlyFalse();
+        repository.setCookieName(CsrfCookies.NAME);
+        return repository;
+    }
+
     private static LogoutSuccessHandler logoutSuccessHandler() {
         SimpleUrlLogoutSuccessHandler handler = new SimpleUrlLogoutSuccessHandler();
         handler.setDefaultTargetUrl(LOGOUT_SUCCESS_URL);
@@ -147,9 +162,14 @@ public class SecurityConfig {
         return handler;
     }
 
+    /**
+     * Request do JS/client gọi (không phải trang web): chưa đăng nhập → 401 thay vì redirect trang login. Gồm cả
+     * handshake SockJS — redirect sang HTML login làm client SockJS báo lỗi khó hiểu thay vì 401.
+     */
     private static RequestMatcher restRequestMatcher() {
         PathPatternRequestMatcher.Builder path = PathPatternRequestMatcher.withDefaults();
-        return new OrRequestMatcher(path.matcher("/api/**"), path.matcher("/v3/api-docs/**"));
+        return new OrRequestMatcher(path.matcher("/api/**"), path.matcher("/v3/api-docs/**"),
+                path.matcher(StompDestinations.ENDPOINT_PATTERN));
     }
 
     /**

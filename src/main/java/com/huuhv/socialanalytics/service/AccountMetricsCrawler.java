@@ -123,7 +123,7 @@ public class AccountMetricsCrawler {
         int saved = socialMetricService.recordSnapshots(account.id(), crawled, nowUtc, nowUtc);
         log.info("Account {} ({}): saved {} snapshots for {} posts", account.id(), account.provider(),
                 saved, posts.size());
-        return CrawlResult.succeeded(account.id(), saved);
+        return CrawlResult.succeeded(account.id(), account.userId(), saved);
     }
 
     private boolean isPast(Instant deadline) {

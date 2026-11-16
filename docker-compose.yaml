@@ -65,6 +65,10 @@ services:
       <<: *app-env
       # Compose dùng cho môi trường local → mặc định profile dev (bật Swagger, log DEBUG)
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      # Múi giờ server (image chạy UTC nếu không đặt): ngày của biểu đồ, giờ Excel import/export, giờ hiển thị và log
+      # theo múi giờ này (bean Clock = múi giờ JVM). DB luôn lưu UTC nên đổi giá trị không làm sai dữ liệu đã lưu.
+      # Không đặt cho service maven/maven-testcontainers — test không phụ thuộc múi giờ máy chạy.
+      TZ: ${APP_TZ:-Asia/Ho_Chi_Minh}
       # Profile dev mặc định chạy Artemis embedded → container app dùng broker riêng của compose
       # (đổi mode thì tắt luôn broker embedded — 2 biến phải đi cùng nhau, xem application-dev.yml)
       ARTEMIS_MODE: native

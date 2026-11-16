@@ -25,6 +25,7 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Set;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -106,7 +107,8 @@ class UpdateSocialMetricsJobIntegrationTest {
     void crawlsAccountsInParallelPoolAndSkipsExpiredToken() {
         UpdateSocialMetricsJob.Summary summary = job.runOnce();
 
-        assertThat(summary).isEqualTo(new UpdateSocialMetricsJob.Summary(2, 1, 1, 0, 2));
+        assertThat(summary).isEqualTo(new UpdateSocialMetricsJob.Summary(2, 1, 1, 0, 2,
+                Set.of(activeAccount.getUser().getId())));
         assertThat(writerThreads).singleElement().asString().startsWith("social-crawler-");
 
         List<SocialMetric> snapshots = socialMetricRepository.findAll();
@@ -132,7 +134,8 @@ class UpdateSocialMetricsJobIntegrationTest {
 
         UpdateSocialMetricsJob.Summary summary = job.runOnce();
 
-        assertThat(summary).isEqualTo(new UpdateSocialMetricsJob.Summary(2, 1, 1, 0, 1));
+        assertThat(summary).isEqualTo(new UpdateSocialMetricsJob.Summary(2, 1, 1, 0, 1,
+                Set.of(activeAccount.getUser().getId())));
         assertThat(socialMetricRepository.findAll()).extracting(metric -> metric.getPost().getId())
                 .containsExactly(fbPost1.getId());
         assertThat(socialAccountRepository.findById(activeAccount.getId()).orElseThrow().getLastUpdatedAt())

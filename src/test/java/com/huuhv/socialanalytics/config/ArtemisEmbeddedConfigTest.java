@@ -1,6 +1,7 @@
 package com.huuhv.socialanalytics.config;
 
 import com.huuhv.socialanalytics.messaging.QueueNames;
+import com.huuhv.socialanalytics.messaging.TopicNames;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.config.impl.ConfigurationImpl;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
@@ -19,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Nạp chính file {@code artemis/broker.properties} mà broker riêng của docker compose dùng: tên address/DLQ trong file
- * phải khớp {@link QueueNames}, không có khoá sai (broker riêng chỉ bỏ qua khoá sai, không báo lỗi).
+ * phải khớp {@link QueueNames} / {@link TopicNames}, không có khoá sai (broker riêng chỉ bỏ qua khoá sai, không báo lỗi).
  */
 class ArtemisEmbeddedConfigTest {
 
@@ -61,6 +62,20 @@ class ArtemisEmbeddedConfigTest {
         assertThat(settings.getRedeliveryDelay()).isEqualTo(5_000L);
         assertThat(settings.getRedeliveryMultiplier()).isEqualTo(2.0);
         assertThat(settings.getMaxRedeliveryDelay()).isEqualTo(300_000L);
+    }
+
+    @Test
+    void productionFileDeclaresDashboardEventsAsMulticastAddressWithoutPreCreatedQueues() {
+        ConfigurationImpl configuration = apply(MAIN);
+
+        // Mỗi instance tự tạo subscription non-durable; queue tạo sẵn sẽ dồn message không ai đọc
+        assertThat(configuration.getAddressConfigurations())
+                .filteredOn(address -> address.getName().equals(TopicNames.DASHBOARD_EVENTS))
+                .singleElement()
+                .satisfies(address -> {
+                    assertThat(address.getRoutingTypes()).containsExactly(RoutingType.MULTICAST);
+                    assertThat(address.getQueueConfigs()).isEmpty();
+                });
     }
 
     @Test

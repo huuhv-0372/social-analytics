@@ -2,6 +2,7 @@ package com.huuhv.socialanalytics.service;
 
 import com.huuhv.socialanalytics.dto.request.SocialMetricRequest;
 import com.huuhv.socialanalytics.dto.response.PageResponse;
+import com.huuhv.socialanalytics.dto.response.ProviderDailyTotals;
 import com.huuhv.socialanalytics.dto.response.SocialMetricResponse;
 import com.huuhv.socialanalytics.entity.Post;
 import com.huuhv.socialanalytics.entity.SocialMetric;
@@ -19,8 +20,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Snapshot metric của bài viết. Snapshot là bất biến nên không có thao tác cập nhật.
@@ -34,6 +37,8 @@ public class SocialMetricService {
     private static final Set<String> SORTABLE_PROPERTIES = Set.of("collectedAt", "likes", "shares", "comments", "followers");
     private static final Sort DEFAULT_SORT = Sort.by(Sort.Direction.DESC, "collectedAt");
     private static final String RESOURCE = "Metric";
+    /** Định dạng DATETIME(6) MySQL đọc được trong JSON_TABLE. */
+    private static final DateTimeFormatter DAY_END_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
 
     private final SocialMetricRepository socialMetricRepository;
     private final PostService postService;
@@ -116,6 +121,25 @@ public class SocialMetricService {
         int saved = socialMetricRepository.insertAll(snapshots);
         socialAccountService.markMetricsUpdated(accountId, updatedAtUtc);
         return saved;
+    }
+
+    /**
+     * Metric theo provider của các bài thuộc {@code userId} tại từng mốc (giờ UTC), 1 query cho mọi mốc — xem
+     * {@link SocialMetricRepository#sumLatestByProviderPerDay}. Caller chịu trách nhiệm {@code userId} là owner đang
+     * đăng nhập.
+     *
+     * @param dayEndsUtc các mốc (thường là đầu ngày kế tiếp); kết quả có {@code dayIndex} = vị trí trong danh sách, từ 1
+     */
+    @Transactional(readOnly = true)
+    public List<ProviderDailyTotals> sumLatestByProviderPerDay(Long userId, List<LocalDateTime> dayEndsUtc) {
+        if (dayEndsUtc.isEmpty()) {
+            return List.of();
+        }
+        // Mảng JSON cho JSON_TABLE, dựng từ LocalDateTime do server tính (không có input người dùng) và vẫn bind tham số
+        String dayEndsJson = dayEndsUtc.stream()
+                .map(dayEnd -> '"' + DAY_END_FORMAT.format(dayEnd) + '"')
+                .collect(Collectors.joining(",", "[", "]"));
+        return socialMetricRepository.sumLatestByProviderPerDay(userId, dayEndsJson);
     }
 
     @Transactional
