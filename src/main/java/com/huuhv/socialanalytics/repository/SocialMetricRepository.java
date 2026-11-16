@@ -1,7 +1,9 @@
 package com.huuhv.socialanalytics.repository;
 
 import com.huuhv.socialanalytics.dto.response.ProviderDailyTotals;
+import com.huuhv.socialanalytics.dto.response.SocialMetricReportRow;
 import com.huuhv.socialanalytics.entity.SocialMetric;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -20,6 +22,12 @@ public interface SocialMetricRepository extends JpaRepository<SocialMetric, Long
     /** Tìm theo id kèm điều kiện chủ sở hữu của bài viết — chống IDOR. */
     Optional<SocialMetric> findByIdAndPostUserId(Long id, Long userId);
 
+    /**
+     * Bài đã có snapshot đúng thời điểm này (giờ UTC) — tra trên unique index {@code uk_social_metrics_post_collected}.
+     * Chỉ là kiểm tra sớm để trả lỗi rõ ràng; request song song vẫn có thể ghi xen giữa → unique index chặn.
+     */
+    boolean existsByPostIdAndCollectedAt(Long postId, LocalDateTime collectedAt);
+
     /** Snapshot của 1 bài viết, lọc khoảng thời gian tuỳ chọn (giờ UTC; {@code null} = không giới hạn). */
     @Query(value = """
             SELECT m FROM SocialMetric m
@@ -37,6 +45,76 @@ public interface SocialMetricRepository extends JpaRepository<SocialMetric, Long
                               @Param("from") LocalDateTime from,
                               @Param("to") LocalDateTime to,
                               Pageable pageable);
+
+    /**
+     * File export snapshot metric của user (projection, không load Entity): mọi snapshot của các bài thuộc
+     * {@code userId}, lọc khoảng {@code collectedAt} tuỳ chọn (giờ UTC, 2 đầu tính cả; {@code null} = không giới hạn),
+     * sắp theo bài rồi thời gian. Caller truyền {@code limit} = giới hạn + 1 để biết có vượt giới hạn hay không.
+     * <p>
+     * Hiệu năng: JOIN từ {@code posts} (unique index bắt đầu bằng {@code user_id}) sang
+     * {@code uk_social_metrics_post_collected (post_id, collected_at)} — lọc khoảng thời gian bằng range trên index của
+     * từng bài; sắp xếp cần filesort (top-N vì có LIMIT) trên các snapshot khớp điều kiện → khoảng thời gian càng hẹp
+     * càng rẻ.
+     */
+    @Query("""
+            SELECT new com.huuhv.socialanalytics.dto.response.SocialMetricReportRow(
+                p.provider, p.externalId, m.likes, m.shares, m.comments, m.followers, m.collectedAt)
+            FROM SocialMetric m JOIN m.post p
+            WHERE p.user.id = :userId
+              AND (:from IS NULL OR m.collectedAt >= :from)
+              AND (:to IS NULL OR m.collectedAt <= :to)
+            ORDER BY p.provider, p.externalId, m.collectedAt, m.id
+            """)
+    List<SocialMetricReportRow> findReportRows(@Param("userId") Long userId,
+                                               @Param("from") LocalDateTime from,
+                                               @Param("to") LocalDateTime to,
+                                               Limit limit);
+
+    /**
+     * Số snapshot {@link #findReportRows} sẽ trả về, đếm tối đa {@code maxCount} (dừng sớm, không sắp xếp): kiểm tra
+     * giới hạn dòng của export trước khi tính tần suất và trước câu query có filesort. Chi phí ≤ {@code maxCount} lần
+     * đọc index, không phụ thuộc tổng số snapshot của user. Cùng điều kiện lọc với {@link #findReportRows} — sửa 1 câu
+     * thì sửa cả 2.
+     */
+    @Query(value = """
+            SELECT COUNT(*) FROM (
+                SELECT 1 FROM social_metrics m
+                JOIN posts p ON p.id = m.post_id
+                WHERE p.user_id = :userId
+                  AND (:from IS NULL OR m.collected_at >= :from)
+                  AND (:to IS NULL OR m.collected_at <= :to)
+                LIMIT :maxCount
+            ) AS matched
+            """, nativeQuery = true)
+    long countReportRowsUpTo(@Param("userId") Long userId,
+                             @Param("from") LocalDateTime from,
+                             @Param("to") LocalDateTime to,
+                             @Param("maxCount") int maxCount);
+
+    /**
+     * Vị trí (đánh từ 1, theo thứ tự trong mảng) của các snapshot <b>đã có</b> trong DB, trong danh sách ứng viên
+     * {@code snapshotsJson} = mảng JSON {@code [{"postId": 1, "from": "yyyy-MM-dd HH:mm:ss.SSSSSS", "to": "..."}]} —
+     * snapshot trùng khi cùng bài và {@code collected_at} thuộc {@code [from, to)} (giờ UTC). 1 query cho cả danh sách:
+     * {@code JSON_TABLE} (MySQL 8) dựng bảng tạm, mỗi ứng viên 1 lần tra range trên
+     * {@code uk_social_metrics_post_collected (post_id, collected_at)}.
+     * <p>
+     * JSON do Service dựng từ id bài đã kiểm tra quyền sở hữu + giờ đã parse (không có chuỗi người dùng nhập) và vẫn
+     * truyền dạng tham số bind.
+     */
+    @Query(value = """
+            SELECT candidate.idx
+            FROM JSON_TABLE(:snapshotsJson, '$[*]' COLUMNS (
+                    idx FOR ORDINALITY,
+                    post_id BIGINT PATH '$.postId',
+                    collected_from DATETIME(6) PATH '$.from',
+                    collected_to DATETIME(6) PATH '$.to')) AS candidate
+            WHERE EXISTS (
+                SELECT 1 FROM social_metrics m
+                WHERE m.post_id = candidate.post_id
+                  AND m.collected_at >= candidate.collected_from
+                  AND m.collected_at < candidate.collected_to)
+            """, nativeQuery = true)
+    List<Number> findExistingSnapshotPositions(@Param("snapshotsJson") String snapshotsJson);
 
     /**
      * Metric theo provider của các bài thuộc user tại <b>từng</b> mốc trong {@code dayEndsJson} — 1 query cho cả biểu đồ

@@ -92,7 +92,11 @@ public class PostUpsertService {
     public record Result(long importId, int created, int updated, int failed) {
     }
 
-    /** Collation của MySQL (utf8mb4_unicode_ci) không phân biệt hoa thường → so khớp externalId cũng vậy. */
+    /**
+     * Khoá so khớp externalId giống collation {@code utf8mb4_unicode_ci} của DB (không phân biệt hoa thường). Chỉ đúng
+     * với externalId hợp lệ ({@link PostRequest#isValidExternalId} — ASCII chữ/số/{@code _}/{@code -}): ngoài tập đó
+     * collation còn bỏ dấu, coi {@code ß} = {@code ss}, bỏ khoảng trắng cuối... mà lowercase không làm được.
+     */
     static String matchKey(Provider provider, String externalId) {
         return provider + ":" + externalId.toLowerCase(Locale.ROOT);
     }

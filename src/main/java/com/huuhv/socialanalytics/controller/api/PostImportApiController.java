@@ -37,7 +37,9 @@ public class PostImportApiController {
                     + "spring.servlet.multipart.max-file-size và app.import.max-uncompressed-size, "
                     + "số dòng theo app.import.max-rows. File mẫu: GET /api/import-posts/template. "
                     + "Response có importId của lần import; thống kê tổng hợp được cập nhật bất đồng bộ sau đó "
-                    + "(message JMS IMPORT_COMPLETED).")
+                    + "(message JMS IMPORT_COMPLETED). Mọi dòng đều lỗi → không ghi gì (importId = null, không có "
+                    + "lịch sử / thống kê) và không tính tần suất app.import.min-interval: sửa file rồi gửi lại ngay "
+                    + "được; có dòng hợp lệ mà import quá sớm → 429 + Retry-After.")
     @PostMapping(path = "/api/import-posts", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ImportResultResponse importPosts(@RequestParam("file") MultipartFile file) {
         return postImportService.importPosts(file);

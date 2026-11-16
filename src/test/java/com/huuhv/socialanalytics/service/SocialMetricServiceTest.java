@@ -6,8 +6,11 @@ import com.huuhv.socialanalytics.entity.Post;
 import com.huuhv.socialanalytics.entity.SocialMetric;
 import com.huuhv.socialanalytics.entity.User;
 import com.huuhv.socialanalytics.exception.BadRequestException;
+import com.huuhv.socialanalytics.exception.DuplicateResourceException;
 import com.huuhv.socialanalytics.exception.ResourceNotFoundException;
 import com.huuhv.socialanalytics.repository.SocialMetricRepository;
+import com.huuhv.socialanalytics.service.SocialMetricService.SnapshotImport;
+import com.huuhv.socialanalytics.service.SocialMetricService.SnapshotKey;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -38,6 +41,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyString;
 
 @ExtendWith(MockitoExtension.class)
 class SocialMetricServiceTest {
@@ -58,6 +62,9 @@ class SocialMetricServiceTest {
 
     @Mock
     private SocialAccountService socialAccountService;
+
+    @Mock
+    private DashboardEventService dashboardEventService;
 
     @InjectMocks
     private SocialMetricService socialMetricService;
@@ -162,6 +169,8 @@ class SocialMetricServiceTest {
         assertThat(response.postId()).isEqualTo(10L);
         assertThat(response.likes()).isEqualTo(100L);
         assertThat(response.collectedAt()).isEqualTo(NOW_INSTANT);
+        // Như job crawl / import Excel: dashboard của owner được báo làm mới
+        verify(dashboardEventService).metricsUpdated(Set.of(OWNER_ID));
     }
 
     @Test
@@ -178,6 +187,40 @@ class SocialMetricServiceTest {
         assertThat(captor.getValue().getCollectedAt()).isEqualTo(NOW);
     }
 
+    /** Mọi đường ghi cắt collectedAt về mili giây — unique (post_id, collected_at) so trên cùng độ chính xác. */
+    @Test
+    void createTruncatesCollectedAtToMillisAndChecksDuplicateOnThatValue() {
+        when(postService.getOwnedPost(10L)).thenReturn(post);
+        when(socialMetricRepository.save(any(SocialMetric.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        LocalDateTime millis = LocalDateTime.of(2026, 1, 1, 12, 0, 0, 123_000_000);
+
+        socialMetricService.create(new SocialMetricRequest(10L, 1L, 1L, 1L, 1L,
+                Instant.parse("2026-01-01T12:00:00.123456Z")));
+
+        verify(socialMetricRepository).existsByPostIdAndCollectedAt(10L, millis);
+        ArgumentCaptor<SocialMetric> captor = ArgumentCaptor.forClass(SocialMetric.class);
+        verify(socialMetricRepository).save(captor.capture());
+        assertThat(captor.getValue().getCollectedAt()).isEqualTo(millis);
+    }
+
+    @Test
+    void createRejectsSnapshotAlreadyRecordedAtSameTime() {
+        when(postService.getOwnedPost(10L)).thenReturn(post);
+        when(socialMetricRepository.existsByPostIdAndCollectedAt(10L, NOW)).thenReturn(true);
+
+        assertThatThrownBy(() -> socialMetricService.create(new SocialMetricRequest(10L, 1L, 1L, 1L, 1L, NOW_INSTANT)))
+                .isInstanceOf(DuplicateResourceException.class);
+        verify(socialMetricRepository, never()).save(any());
+        verifyNoInteractions(dashboardEventService);
+    }
+
+    @Test
+    void toSnapshotTimeIsUtcTruncatedToMillis() {
+        assertThat(SocialMetricService.toSnapshotTime(Instant.parse("2026-01-01T19:00:00.999999999+07:00")))
+                .isEqualTo(LocalDateTime.of(2026, 1, 1, 12, 0, 0, 999_000_000));
+        assertThat(SocialMetricService.toSnapshotTime(null)).isNull();
+    }
+
     @Test
     void createForPostOfOtherUserIsNotFound() {
         when(postService.getOwnedPost(99L)).thenThrow(new ResourceNotFoundException("Post"));
@@ -185,6 +228,7 @@ class SocialMetricServiceTest {
         assertThatThrownBy(() -> socialMetricService.create(new SocialMetricRequest(99L, 1L, 1L, 1L, 1L, NOW_INSTANT)))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(socialMetricRepository, never()).save(any());
+        verifyNoInteractions(dashboardEventService);
     }
 
     @Test
@@ -195,6 +239,7 @@ class SocialMetricServiceTest {
         assertThatThrownBy(() -> socialMetricService.delete(5L))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(socialMetricRepository, never()).delete(any());
+        verifyNoInteractions(dashboardEventService);
     }
 
     @Test
@@ -206,6 +251,31 @@ class SocialMetricServiceTest {
         socialMetricService.delete(5L);
 
         verify(socialMetricRepository).delete(existing);
+        verify(dashboardEventService).metricsUpdated(Set.of(OWNER_ID));
+    }
+
+    /**
+     * Snapshot trùng = cùng bài + cùng collectedAt tới mili giây (độ chính xác ô Excel): khoảng [t, t + 1ms) giờ UTC,
+     * 1 query cho cả danh sách, vị trí trả về đổi từ 1-based (JSON_TABLE) sang 0-based.
+     */
+    @Test
+    void findExistingSnapshotIndexesQueriesMillisecondWindowsInUtcOnce() {
+        when(socialMetricRepository.findExistingSnapshotPositions(anyString())).thenReturn(List.of(2L));
+
+        Set<Integer> existing = socialMetricService.findExistingSnapshotIndexes(List.of(
+                new SnapshotKey(10L, NOW_INSTANT),
+                new SnapshotKey(11L, Instant.parse("2026-01-01T19:00:00.123456789+07:00"))));
+
+        assertThat(existing).containsExactly(1);
+        verify(socialMetricRepository).findExistingSnapshotPositions(
+                "[{\"postId\":10,\"from\":\"2026-01-01 12:00:00.000000\",\"to\":\"2026-01-01 12:00:00.001000\"},"
+                        + "{\"postId\":11,\"from\":\"2026-01-01 12:00:00.123000\",\"to\":\"2026-01-01 12:00:00.124000\"}]");
+    }
+
+    @Test
+    void findExistingSnapshotIndexesOfNothingDoesNotQuery() {
+        assertThat(socialMetricService.findExistingSnapshotIndexes(List.of())).isEmpty();
+        verifyNoInteractions(socialMetricRepository);
     }
 
     @Test
@@ -238,6 +308,23 @@ class SocialMetricServiceTest {
     }
 
     @Test
+    void recordSnapshotsTruncatesCollectedAtToMillis() {
+        when(postService.lockExistingIds(List.of(10L))).thenReturn(Set.of(10L));
+        when(postService.getReference(10L)).thenReturn(post);
+        when(socialMetricRepository.insertAll(anyList())).thenReturn(1);
+        LocalDateTime micros = LocalDateTime.of(2026, 1, 1, 12, 0, 0, 123_456_000);
+
+        socialMetricService.recordSnapshots(7L, List.of(new CrawledMetric(10L, 5, 1, 2, 300)), micros, micros);
+
+        ArgumentCaptor<List<SocialMetric>> inserted = ArgumentCaptor.captor();
+        verify(socialMetricRepository).insertAll(inserted.capture());
+        assertThat(inserted.getValue()).extracting(SocialMetric::getCollectedAt)
+                .containsExactly(LocalDateTime.of(2026, 1, 1, 12, 0, 0, 123_000_000));
+        // Mốc last_updated_at không phải snapshot — giữ nguyên độ chính xác
+        verify(socialAccountService).markMetricsUpdated(7L, micros);
+    }
+
+    @Test
     void recordSnapshotsSkipsPostsDeletedWhileCrawlingAndKeepsOthers() {
         when(postService.lockExistingIds(List.of(10L, 11L))).thenReturn(Set.of(10L));
         when(postService.getReference(10L)).thenReturn(post);
@@ -257,11 +344,54 @@ class SocialMetricServiceTest {
 
     @Test
     void recordSnapshotsWithoutMetricsStillMarksAccountUpdated() {
-        when(postService.lockExistingIds(List.of())).thenReturn(Set.of());
-
         assertThat(socialMetricService.recordSnapshots(7L, List.of(), NOW, NOW)).isZero();
 
         verify(socialAccountService).markMetricsUpdated(7L, NOW);
+        // Không có gì để ghi → không khoá bài, không INSERT rỗng
+        verifyNoInteractions(postService, socialMetricRepository);
+    }
+
+    @Test
+    void importSnapshotsInsertsInUtcSkipsDeletedPostsAndNotifiesOwner() {
+        // 10 lặp 2 lần: chỉ khoá mỗi bài 1 lần
+        when(postService.lockExistingIds(List.of(10L, 11L))).thenReturn(Set.of(10L));
+        when(postService.getReference(10L)).thenReturn(post);
+        when(socialMetricRepository.insertAll(anyList())).thenReturn(2);
+
+        SnapshotImport result = socialMetricService.importSnapshots(OWNER_ID, List.of(
+                new SocialMetricRequest(10L, 5L, 1L, 2L, 300L, Instant.parse("2026-01-01T02:00:00.1234567Z")),
+                new SocialMetricRequest(11L, 8L, 0L, 0L, 40L, NOW_INSTANT),
+                new SocialMetricRequest(10L, 6L, 1L, 2L, 301L, NOW_INSTANT)));
+
+        // Bài 11 bị xoá giữa lúc tra và lúc ghi → trả về để Service import báo lỗi đúng dòng
+        assertThat(result).isEqualTo(new SnapshotImport(2, Set.of(11L)));
+        ArgumentCaptor<List<SocialMetric>> inserted = ArgumentCaptor.captor();
+        verify(socialMetricRepository).insertAll(inserted.capture());
+        assertThat(inserted.getValue())
+                .extracting(SocialMetric::getPost, SocialMetric::getLikes, SocialMetric::getFollowers,
+                        SocialMetric::getCollectedAt)
+                .containsExactly(
+                        // Lưu giờ UTC, cắt về mili giây (độ chính xác ô Excel, unique (post_id, collected_at))
+                        tuple(post, 5L, 300L, LocalDateTime.of(2026, 1, 1, 2, 0, 0, 123_000_000)),
+                        tuple(post, 6L, 301L, NOW));
+        verify(postService, never()).getReference(11L);
+        // Dashboard của owner làm mới (gửi sau commit); không đụng mốc last_updated_at của job crawl
+        verify(dashboardEventService).metricsUpdated(Set.of(OWNER_ID));
+        verifyNoInteractions(socialAccountService);
+    }
+
+    @Test
+    void importSnapshotsWithNothingSavedDoesNotNotify() {
+        when(postService.lockExistingIds(List.of(10L))).thenReturn(Set.of());
+        when(socialMetricRepository.insertAll(List.of())).thenReturn(0);
+
+        assertThat(socialMetricService.importSnapshots(OWNER_ID,
+                List.of(new SocialMetricRequest(10L, 1L, 1L, 1L, 1L, NOW_INSTANT))))
+                .isEqualTo(new SnapshotImport(0, Set.of(10L)));
+        assertThat(socialMetricService.importSnapshots(OWNER_ID, List.of()))
+                .isEqualTo(new SnapshotImport(0, Set.of()));
+
+        verifyNoInteractions(dashboardEventService);
     }
 
     private void givenCurrentUser() {

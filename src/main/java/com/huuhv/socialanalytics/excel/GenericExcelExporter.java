@@ -1,6 +1,6 @@
 package com.huuhv.socialanalytics.excel;
 
-import com.huuhv.socialanalytics.excel.ExcelColumnMetadata.FieldMeta;
+import com.huuhv.socialanalytics.excel.ExcelColumnMetadata.ColumnMeta;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.Font;
@@ -18,6 +18,8 @@ import java.util.Set;
 
 /**
  * Ghi danh sách DTO ra 1 sheet .xlsx: dòng 1 là header theo {@link ExcelColumn#name()}, cột theo {@link ExcelColumn#order()}.
+ * Dùng chung cho mọi DTO export (vd {@code PostReportRow}, {@code SocialMetricReportRow}): giá trị đọc qua getter /
+ * accessor của record ({@link ExcelColumnMetadata}, metadata cache theo class).
  * File ghi ra đọc lại được bằng {@link GenericExcelImporter} (round-trip) khi DTO import có cùng tên cột.
  * <p>
  * Dùng {@link SXSSFWorkbook} (chỉ giữ cửa sổ dòng trong bộ nhớ, phần còn lại ghi ra file tạm) và luôn
@@ -52,7 +54,7 @@ public class GenericExcelExporter {
      * @throws IllegalArgumentException khi DTO có field kiểu không hỗ trợ (lỗi lập trình)
      */
     public <T> void write(List<T> rows, Class<T> type, String sheetName, OutputStream out) throws IOException {
-        List<FieldMeta> fields = ExcelColumnMetadata.of(type);
+        List<ColumnMeta> fields = ExcelColumnMetadata.of(type);
         checkSupportedTypes(type, fields);
         SXSSFWorkbook workbook = new SXSSFWorkbook(ROW_ACCESS_WINDOW);
         // try-with-resources: close() lỗi không che exception gốc (addSuppressed);
@@ -72,23 +74,23 @@ public class GenericExcelExporter {
         }
     }
 
-    private static void checkSupportedTypes(Class<?> type, List<FieldMeta> fields) {
-        for (FieldMeta meta : fields) {
+    private static void checkSupportedTypes(Class<?> type, List<ColumnMeta> fields) {
+        for (ColumnMeta meta : fields) {
             Class<?> fieldType = meta.type();
             boolean supported = fieldType == String.class || fieldType == Boolean.class || fieldType == boolean.class
                     || NUMERIC_TYPES.contains(fieldType)
                     || fieldType == LocalDate.class || fieldType == LocalDateTime.class || fieldType.isEnum();
             if (!supported) {
                 throw new IllegalArgumentException("Unsupported @ExcelColumn type " + fieldType.getName()
-                        + " on " + type.getName() + "." + meta.field().getName());
+                        + " on " + type.getName() + "." + meta.property());
             }
         }
     }
 
-    private static void writeHeader(Sheet sheet, List<FieldMeta> fields, Styles styles) {
+    private static void writeHeader(Sheet sheet, List<ColumnMeta> fields, Styles styles) {
         Row header = sheet.createRow(0);
         for (int c = 0; c < fields.size(); c++) {
-            FieldMeta meta = fields.get(c);
+            ColumnMeta meta = fields.get(c);
             Cell cell = header.createCell(c);
             cell.setCellValue(meta.name());
             cell.setCellStyle(styles.header());
@@ -101,9 +103,10 @@ public class GenericExcelExporter {
         sheet.createFreezePane(0, 1);
     }
 
-    private static <T> void writeRow(Row row, T value, List<FieldMeta> fields, Styles styles) {
+    private static <T> void writeRow(Row row, T value, List<ColumnMeta> fields, Styles styles) {
         for (int c = 0; c < fields.size(); c++) {
-            Object cellValue = read(fields.get(c), value);
+            // Giá trị lấy qua getter (Method.invoke) — record: accessor của component
+            Object cellValue = fields.get(c).read(value);
             if (cellValue == null) {
                 continue;
             }
@@ -132,14 +135,6 @@ public class GenericExcelExporter {
         cell.setCellValue(text);
         if (!text.isEmpty() && FORMULA_TRIGGERS.indexOf(text.charAt(0)) >= 0) {
             cell.setCellStyle(styles.quoted());
-        }
-    }
-
-    private static Object read(FieldMeta meta, Object target) {
-        try {
-            return meta.field().get(target);
-        } catch (IllegalAccessException e) {
-            throw new IllegalStateException("Cannot read field " + meta.field().getName(), e);
         }
     }
 

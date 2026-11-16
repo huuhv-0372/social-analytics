@@ -3,6 +3,7 @@ package com.huuhv.socialanalytics.controller.web;
 import com.huuhv.socialanalytics.config.SecurityConfig;
 import com.huuhv.socialanalytics.config.WebConfig;
 import com.huuhv.socialanalytics.dto.response.DashboardResponse;
+import com.huuhv.socialanalytics.dto.response.ExchangeRateResponse;
 import com.huuhv.socialanalytics.dto.response.ImportStatisticsResponse;
 import com.huuhv.socialanalytics.exception.AuthenticationRequiredException;
 import com.huuhv.socialanalytics.security.AppOAuth2User;
@@ -10,6 +11,7 @@ import com.huuhv.socialanalytics.security.CsrfCookies;
 import com.huuhv.socialanalytics.service.CurrentUserService;
 import com.huuhv.socialanalytics.service.CustomOAuth2UserService;
 import com.huuhv.socialanalytics.service.DashboardService;
+import com.huuhv.socialanalytics.service.ExchangeRateService;
 import com.huuhv.socialanalytics.websocket.StompDestinations;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,6 +27,7 @@ import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.ZoneId;
 import java.time.Instant;
@@ -72,6 +75,10 @@ class DashboardControllerTest {
     @MockitoBean
     private DashboardService dashboardService;
 
+    // Mặc định mock trả null = không lấy được tỷ giá
+    @MockitoBean
+    private ExchangeRateService exchangeRateService;
+
     @BeforeEach
     void stubEmptyDashboard() {
         // Mặc định: chưa có số liệu (test cần dữ liệu cụ thể tự stub lại)
@@ -84,7 +91,55 @@ class DashboardControllerTest {
                 .andExpect(status().isFound())
                 .andExpect(redirectedUrl("/login"));
 
-        verifyNoInteractions(dashboardService);
+        verifyNoInteractions(dashboardService, exchangeRateService);
+    }
+
+    @Test
+    void showsExchangeRateWithFetchTimeInServerTimeZone() throws Exception {
+        ExchangeRateResponse rate = new ExchangeRateResponse("USD", "VND", new BigDecimal("25412.345678"),
+                Instant.parse("2026-11-13T05:00:00Z"), Instant.parse("2026-11-13T05:42:17.5Z"), false);
+        when(exchangeRateService.getCurrentRate()).thenReturn(rate);
+
+        mockMvc.perform(get("/dashboard").with(oauth2Login()))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("exchangeRate", rate))
+                .andExpect(content().string(containsString("Exchange rate")))
+                .andExpect(content().string(containsString(
+                        "<span id=\"exchange-rate-value\">1 USD = 25,412.35 VND</span>")))
+                .andExpect(content().string(containsString("datetime=\"2026-11-13T12:42:17+07:00\"")))
+                .andExpect(content().string(containsString(">2026-11-13 12:42:17 +07:00</time>")))
+                .andExpect(content().string(not(containsString("exchange-rate-stale"))))
+                .andExpect(content().string(not(containsString("Không lấy được tỷ giá"))));
+    }
+
+    @Test
+    void showsStaleExchangeRateWhenLastCallFailed() throws Exception {
+        // Tỷ giá nhỏ hơn 1 (vd VND/USD) hiện đủ 6 chữ số lẻ thay vì làm tròn về 0.00
+        when(exchangeRateService.getCurrentRate()).thenReturn(new ExchangeRateResponse("VND", "USD",
+                new BigDecimal("0.000039"), Instant.parse("2026-11-13T05:00:00Z"),
+                Instant.parse("2026-11-13T05:42:17Z"), true));
+
+        mockMvc.perform(get("/dashboard").with(oauth2Login()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("1 VND = 0.000039 USD")))
+                .andExpect(content().string(containsString("id=\"exchange-rate-stale\"")))
+                .andExpect(content().string(containsString("Dữ liệu cũ")))
+                .andExpect(content().string(containsString(">2026-11-13 12:42:17 +07:00</time>")));
+    }
+
+    @Test
+    void showsUnavailableMessageWhenRateCannotBeFetched() throws Exception {
+        when(exchangeRateService.getCurrentRate()).thenReturn(null);
+
+        mockMvc.perform(get("/dashboard").with(oauth2Login()))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("exchangeRate", nullValue()))
+                .andExpect(content().string(containsString(
+                        "<p id=\"exchange-rate-unavailable\" class=\"mb-0 text-muted\">Không lấy được tỷ giá</p>")))
+                .andExpect(content().string(not(containsString("exchange-rate-value"))))
+                // Các phần khác của dashboard vẫn hiển thị bình thường
+                .andExpect(content().string(containsString("Import statistics")))
+                .andExpect(content().string(containsString("<canvas id=\"metrics-chart\"")));
     }
 
     @Test

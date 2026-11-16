@@ -24,6 +24,7 @@ import org.springframework.data.domain.Sort;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -43,6 +44,9 @@ class PostServiceTest {
 
     @Mock
     private CurrentUserService currentUserService;
+
+    @Mock
+    private DashboardEventService dashboardEventService;
 
     @InjectMocks
     private PostService postService;
@@ -180,13 +184,15 @@ class PostServiceTest {
     }
 
     @Test
-    void deleteRemovesOwnedPost() {
+    void deleteRemovesOwnedPostAndNotifiesOwnerDashboard() {
         Post existing = post(10L);
         when(postRepository.findByIdAndUserId(10L, OWNER_ID)).thenReturn(Optional.of(existing));
 
         postService.delete(10L);
 
         verify(postRepository).delete(existing);
+        // Snapshot của bài bị xoá theo (cascade) → biểu đồ đổi
+        verify(dashboardEventService).metricsUpdated(Set.of(OWNER_ID));
     }
 
     @Test

@@ -341,4 +341,21 @@ class SecurityConfigWebTest {
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(403));
     }
+
+    /**
+     * Profile test bật endpoint SOAP mock → chain riêng {@code /services/**}: ẩn danh, không CSRF vẫn qua filter
+     * (MockMvc không có MessageDispatcherServlet nên tới DispatcherServlet → 404; luồng HTTP thật ở
+     * {@code SoapEndpointHttpTest}). Chain riêng không được nới các đường dẫn khác.
+     */
+    @Test
+    void soapPathIsPublicWithoutCsrfWhenMockEndpointEnabled() throws Exception {
+        mockMvc.perform(post("/services").contentType(MediaType.TEXT_XML).content("<x/>"))
+                .andExpect(status().isNotFound())
+                .andExpect(header().doesNotExist(HttpHeaders.LOCATION))
+                .andExpect(header().string("Content-Security-Policy", SecurityConfig.SOAP_CONTENT_SECURITY_POLICY));
+        mockMvc.perform(post("/servicesx").contentType(MediaType.TEXT_XML).content("<x/>"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/posts"))
+                .andExpect(status().isUnauthorized());
+    }
 }

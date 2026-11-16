@@ -4,6 +4,7 @@ import com.huuhv.socialanalytics.enums.Provider;
 import com.huuhv.socialanalytics.excel.TestWorkbooks.Formula;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.streaming.SXSSFWorkbook;
@@ -15,6 +16,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -31,6 +33,7 @@ class GenericExcelImporterTest {
     private final GenericExcelImporter importer = new GenericExcelImporter();
 
     @Getter
+    @Setter
     @NoArgsConstructor
     static class Sample {
         @ExcelColumn(name = "Name", order = 1)
@@ -53,6 +56,58 @@ class GenericExcelImporterTest {
 
         NoDefaultConstructor(String name) {
             this.name = name;
+        }
+
+        public String getName() {
+            return name;
+        }
+    }
+
+    /** Có getter, thiếu setter → không import được (giá trị gán qua setter). */
+    @Getter
+    @NoArgsConstructor
+    static class ReadOnly {
+        @ExcelColumn(name = "Name", order = 1)
+        private String name;
+    }
+
+    /** Thiếu getter → metadata báo lỗi ngay (cả import lẫn export đều cần). */
+    @Setter
+    @NoArgsConstructor
+    static class WriteOnly {
+        @ExcelColumn(name = "Name", order = 1)
+        private String name;
+    }
+
+    /** Setter có logic (chuẩn hoá) → chứng minh importer gán qua setter, không ghi thẳng vào field. */
+    @NoArgsConstructor
+    static class Normalizing {
+        @ExcelColumn(name = "Code", order = 1)
+        private String code;
+        private int setterCalls;
+
+        public String getCode() {
+            return code;
+        }
+
+        public void setCode(String code) {
+            setterCalls++;
+            this.code = code.toUpperCase(Locale.ROOT);
+        }
+    }
+
+    /** Setter ném lỗi → lỗi lập trình, không bị nuốt thành lỗi dòng. */
+    @NoArgsConstructor
+    static class FailingSetter {
+        @ExcelColumn(name = "Name", order = 1)
+        private String name;
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            throw new IllegalStateException("setter failed");
         }
     }
 
@@ -262,10 +317,54 @@ class GenericExcelImporterTest {
     }
 
     @Test
+    void assignsValuesThroughSetter() {
+        ExcelReadResult<Normalizing> result = importer.read(new ByteArrayInputStream(xlsx(
+                new Object[]{"Code"}, new Object[]{"ab-1"})), Normalizing.class, 10, MAX_BYTES);
+
+        Normalizing row = result.rows().getFirst().value();
+        assertThat(row.getCode()).isEqualTo("AB-1");
+        assertThat(row.setterCalls).isEqualTo(1);
+    }
+
+    @Test
+    void requiresSetterForEveryColumn() {
+        assertThatThrownBy(() -> importer.read(new ByteArrayInputStream(xlsx(new Object[]{"Name"})),
+                ReadOnly.class, 10, MAX_BYTES))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("setName(String)");
+    }
+
+    @Test
+    void requiresGetterForEveryColumn() {
+        assertThatThrownBy(() -> ExcelColumnMetadata.of(WriteOnly.class))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("getName()");
+    }
+
+    @Test
+    void setterFailureIsProgrammingErrorNotRowError() {
+        assertThatThrownBy(() -> importer.read(new ByteArrayInputStream(xlsx(new Object[]{"Name"},
+                new Object[]{"x"})), FailingSetter.class, 10, MAX_BYTES))
+                .isInstanceOf(IllegalStateException.class)
+                .hasRootCauseMessage("setter failed");
+    }
+
+    @Test
+    void metadataExposesPropertyGetterAndSetter() throws Exception {
+        ExcelColumnMetadata.ColumnMeta name = ExcelColumnMetadata.of(Sample.class).getFirst();
+
+        assertThat(name.property()).isEqualTo("name");
+        assertThat(name.getter()).isEqualTo(Sample.class.getMethod("getName"));
+        assertThat(name.setter()).isEqualTo(Sample.class.getMethod("setName", String.class));
+        assertThat(ExcelColumnMetadata.columnName(Sample.class, "count")).contains("Count");
+        assertThat(ExcelColumnMetadata.columnName(Sample.class, "unknown")).isEmpty();
+    }
+
+    @Test
     void cachesColumnMetadataPerClass() {
         assertThat(ExcelColumnMetadata.of(Sample.class))
                 .isSameAs(ExcelColumnMetadata.of(Sample.class))
-                .extracting(ExcelColumnMetadata.FieldMeta::name)
+                .extracting(ExcelColumnMetadata.ColumnMeta::name)
                 .containsExactly("Name", "Count", "Rank", "Day", "At", "Provider");
     }
 
