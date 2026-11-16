@@ -29,7 +29,8 @@ public class ClockConfig {
     @Bean
     Clock clock(AppProperties appProperties) {
         Clock clock = Clock.system(appProperties.timeZone());
-        // Múi giờ JVM chỉ ảnh hưởng giờ in trong log — in cả 2 để phát hiện pod cấu hình lệch
+        // App không dùng múi giờ JVM (Clock và giờ trong log đều theo app.time-zone) — vẫn in cả 2 để thấy ngay pod
+        // nào đặt TZ lệch với APP_TZ khi đối chiếu log giữa các instance
         log.info("Server time zone: {} (JVM default: {})", clock.getZone(), ZoneId.systemDefault());
         return clock;
     }
