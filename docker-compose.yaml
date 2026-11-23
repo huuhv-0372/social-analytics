@@ -1,0 +1,140 @@
+# Chạy toàn bộ trong Docker, không cần JDK/Maven trên máy:
+#   docker compose up -d --build            # MySQL + Artemis + app (http://localhost:8080)
+#   docker compose run --rm maven test      # Chạy lệnh Maven bất kỳ trong container JDK 25
+#   docker compose up -d mysql artemis      # Chỉ hạ tầng, app chạy bằng JDK local
+# Biến môi trường lấy từ file .env (copy từ .env.example)
+
+# Thông tin kết nối dùng chung cho app và maven — trong mạng Docker dùng tên service + port nội bộ
+x-app-env: &app-env
+  DB_HOST: mysql
+  DB_PORT: 3306
+  DB_NAME: ${DB_NAME:-social_analytics}
+  DB_USERNAME: ${DB_USERNAME:?DB_USERNAME is required}
+  DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+  ARTEMIS_HOST: artemis
+  ARTEMIS_PORT: 61616
+  ARTEMIS_USER: ${ARTEMIS_USER:?ARTEMIS_USER is required}
+  ARTEMIS_PASSWORD: ${ARTEMIS_PASSWORD:?ARTEMIS_PASSWORD is required}
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: social-analytics-mysql
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:-social_analytics}
+      MYSQL_USER: ${DB_USERNAME:?DB_USERNAME is required}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "127.0.0.1:${DB_PORT:-33069}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      # Ping qua TCP (127.0.0.1) thay vì socket: lúc khởi tạo lần đầu MySQL chạy server tạm với --skip-networking,
+      # ping qua socket sẽ báo healthy quá sớm khiến app bị "Connection refused"
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  artemis:
+    image: apache/activemq-artemis:2.38.0
+    container_name: social-analytics-artemis
+    environment:
+      ARTEMIS_USER: ${ARTEMIS_USER:?ARTEMIS_USER is required}
+      ARTEMIS_PASSWORD: ${ARTEMIS_PASSWORD:?ARTEMIS_PASSWORD is required}
+    # Retry + DLQ của queue import-completed: nạp src/main/resources/artemis/broker.properties mỗi lần khởi động —
+    # cùng file broker embedded (dev/test) của app nạp từ classpath, chỉ khai báo 1 nơi.
+    # (etc-override của image chỉ được copy lúc tạo instance lần đầu → không áp dụng khi volume đã có sẵn)
+    command: ["run", "--properties", "/opt/broker-config/broker.properties"]
+    ports:
+      - "127.0.0.1:${ARTEMIS_PORT:-61616}:61616"   # JMS (core / OpenWire)
+      - "127.0.0.1:8161:8161"                       # Web console
+    volumes:
+      - artemis-data:/var/lib/artemis-instance
+      - ./src/main/resources/artemis/broker.properties:/opt/broker-config/broker.properties:ro
+
+  app:
+    build: .
+    image: social-analytics:local
+    container_name: social-analytics-app
+    environment:
+      <<: *app-env
+      # Compose dùng cho môi trường local → mặc định profile dev (bật Swagger, log DEBUG)
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      # Múi giờ nghiệp vụ (app.time-zone): ngày của biểu đồ, giờ Excel import/export, giờ hiển thị và giờ in trong log
+      # (logback-spring.xml) — bean Clock và logback dùng APP_TZ, không theo múi giờ JVM nên không cần đặt TZ. DB luôn
+      # lưu UTC nên đổi giá trị không làm sai dữ liệu đã lưu. Không đặt cho service maven/maven-testcontainers — test cố
+      # định app.time-zone trong application-test.yml.
+      APP_TZ: ${APP_TZ:-Asia/Ho_Chi_Minh}
+      # Profile dev mặc định chạy Artemis embedded → container app dùng broker riêng của compose
+      # (đổi mode thì tắt luôn broker embedded — 2 biến phải đi cùng nhau, xem application-dev.yml)
+      ARTEMIS_MODE: native
+      ARTEMIS_EMBEDDED_ENABLED: "false"
+      # Bắt buộc cho app (client-id / client-secret / key rỗng → app dừng khởi động; secret do
+      # config/OAuth2ClientConfig kiểm tra vì Boot chỉ kiểm client-id). Không dùng ${...:?} vì compose kiểm
+      # biến đó cho mọi service, kể cả khi chỉ chạy test bằng service maven (test dùng giá trị giả trong application-test.yml)
+      FACEBOOK_CLIENT_ID: ${FACEBOOK_CLIENT_ID:-}
+      FACEBOOK_CLIENT_SECRET: ${FACEBOOK_CLIENT_SECRET:-}
+      TWITTER_CLIENT_ID: ${TWITTER_CLIENT_ID:-}
+      TWITTER_CLIENT_SECRET: ${TWITTER_CLIENT_SECRET:-}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
+      # Trống khi truy cập trực tiếp; "native" khi đặt sau reverse proxy tin cậy (xem .env.example)
+      FORWARD_HEADERS_STRATEGY: ${FORWARD_HEADERS_STRATEGY:-}
+      # Endpoint SOAP mock tỷ giá (/services/**, PUBLIC: không đăng nhập, không CSRF) — app gọi chính nó qua
+      # localhost:8080 trong container. Compose chỉ dành cho môi trường LOCAL (port bind 127.0.0.1, profile dev).
+      # Chạy profile khác / mở app ra ngoài (sau load balancer): .env đặt SOAP_MOCK_ENDPOINT_ENABLED=false và
+      # SOAP_EXCHANGE_RATE_URL= (trống = tắt tỷ giá) hoặc URL dịch vụ SOAP thật. Dùng "-" (không phải ":-") để giá trị
+      # trống trong .env được giữ nguyên thay vì bị thay bằng mặc định.
+      SOAP_MOCK_ENDPOINT_ENABLED: ${SOAP_MOCK_ENDPOINT_ENABLED-true}
+      SOAP_EXCHANGE_RATE_URL: ${SOAP_EXCHANGE_RATE_URL-http://localhost:8080/services}
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      artemis:
+        condition: service_started
+
+  # Container JDK 25 để chạy lệnh Maven (compile, package, unit test...) mà không cần cài JDK local.
+  # Chỉ chạy khi gọi: docker compose run --rm maven <goal>
+  # KHÔNG có Docker socket: code của dependency/plugin chạy trong build không điều khiển được Docker của host.
+  # Vì vậy test dùng Testcontainers (@DataJpaTest, @SpringBootTest) không chạy được ở đây — dùng maven-testcontainers.
+  maven:
+    image: eclipse-temurin:25-jdk
+    profiles: ["tools"]
+    working_dir: /workspace
+    entrypoint: ["sh", "./mvnw", "-B"]
+    command: ["package", "-DskipTests"]
+    environment:
+      <<: *app-env
+    volumes:
+      - .:/workspace
+      - maven-repo:/root/.m2
+    # SocialAnalyticsApplicationTests (contextLoads) vẫn dùng MySQL của compose tới Task 7.4
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  # Như maven nhưng mount Docker socket của host để Testcontainers tạo container MySQL "anh em".
+  # CẢNH BÁO: quyền trên Docker socket tương đương root trên máy host — mọi test/plugin/dependency chạy trong build
+  # đều có quyền này (rủi ro supply chain, OWASP A03). Chỉ dùng khi tin dependency hiện tại; ưu tiên chạy
+  # ./mvnw test bằng JDK 25 local. Gọi: docker compose run --rm maven-testcontainers test
+  maven-testcontainers:
+    extends: maven
+    command: ["test"]
+    environment:
+      # Port của container MySQL do Testcontainers tạo mở trên host nên phải kết nối qua host.docker.internal
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  mysql-data:
+  artemis-data:
+  maven-repo:

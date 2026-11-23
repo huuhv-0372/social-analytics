@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Mức log theo package cấu hình ở application*.yml (logging.level.*) -->
+<configuration>
+    <springProperty scope="context" name="LOG_PATH" source="logging.file.path" defaultValue="logs"/>
+    <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="social-analytics"/>
+    <!--
+        Giờ trong log theo múi giờ nghiệp vụ app.time-zone (← APP_TZ, cùng nguồn với bean Clock), không theo múi giờ JVM:
+        nhiều instance sau load balancer, 1 pod quên đặt TZ (image mặc định UTC) vẫn in giờ khớp các pod khác khi gom log.
+        Giờ kèm offset (XXX) để đối chiếu không nhầm. Tên múi giờ sai → app không khởi động (AppProperties validate).
+    -->
+    <springProperty scope="context" name="LOG_TIME_ZONE" source="app.time-zone" defaultValue="Asia/Ho_Chi_Minh"/>
+
+    <!--
+        MDC: jobId (background job), importId (import Excel / JMS listener) để trace log đa luồng.
+        %replace bỏ CR/LF trong message để chống log injection (OWASP A05); stack trace vẫn in nhiều dòng.
+    -->
+    <property name="LOG_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSSXXX, ${LOG_TIME_ZONE}} %-5level [%thread] [jobId=%X{jobId:-} importId=%X{importId:-}] %logger{40} : %replace(%msg){'[\r\n]+', ' '}%n%ex"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/${APP_NAME}.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <!-- Mỗi ngày 1 file (sang ngày lúc 0h theo LOG_TIME_ZONE), file trong ngày vượt 10MB thì tách thêm .1, .2 ... -->
+            <fileNamePattern>${LOG_PATH}/${APP_NAME}.%d{yyyy-MM-dd, ${LOG_TIME_ZONE}}.%i.log</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <springProfile name="test">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="!test">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+        </root>
+    </springProfile>
+</configuration>

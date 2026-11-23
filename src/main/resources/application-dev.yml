@@ -1,0 +1,51 @@
+# Profile dev: ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+# Chỉ tăng mức log để debug; không bật log giá trị bind tham số SQL (có thể chứa dữ liệu nhạy cảm).
+
+# Dev mặc định chạy Artemis embedded (trong JVM, không lưu message xuống đĩa) → không cần cài broker.
+# Muốn dùng broker của docker compose (xem web console :8161): ARTEMIS_MODE=native — container app trong compose đã đặt sẵn.
+spring:
+  artemis:
+    mode: ${ARTEMIS_MODE:embedded}
+    embedded:
+      # Bật/tắt broker embedded phải đi cùng mode: ARTEMIS_MODE=native thì đặt thêm ARTEMIS_EMBEDDED_ENABLED=false.
+      # Lệch nhau (native + embedded bật) → app dừng khởi động với thông báo rõ (config/ArtemisEmbeddedConfig).
+      enabled: ${ARTEMIS_EMBEDDED_ENABLED:true}
+
+# Dev chạy HTTP localhost → cookie session không đặt Secure (production giữ mặc định true)
+server:
+  servlet:
+    session:
+      cookie:
+        secure: ${SESSION_COOKIE_SECURE:false}
+
+# Bật Swagger UI (http://localhost:8080/swagger-ui.html) — chỉ ở dev, vẫn phải đăng nhập
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
+# Dev: chạy job crawl metrics mỗi 5 phút để thấy dữ liệu nhanh (production: đầu mỗi giờ)
+app:
+  soap:
+    exchange-rate:
+      mock-endpoint:
+        # Dev bật endpoint SOAP mock (http://localhost:8080/services/exchangeRate.wsdl) — dashboard gọi chính app
+        enabled: ${SOAP_MOCK_ENDPOINT_ENABLED:true}
+      # Client gọi endpoint mock của chính app (production không có mặc định — trống = tắt tỷ giá)
+      url: ${SOAP_EXCHANGE_RATE_URL:http://localhost:8080/services}
+  jobs:
+    update-metrics:
+      cron: "0 */5 * * * *"
+      # Nhỏ hơn chu kỳ 5 phút ở trên (mặc định 50m dành cho cron mỗi giờ)
+      timeout: 4m
+      # timeout < lock-at-most-for (4m30s — Duration của Boot không nhận "4m30s") < chu kỳ 5 phút;
+      # lock-at-least-for không vượt lock-at-most-for
+      lock-at-most-for: 270s
+      lock-at-least-for: 1m
+
+logging:
+  level:
+    com.huuhv.socialanalytics: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.springframework.security: DEBUG

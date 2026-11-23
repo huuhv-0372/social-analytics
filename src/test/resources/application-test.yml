@@ -1,0 +1,64 @@
+# Profile test: kích hoạt bằng @ActiveProfiles("test"). Chỉ log ra console (xem logback-spring.xml).
+spring:
+  main:
+    banner-mode: off
+  artemis:
+    # Broker trong JVM, không lưu đĩa — test không cần Artemis ngoài. Mỗi Spring context có server-id riêng.
+    mode: embedded
+    embedded:
+      # application.yml tắt broker embedded (production chạy native) → test bật lại
+      enabled: true
+      persistent: false
+  security:
+    # Giá trị giả cho test — không gọi Facebook thật
+    oauth2:
+      client:
+        registration:
+          facebook:
+            client-id: test-facebook-client-id
+            client-secret: test-facebook-client-secret
+          twitter:
+            client-id: test-twitter-client-id
+            client-secret: test-twitter-client-secret
+
+server:
+  servlet:
+    session:
+      cookie:
+        secure: false
+
+logging:
+  level:
+    root: WARN
+    com.huuhv.socialanalytics: INFO
+
+app:
+  # Cố định múi giờ nghiệp vụ — test không phụ thuộc múi giờ của máy chạy (application.yml lấy từ APP_TZ)
+  time-zone: Asia/Ho_Chi_Minh
+  soap:
+    exchange-rate:
+      mock-endpoint:
+        # Test chạy cả endpoint mock (chain bảo mật riêng /services/**) để kiểm tra như dev/compose
+        enabled: true
+      # Như dev: client trỏ vào endpoint mock (test cần Tomcat thật thì tự đổi sang cổng ngẫu nhiên)
+      url: http://localhost:8080/services
+      # Context test không có server ở localhost:8080 → không gọi lúc khởi động (chỉ sinh log lỗi + backoff)
+      warm-up-on-startup: false
+  jms:
+    # File chính + file ghi đè của test (giao lại sau 100ms để test retry → DLQ không phải chờ vài giây)
+    embedded-broker-properties:
+      - classpath:artemis/broker.properties
+      - classpath:artemis/broker-test.properties
+  jobs:
+    update-metrics:
+      # Tắt lịch chạy tự động — test gọi UpdateSocialMetricsJob.runOnce() trực tiếp khi cần
+      cron: "-"
+    resend-import-completed:
+      # Tắt lịch — test gọi ResendImportCompletedJob.runOnce() trực tiếp
+      cron: "-"
+    refresh-exchange-rate:
+      # Tắt lịch — test cần tỷ giá thì gọi ExchangeRateService.refreshIfDue() trực tiếp
+      cron: "-"
+  token-encryption:
+    # Key giả chỉ dùng cho test (Base64 của "test-only-key-do-not-use-in-prod", 32 byte)
+    key: dGVzdC1vbmx5LWtleS1kby1ub3QtdXNlLWluLXByb2Q=

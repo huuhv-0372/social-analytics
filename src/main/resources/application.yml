@@ -1,0 +1,290 @@
+# Cấu hình chung cho mọi môi trường (mặc định = production-safe).
+# Profile: dev (application-dev.yml), test (application-test.yml). Giá trị nhạy cảm luôn lấy từ biến môi trường.
+spring:
+  application:
+    name: social-analytics
+  config:
+    # Đọc biến môi trường từ file .env ở thư mục gốc (không commit) — xem .env.example
+    import: optional:file:.env[.properties]
+
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:33069}/${DB_NAME:social_analytics}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+  jpa:
+    open-in-view: false
+    show-sql: false
+    hibernate:
+      ddl-auto: validate
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  servlet:
+    multipart:
+      # Giới hạn upload (import Excel — OWASP A06). Quá giới hạn → 413
+      max-file-size: 5MB
+      max-request-size: 6MB
+      # Parse multipart khi controller đọc tham số → lỗi quá dung lượng do ApiExceptionHandler xử lý (ProblemDetail)
+      resolve-lazily: true
+
+  mvc:
+    async:
+      # Request async (StreamingResponseBody của /api/export-report): tính cả lúc dựng file lẫn lúc client tải về.
+      # Mặc định 30s của Tomcat cắt ngang khi tải báo cáo lớn (gần app.export.max-rows) qua mạng chậm → file .xlsx hỏng.
+      # Không đặt quá dài: mỗi lượt tải chậm giữ 1 thread của executor async trong suốt thời gian này.
+      # Cơ sở chọn 60s (đo 10.000 dòng = app.export.max-rows; SXSSF dựng xong file rồi mới ghi → thời gian = dựng + tải):
+      #   - Dữ liệu thực tế (content ~200 ký tự): file ~0,5 MB, dựng ~6s, tải ~4s ở 1 Mbps → dư nhiều.
+      #   - Xấu nhất (mọi cột chạm giới hạn validate, content 5000 ký tự): ~45 MB, dựng ~29s → cần mạng > ~10 Mbps.
+      #     Chấp nhận không phủ trường hợp này (lớn hơn dữ liệu thực tế ~80 lần); nếu cần thì giảm app.export.max-rows
+      #     thay vì kéo timeout lên vài phút.
+      request-timeout: 60s
+
+  security:
+    oauth2:
+      client:
+        registration:
+          # Facebook có sẵn trong CommonOAuth2Provider (authorization/token/user-info URI, user-name-attribute=id).
+          # Redirect URI mặc định {baseUrl}/login/oauth2/code/facebook — phải khai báo y hệt trên Facebook Developers.
+          # Bắt buộc: thiếu biến môi trường thì app dừng khởi động. Không commit secret (OWASP A02/A04).
+          # Giữ dấu ":" cuối placeholder: thiếu biến → chuỗi rỗng → Boot (client-id) và OAuth2ClientConfig
+          # (client-secret) chặn lúc khởi động. Không có ":" thì Boot giữ nguyên chuỗi "${...}" → lọt kiểm tra.
+          facebook:
+            client-id: ${FACEBOOK_CLIENT_ID:}
+            client-secret: ${FACEBOOK_CLIENT_SECRET:}
+            # Quyền tối thiểu để đăng nhập (OWASP A01 — least privilege)
+            scope: public_profile,email
+          # X (Twitter) không có trong CommonOAuth2Provider → khai báo thủ công (OAuth 2.0 Authorization Code + PKCE).
+          # Redirect URI: {baseUrl}/login/oauth2/code/twitter — khai báo y hệt ở X Developer Portal (Callback URI).
+          # App trên X phải là loại confidential ("Web App, Automated App or Bot") → client secret gửi qua HTTP Basic.
+          twitter:
+            provider: twitter
+            client-name: X
+            client-id: ${TWITTER_CLIENT_ID:}
+            client-secret: ${TWITTER_CLIENT_SECRET:}
+            client-authentication-method: client_secret_basic
+            authorization-grant-type: authorization_code
+            redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+            # GET /2/users/me cần cả users.read và tweet.read
+            scope: users.read,tweet.read
+        provider:
+          twitter:
+            authorization-uri: https://x.com/i/oauth2/authorize
+            token-uri: https://api.x.com/2/oauth2/token
+            user-info-uri: https://api.x.com/2/users/me
+            # Response {"data": {"id", "name", "username"}} — CustomOAuth2UserService bóc "data" trước khi đọc "id"
+            user-name-attribute: id
+
+  task:
+    execution:
+      # Khai báo socialCrawlerExecutor (AsyncConfig) làm Boot bỏ applicationTaskExecutor mặc định → "force" để giữ nó
+      # cho @Async không ghi tên executor và các tác vụ async khác của Spring
+      mode: force
+    scheduling:
+      thread-name-prefix: scheduler-
+      pool:
+        # Mặc định 1 thread: UpdateSocialMetricsJob giữ thread đó suốt lần crawl (chờ các task trên
+        # socialCrawlerExecutor) → các job khác (gửi lại IMPORT_COMPLETED, làm mới tỷ giá) phải xếp hàng chờ
+        size: 4
+
+  # Session HTTP lưu MySQL (Spring Session JDBC, config/SessionConfig): nhiều instance sau load balancer dùng chung
+  # session (state/PKCE của OAuth2, SecurityContext), restart không đăng xuất user. Mỗi request đọc + ghi bảng session.
+  # Timeout + cookie lấy từ server.servlet.session.* bên dưới; cookie tên SESSION (không còn JSESSIONID).
+  session:
+    jdbc:
+      # Bảng do Flyway tạo (V3_1__spring_session.sql) — Spring Session không tự chạy script schema
+      initialize-schema: never
+      # Mặc định của Spring Session: mỗi phút xoá session hết hạn (mọi instance đều chạy, DELETE theo index EXPIRY_TIME)
+      cleanup-cron: "0 * * * * *"
+
+  artemis:
+    # native = kết nối broker Artemis riêng (production, docker compose). Dev/test dùng embedded (broker trong JVM,
+    # không mở cổng mạng) — xem application-dev.yml / application-test.yml
+    mode: native
+    embedded:
+      # Tắt broker embedded khi chạy native. Lý do: Boot tự khởi động broker trong JVM chỉ cần có
+      # artemis-jakarta-server trên classpath và embedded.enabled=true (mặc định) — KHÔNG xét mode. Không tắt thì
+      # production chạy thêm 1 broker không ai dùng (tốn heap/thread, lỗi file broker.properties còn làm app không
+      # khởi động). Dev/test bật lại (application-dev.yml / application-test.yml).
+      enabled: false
+    # Timeout (OWASP A10) để broker chậm/không phản hồi không giữ thread vô thời hạn (vd thread request lúc publish):
+    #   connectTimeoutMillis: mở kết nối TCP; callTimeout: chờ broker xác nhận 1 lệnh (gửi message persistent, commit...)
+    broker-url: tcp://${ARTEMIS_HOST:localhost}:${ARTEMIS_PORT:61616}?connectTimeoutMillis=5000&callTimeout=10000
+    user: ${ARTEMIS_USER}
+    password: ${ARTEMIS_PASSWORD}
+
+  jms:
+    listener:
+      session:
+        # Listener ném exception → rollback session → broker giao lại message (retry + DLQ cấu hình trên broker)
+        transacted: true
+      # Số consumer song song mỗi @JmsListener (listener phải idempotent — có thể nhận lại message)
+      min-concurrency: 1
+      max-concurrency: 3
+
+  webservices:
+    # MessageDispatcherServlet của Spring-WS (endpoint SOAP mock + WSDL) ở /services/* (mặc định của Boot)
+    path: /services
+    servlet:
+      init:
+        # WSDL ghi địa chỉ endpoint theo scheme/host/port của request (định nghĩa WSDL chỉ khai đường dẫn tương đối)
+        transformWsdlLocations: true
+
+  data:
+    web:
+      pageable:
+        # Giới hạn size của tham số Pageable — vượt thì bị hạ xuống giá trị này (OWASP A06). Size mặc định 20 của Boot.
+        max-page-size: 100
+
+server:
+  # Chạy sau reverse proxy / load balancer kết thúc HTTPS: đặt FORWARD_HEADERS_STRATEGY=native để scheme/host
+  # (link Location, cờ Secure của cookie) lấy từ X-Forwarded-*. Để trống khi không có proxy tin cậy đứng trước —
+  # nếu bật, client có thể giả header này. Trống = Boot tự nhận diện nền tảng (vd Kubernetes → native).
+  # Tomcat chỉ tin X-Forwarded-* từ proxy có IP nội bộ (10/8, 172.16/12, 192.168/16, 127/8...); proxy IP khác thì
+  # khai thêm server.tomcat.remoteip.internal-proxies.
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:}
+  servlet:
+    session:
+      # Spring Session JDBC cũng dùng giá trị này (cột MAX_INACTIVE_INTERVAL) khi không đặt spring.session.timeout
+      timeout: 30m
+      # Cookie session SESSION của Spring Session (OWASP A02): JS không đọc được, không gửi kèm request cross-site dạng POST
+      cookie:
+        http-only: true
+        same-site: lax
+        # Chỉ gửi qua HTTPS — mặc định bật (production); dev/test chạy HTTP localhost thì tắt
+        secure: ${SESSION_COOKIE_SECURE:true}
+  error:
+    # Không trả chi tiết lỗi nội bộ ra client (OWASP A02/A10)
+    include-stacktrace: never
+    include-message: never
+    include-binding-errors: never
+    include-exception: false
+
+# Swagger / OpenAPI tắt mặc định (không public ở production — OWASP A01), chỉ bật ở profile dev
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+    # Swagger UI đọc cookie XSRF-TOKEN và gửi header X-XSRF-TOKEN cho POST/PUT/DELETE
+    csrf:
+      enabled: true
+
+logging:
+  file:
+    # Thư mục log file (logback-spring.xml), mỗi ngày 1 file
+    path: ${LOG_PATH:logs}
+  level:
+    root: INFO
+    com.huuhv.socialanalytics: INFO
+
+# Cấu hình riêng của ứng dụng — bind vào com.huuhv.socialanalytics.config.properties.AppProperties
+# (giới hạn phân trang dùng spring.data.web.pageable.* của Boot ở trên, không khai trong app.*)
+app:
+  # Múi giờ nghiệp vụ (tên IANA): ngày trên biểu đồ, giờ trong file Excel import/export, giờ hiển thị — bean Clock
+  # (config/ClockConfig) dùng giá trị này, KHÔNG theo múi giờ JVM (TZ) → mọi instance sau load balancer cho cùng kết
+  # quả kể cả khi 1 pod quên đặt TZ. Sai tên → app không khởi động. DB luôn lưu UTC.
+  time-zone: ${APP_TZ:Asia/Ho_Chi_Minh}
+  import:
+    # Số dòng dữ liệu tối đa mỗi file import Excel
+    max-rows: 1000
+    # Tổng dung lượng sau giải nén của file .xlsx — chặn file nén cao (zip bomb) làm tràn heap
+    max-uncompressed-size: 20MB
+    # Khoảng cách tối thiểu giữa 2 lần import của cùng 1 user, tính riêng cho bài viết và metric — gọi sớm hơn trả
+    # 429 (0 = tắt). Chỉ tính lượt ngay trước bước ghi: file bị từ chối cả file (sai định dạng, thiếu cột...) và file
+    # không có dòng nào cần ghi (mọi dòng lỗi; với metric: mọi snapshot đã có) thì không tốn lượt
+    min-interval: 10s
+  export:
+    # Số dòng tối đa mỗi báo cáo export Excel — vượt thì trả 400
+    max-rows: 10000
+    # Khoảng cách tối thiểu giữa 2 lần export của cùng 1 user — gọi sớm hơn trả 429 (0 = tắt)
+    min-interval: 10s
+  token-encryption:
+    # Key AES-256 (Base64 của 32 byte) mã hoá access token lưu DB — bắt buộc, sinh bằng: openssl rand -base64 32
+    # Thiếu/sai định dạng → app dừng khởi động. Đổi key → token cũ không giải mã được, user phải đăng nhập lại.
+    key: ${TOKEN_ENCRYPTION_KEY:}
+  oauth2:
+    # Timeout gọi Facebook / X trong login callback (đổi code lấy token, user info) — provider treo không giữ thread
+    # Tomcat vô thời hạn; hết giờ → /login?error. Phải > 0
+    connect-timeout: 5s
+    read-timeout: 10s
+  async:
+    # Thread pool socialCrawlerExecutor (AsyncConfig) crawl metrics song song theo tài khoản.
+    # Đủ max-pool-size thread và queue đầy → thread gửi chờ tới khi queue có chỗ (WaitForQueueSpacePolicy), không bị bỏ.
+    social-crawler:
+      # Số việc chạy song song thực tế = core-pool-size: thread vượt core chỉ được tạo khi queue đã đầy (vd core 4,
+      # queue 100 → tới 104 tài khoản vẫn chỉ 4 thread). Giữ core = max; thread rảnh quá 60s tự dừng giữa 2 lần chạy
+      core-pool-size: 8
+      max-pool-size: 8
+      queue-capacity: 100
+      # Tắt app: chờ task đang chạy tối đa khoảng này
+      await-termination: 30s
+  jms:
+    # Retry + DLQ (address settings, queue DLQ) khai báo DUY NHẤT trong artemis/broker.properties: broker riêng của
+    # docker compose mount chính file đó, broker embedded (dev/test) nạp từ classpath các file dưới đây theo thứ tự
+    # (file sau ghi đè khoá trùng — config/ArtemisEmbeddedConfig). Chỉ được đọc khi broker embedded chạy
+    # (spring.artemis.embedded.enabled=true — dev/test); production tắt broker embedded nên không đọc.
+    embedded-broker-properties:
+      - classpath:artemis/broker.properties
+  soap:
+    exchange-rate:
+      # Endpoint SOAP tỷ giá mà client (client/soap/ExchangeRateSoapClient) gọi. Chỉ http/https, không chứa
+      # user:password. Trống = TẮT tỷ giá (không gọi SOAP, dashboard báo không có tỷ giá) — production không có mặc định
+      # trỏ vào chính app vì endpoint mock tắt: client sẽ bị chain chính chặn (CSRF) mỗi phút. Dev/test và container
+      # app của compose đặt url của endpoint mock (http://localhost:8080/services)
+      url: ${SOAP_EXCHANGE_RATE_URL:}
+      # Timeout gọi SOAP (OWASP A10): dịch vụ treo không giữ thread request của dashboard lâu
+      connect-timeout: 2s
+      read-timeout: 3s
+      # Cặp tỷ giá hiển thị trên dashboard: 1 USD = ? VND
+      base-currency: USD
+      quote-currency: VND
+      # Request dashboard chỉ đọc cache trong bộ nhớ (mỗi instance 1 cache), không bao giờ gọi SOAP. Job nền
+      # RefreshExchangeRateJob (app.jobs.refresh-exchange-rate.cron) gọi SOAP khi giá trị đã cũ hơn cache-ttl
+      cache-ttl: 10m
+      # Gọi lỗi → job không thử lại trong khoảng này, dashboard hiện giá trị cũ (nếu có) kèm nhãn "Dữ liệu cũ"
+      retry-after-failure: 1m
+      # Lấy sẵn tỷ giá ở thread nền khi app sẵn sàng → lần tải dashboard đầu tiên đã có giá trị
+      warm-up-on-startup: true
+      mock-endpoint:
+        # Endpoint mock /services/** + WSDL: public (không đăng nhập, không CSRF — chỉ trả dữ liệu giả) nên mặc định
+        # TẮT ở production. Dev/test bật; container app của compose đặt SOAP_MOCK_ENDPOINT_ENABLED=true.
+        enabled: ${SOAP_MOCK_ENDPOINT_ENABLED:false}
+        # Body tối đa của request /services/** (public): SAAJ đọc cả message vào bộ nhớ trước khi validate XSD →
+        # chặn request lớn trước (413). Request hợp lệ chỉ vài trăm byte
+        max-request-size: 16KB
+  jobs:
+    update-metrics:
+      # Crawl metrics mọi tài khoản (UpdateSocialMetricsJob). Cron Spring 6 trường: giây phút giờ ngày tháng thứ.
+      # Mặc định đầu mỗi giờ; "-" = tắt job
+      cron: "0 0 * * * *"
+      # Số bài mỗi lần gọi API mạng xã hội (tối đa 100)
+      batch-size: 100
+      # Thời lượng tối đa 1 lần chạy, tính từ lúc bắt đầu (gồm cả lúc gửi task). Quá hạn: tài khoản chưa xong tính lỗi,
+      # task còn chạy bỏ kết quả. Phải nhỏ hơn chu kỳ cron — đổi cron thì đổi cả timeout (xem application-dev.yml)
+      timeout: 50m
+      # Khoá chung giữa các instance (ShedLock, bảng scheduler_locks): mỗi lịch chỉ 1 instance chạy job.
+      # lock-at-most-for: timeout < giá trị < chu kỳ cron — instance chết giữa chừng thì khoá hết hạn trước lần chạy sau.
+      # lock-at-least-for: giữ khoá tối thiểu kể cả khi job xong sớm, để instance có đồng hồ lệch vài giây không chạy lại.
+      # Đổi cron thì đổi cả 2 giá trị (xem application-dev.yml)
+      lock-at-most-for: 55m
+      lock-at-least-for: 5m
+    resend-import-completed:
+      # Gửi lại message IMPORT_COMPLETED cho import kẹt ở PENDING (ResendImportCompletedJob): producer gửi lỗi lúc
+      # broker chết, hoặc broker embedded (dev, không lưu đĩa) restart làm mất message. Mặc định mỗi 10 phút; "-" = tắt
+      cron: "0 */10 * * * *"
+      # Chỉ gửi lại import PENDING lâu hơn khoảng này kể từ lần ghi/gửi gần nhất. Phải lớn hơn thời gian broker retry
+      # trước khi vào DLQ (~1 phút, artemis/broker.properties) để không gửi trùng message đang được retry
+      min-age: 10m
+      # Số import tối đa gửi lại mỗi lần chạy
+      batch-size: 100
+      # Khoá ShedLock như update-metrics: lock-at-most-for < chu kỳ cron 10 phút; lock-at-least-for ≤ lock-at-most-for
+      lock-at-most-for: 9m
+      lock-at-least-for: 1m
+    refresh-exchange-rate:
+      # Làm mới cache tỷ giá của instance này (RefreshExchangeRateJob → ExchangeRateService.refreshIfDue): chỉ gọi SOAP
+      # khi giá trị cũ hơn app.soap.exchange-rate.cache-ttl hoặc đã hết retry-after-failure — lịch dày chỉ để giá trị
+      # mới kịp sau khi hết hạn. Mỗi instance tự chạy (cache trong bộ nhớ, không ShedLock). "-" = tắt
+      cron: "*/30 * * * * *"
